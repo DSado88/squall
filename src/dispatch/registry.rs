@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use tokio::sync::Semaphore;
 
@@ -13,6 +14,9 @@ use crate::parsers::OutputParser;
 
 /// Max concurrent CLI subprocesses per Squall instance.
 const CLI_MAX_CONCURRENT: usize = 4;
+
+/// Max concurrent HTTP requests per Squall instance.
+const HTTP_MAX_CONCURRENT: usize = 8;
 
 /// Backend-specific configuration. Prevents invalid states
 /// (e.g., a CLI entry with an HTTP URL or vice versa).
@@ -86,6 +90,7 @@ pub struct Registry {
     http: HttpDispatch,
     cli: CliDispatch,
     cli_semaphore: Semaphore,
+    http_semaphore: Semaphore,
 }
 
 impl Registry {
@@ -95,12 +100,18 @@ impl Registry {
             http: HttpDispatch::new(),
             cli: CliDispatch::new(),
             cli_semaphore: Semaphore::new(CLI_MAX_CONCURRENT),
+            http_semaphore: Semaphore::new(HTTP_MAX_CONCURRENT),
         }
     }
 
     /// Returns the number of CLI semaphore permits (for testing).
     pub fn cli_semaphore_permits(&self) -> usize {
         self.cli_semaphore.available_permits()
+    }
+
+    /// Returns the number of HTTP semaphore permits (for testing).
+    pub fn http_semaphore_permits(&self) -> usize {
+        self.http_semaphore.available_permits()
     }
 
     pub fn get(&self, model: &str) -> Option<&ModelEntry> {
@@ -123,6 +134,22 @@ impl Registry {
         }
     }
 
+    /// Acquire a semaphore permit with a deadline-aware timeout.
+    /// Returns Timeout if the deadline expires before a permit is available.
+    async fn acquire_with_deadline(
+        semaphore: &Semaphore,
+        deadline: Instant,
+    ) -> Result<tokio::sync::SemaphorePermit<'_>, SquallError> {
+        let timeout = deadline
+            .checked_duration_since(Instant::now())
+            .ok_or(SquallError::Timeout(0))?;
+
+        tokio::time::timeout(timeout, semaphore.acquire())
+            .await
+            .map_err(|_| SquallError::Timeout(0))?
+            .map_err(|_| SquallError::Other("semaphore closed".to_string()))
+    }
+
     pub async fn query(&self, req: &ProviderRequest) -> Result<ProviderResult, SquallError> {
         let entry = self
             .models
@@ -131,6 +158,7 @@ impl Registry {
 
         match &entry.backend {
             BackendConfig::Http { base_url, api_key } => {
+                let _permit = Self::acquire_with_deadline(&self.http_semaphore, req.deadline).await?;
                 self.http
                     .query_model(req, &entry.provider, base_url, api_key)
                     .await
@@ -140,9 +168,7 @@ impl Registry {
                 args_template,
             } => {
                 let parser = Self::parser_for(&entry.provider)?;
-                let _permit = self.cli_semaphore.acquire().await.map_err(|_| {
-                    SquallError::Other("CLI semaphore closed".to_string())
-                })?;
+                let _permit = Self::acquire_with_deadline(&self.cli_semaphore, req.deadline).await?;
                 self.cli
                     .query_model(req, &entry.provider, executable, args_template, &*parser)
                     .await

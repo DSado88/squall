@@ -53,7 +53,8 @@ impl SquallError {
             Self::Timeout(_) => true,
             Self::Upstream { status, .. } => {
                 // 5xx = server error (retryable), 4xx = client error (not retryable)
-                status.is_none_or(|s| s >= 500)
+                // status: None = ambiguous (not from HTTP) → safe default: NOT retryable
+                status.is_some_and(|s| s >= 500)
             }
             Self::Request(_) => true, // connection errors may be transient
             _ => false,

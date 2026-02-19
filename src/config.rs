@@ -75,6 +75,7 @@ impl Config {
                         args_template: vec![
                             "-o".to_string(),
                             "json".to_string(),
+                            "--".to_string(),
                             "{prompt}".to_string(),
                         ],
                     },
@@ -96,6 +97,7 @@ impl Config {
                         args_template: vec![
                             "exec".to_string(),
                             "--json".to_string(),
+                            "--".to_string(),
                             "{prompt}".to_string(),
                         ],
                     },

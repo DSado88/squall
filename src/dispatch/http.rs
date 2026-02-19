@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::dispatch::{ProviderRequest, ProviderResult};
 use crate::error::SquallError;
 
-const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024; // 2MB
+pub const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024; // 2MB
 
 pub struct HttpDispatch {
     client: Client,
@@ -106,7 +106,20 @@ impl HttpDispatch {
             });
         }
 
-        // Enforce response size limit before parsing
+        // Pre-read size guard: reject responses that declare Content-Length > cap
+        // This prevents buffering a multi-GB body before checking size.
+        if let Some(cl) = response.content_length()
+            && cl > MAX_RESPONSE_BYTES as u64
+        {
+            return Err(SquallError::Upstream {
+                provider: provider.to_string(),
+                message: format!(
+                    "response too large: {cl} bytes (max {MAX_RESPONSE_BYTES})"
+                ),
+                status: None,
+            });
+        }
+
         let bytes = response.bytes().await.map_err(|e| {
             SquallError::Upstream {
                 provider: provider.to_string(),
@@ -115,6 +128,7 @@ impl HttpDispatch {
             }
         })?;
 
+        // Post-read guard: catch cases where Content-Length was absent or lied
         if bytes.len() > MAX_RESPONSE_BYTES {
             return Err(SquallError::Upstream {
                 provider: provider.to_string(),

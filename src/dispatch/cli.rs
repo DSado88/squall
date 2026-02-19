@@ -6,7 +6,7 @@ use crate::dispatch::{ProviderRequest, ProviderResult};
 use crate::error::SquallError;
 use crate::parsers::OutputParser;
 
-const MAX_OUTPUT_BYTES: usize = 2 * 1024 * 1024; // 2MB
+pub const MAX_OUTPUT_BYTES: usize = 2 * 1024 * 1024; // 2MB
 
 pub struct CliDispatch;
 
@@ -68,16 +68,25 @@ impl CliDispatch {
             format!("failed to spawn {executable}: {e}"),
         ))?;
 
-        // Wait with timeout — kill_on_drop handles cleanup if we bail
-        let output = tokio::time::timeout(timeout, child.wait_with_output())
-            .await
-            .map_err(|_| {
-                let elapsed_ms = start.elapsed().as_millis() as u64;
-                SquallError::Timeout(elapsed_ms)
-            })?
-            .map_err(|e| SquallError::Other(
+        // Get the PID so we can kill the entire process group on timeout.
+        // process_group(0) makes the child its own group leader (pgid == pid).
+        let child_pid = child.id();
+
+        // Wait with timeout — on expiry, kill the entire process group
+        let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+            Ok(result) => result.map_err(|e| SquallError::Other(
                 format!("failed to wait for {executable}: {e}"),
-            ))?;
+            ))?,
+            Err(_) => {
+                // Timeout: kill the process group, not just the leader
+                if let Some(pid) = child_pid {
+                    // Send SIGKILL to the negative pgid to kill all processes in the group
+                    unsafe { libc::kill(-(pid as i32), libc::SIGKILL); }
+                }
+                let elapsed_ms = start.elapsed().as_millis() as u64;
+                return Err(SquallError::Timeout(elapsed_ms));
+            }
+        };
 
         // Cap output size
         let stdout = if output.stdout.len() > MAX_OUTPUT_BYTES {
