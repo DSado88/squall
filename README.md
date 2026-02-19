@@ -16,7 +16,7 @@ The pattern held across every review: Claude is good at architecture, Gemini at 
 
 Squall is an MCP server that Claude Code calls as a tool. It exposes three operations:
 
-- **chat** — Send a prompt to an HTTP model (Grok, Kimi, GLM). Optionally attach source files that Squall reads server-side and injects into the prompt as XML.
+- **chat** — Send a prompt to any model with an OpenAI-compatible HTTP API. Optionally attach source files that Squall reads server-side and injects into the prompt as XML.
 - **clink** — Invoke a CLI agent (Gemini, Codex). Passes the working directory as subprocess cwd so the agent can read code itself, plus a manifest of relevant file paths.
 - **listmodels** — List all registered models with provider and backend info.
 
@@ -38,10 +38,12 @@ cargo build --release
 
 ### Environment variables
 
-| Variable | Required | Models |
-|----------|----------|--------|
-| `XAI_API_KEY` | For Grok | grok-4-1-fast-reasoning |
-| `OPENROUTER_API_KEY` | For OpenRouter | moonshotai/kimi-k2.5, z-ai/glm-5 |
+HTTP models are configured via environment variables. Any provider with an OpenAI-compatible chat completions endpoint works.
+
+| Variable | Models |
+|----------|--------|
+| `XAI_API_KEY` | Grok |
+| `OPENROUTER_API_KEY` | Any model available through OpenRouter (Kimi, GLM, etc.) |
 
 CLI models (gemini, codex) are auto-detected from PATH. No API key needed for Gemini CLI (uses Google OAuth).
 
