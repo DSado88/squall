@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["annotate"],"mod":["sealed"],"struct":["Annotated","Annotations"],"trait":["AnnotateAble"]};

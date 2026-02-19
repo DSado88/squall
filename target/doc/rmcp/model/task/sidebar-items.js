@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TaskStatus"],"struct":["CancelTaskResult","CreateTaskResult","GetTaskPayloadResult","GetTaskResult","Task","TaskList"]};

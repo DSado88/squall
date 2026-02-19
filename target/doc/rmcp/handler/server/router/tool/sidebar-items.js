@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["ToolAttrGenerateFunctionAdapter","ToolRoute","ToolRouter","WithToolAttr"],"trait":["CallToolHandlerExt","IntoToolRoute"]};

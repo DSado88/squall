@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ElicitationMode","ServerInitializeError"],"fn":["expect_next_message","expect_notification","expect_request","serve_server","serve_server_with_ct","serve_server_with_ct_inner"],"macro":["method"],"struct":["RoleServer"],"type":["ClientSink"]};

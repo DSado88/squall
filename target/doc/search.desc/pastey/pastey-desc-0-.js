@@ -1,0 +1,1 @@
+searchState.loadedDescShard("pastey", 0, "Macros for all your token pasting needs")
