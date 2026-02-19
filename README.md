@@ -2,19 +2,33 @@
 
 Fast async MCP server for dispatching prompts to multiple AI models. ~1200 lines of Rust.
 
+## Why multiple models
+
+No single model finds everything. Different models have different strengths, different blind spots, and different failure modes. When you send the same question to Grok, Gemini, Kimi, and Codex, you get additive signal — each one catches things the others miss.
+
+This showed up concretely during Squall's own development. A 6-model consensus review of the implementation plan caught three critical gaps: all 6 flagged the need for path sandboxing, Codex alone caught that 512KB of file context would hit the OS `ARG_MAX` limit on CLI subprocess spawn, and the group identified XML injection risks. No single model raised all three.
+
+Later, we pointed Squall at its own source code. Gemini (reading files as a CLI subprocess) found three unbounded-buffering bugs — places where the server would read an entire HTTP response or subprocess output into memory before checking size limits. Grok and Kimi then found a symlink traversal vulnerability in the path sandboxing. Different models, different findings, all real bugs.
+
+The pattern held across every review: Claude is good at architecture, Gemini at filesystem-level systems issues, Codex at OS-level constraints, Grok at fast logical analysis (with occasional false positives), Kimi at edge cases. The redundancy isn't waste — it's the point.
+
 ## What it does
 
-Squall exposes three MCP tools:
+Squall is an MCP server that Claude Code calls as a tool. It exposes three operations:
 
-- **chat** — Send a prompt to any HTTP model (Grok, Kimi, GLM via OpenRouter). Optionally attach file context read server-side.
-- **clink** — Invoke a CLI agent (Gemini CLI, Codex CLI). Passes a file manifest and working directory so the agent can read code itself.
+- **chat** — Send a prompt to an HTTP model (Grok, Kimi, GLM). Optionally attach source files that Squall reads server-side and injects into the prompt as XML.
+- **clink** — Invoke a CLI agent (Gemini, Codex). Passes the working directory as subprocess cwd so the agent can read code itself, plus a manifest of relevant file paths.
 - **listmodels** — List all registered models with provider and backend info.
 
-HTTP models can't see your filesystem. Squall reads files for them, injects content as XML into the prompt, and enforces a 512KB budget. CLI models get the working directory as their cwd and a manifest of relevant paths.
+The dispatch layer is intentionally simple. Claude Code is the orchestrator — it decides what to ask, which models to query, and how to synthesize the results. Squall just handles authenticated transport and file context injection.
 
-## Why
+### The HTTP blindness problem
 
-Claude Code can call external models through MCP, but HTTP APIs are blind to your codebase and CLI tools don't know where to look. Squall bridges that gap with minimal overhead — no Python runtime, no conversation state, no prompt framework. Just structured dispatch with safety guarantees.
+HTTP models are stateless text-in/text-out endpoints. They can't see your filesystem. When you ask Grok to review a file, it only sees what you paste into the prompt. CLI models (Gemini, Codex) have filesystem access but need to know where to look.
+
+Squall bridges both gaps. Pass `file_paths` and `working_directory`, and:
+- HTTP models get file content injected as XML (budget-capped at 512KB)
+- CLI models get the working directory as their subprocess cwd and a manifest of paths to examine
 
 ## Setup
 
@@ -54,7 +68,7 @@ Add to `~/.claude.json`:
 - **Path sandboxing** — Rejects absolute paths, `..` traversal, and symlink escapes (canonicalize + starts_with)
 - **No shell** — CLI dispatch uses `Command::new` + discrete args, no shell interpolation
 - **Process group kill** — Timeouts SIGKILL the entire process tree, not just the leader
-- **Capped reads** — HTTP responses streamed with 2MB cap. CLI stdout/stderr capped via `take()`. File context pre-checked via metadata
+- **Capped reads** — HTTP responses streamed with 2MB cap. CLI stdout/stderr capped via `take()`. File context pre-checked via metadata before reading
 - **Concurrency limits** — Semaphores cap CLI (4) and HTTP (8) concurrent requests
 - **No cascade** — MCP results never set `is_error: true`, preventing Claude Code sibling tool call failures
 - **Error sanitization** — User-facing messages never leak internal URLs or connection details
