@@ -42,7 +42,9 @@ fn p0_1_server_version_matches_cargo() {
 }
 
 // ---------------------------------------------------------------------------
-// P0-2: Error responses must set isError=true at MCP level
+// P0-2: Error responses must NOT set isError=true at MCP level.
+// Claude Code cascades sibling tool call failures when is_error=true.
+// Error info lives in the JSON payload ("status": "error") instead.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -57,10 +59,9 @@ fn p0_2_error_response_sets_is_error_true() {
         },
     );
     let result = response.into_call_tool_result();
-    assert_eq!(
-        result.is_error,
-        Some(true),
-        "Error responses must have is_error=true"
+    assert!(
+        result.is_error != Some(true),
+        "Error responses must NOT set is_error=true (causes sibling cascade)"
     );
 }
 

@@ -39,11 +39,11 @@ impl PalToolResponse {
         }
     }
 
-    /// Convert to MCP CallToolResult with correct is_error flag.
-    /// Handles serialization errors gracefully (no panics).
+    /// Convert to MCP CallToolResult.
+    /// Always returns success at the MCP transport level to prevent Claude Code
+    /// from cascading sibling tool call failures. Error info is in the JSON payload
+    /// (`"status": "error"`) where Claude can read it without triggering cascade.
     pub fn into_call_tool_result(self) -> CallToolResult {
-        let is_error = self.status == "error";
-
         // Clamp non-finite f64 values before serialization to avoid serde_json panic
         let safe = PalToolResponseSafe {
             status: self.status,
@@ -58,15 +58,8 @@ impl PalToolResponse {
         };
 
         match serde_json::to_string(&safe) {
-            Ok(json) => {
-                let content = vec![Content::text(json)];
-                if is_error {
-                    CallToolResult::error(content)
-                } else {
-                    CallToolResult::success(content)
-                }
-            }
-            Err(e) => CallToolResult::error(vec![Content::text(format!(
+            Ok(json) => CallToolResult::success(vec![Content::text(json)]),
+            Err(e) => CallToolResult::success(vec![Content::text(format!(
                 r#"{{"status":"error","content":"serialization failed: {e}","content_type":"text","metadata":{{}}}}"#
             ))]),
         }
