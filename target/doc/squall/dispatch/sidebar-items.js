@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["cli","http","registry"],"struct":["ProviderRequest","ProviderResult"],"trait":["Dispatch"]};

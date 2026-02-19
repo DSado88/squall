@@ -1,1 +1,0 @@
-searchState.loadedDescShard("rmcp_macros", 0, "rmcp-macros\nprompt\nprompt_handler\nprompt_router\ntask_handler\ntool\ntool_handler\ntool_router")

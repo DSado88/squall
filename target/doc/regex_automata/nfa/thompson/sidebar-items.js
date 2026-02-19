@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["State","WhichCaptures"],"struct":["BuildError","Builder","Compiler","Config","DenseTransitions","NFA","PatternIter","SparseTransitions","Transition"]};

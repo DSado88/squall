@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["issue_tool_name_warning","validate_and_warn_tool_name","validate_tool_name"],"struct":["ToolNameValidationResult"]};

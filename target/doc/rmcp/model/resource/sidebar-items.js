@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["ResourceContents"],"struct":["RawResource","RawResourceTemplate"],"type":["Resource","ResourceTemplate"]};

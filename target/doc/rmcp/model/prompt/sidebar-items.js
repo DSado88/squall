@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["PromptMessageContent","PromptMessageRole"],"struct":["Prompt","PromptArgument","PromptMessage"]};

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"attr":["prompt","prompt_handler","prompt_router","task_handler","tool","tool_handler","tool_router"]};

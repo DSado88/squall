@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["PROGRESS_TOKEN_FIELD"],"macro":["variant_extension"],"struct":["Meta"],"trait":["GetExtensions","GetMeta","RequestParamsMeta","TaskAugmentedRequestParamsMeta"]};
