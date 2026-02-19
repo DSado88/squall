@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use tokio::sync::Semaphore;
+
 use crate::config::Config;
 use crate::dispatch::cli::CliDispatch;
 use crate::dispatch::http::HttpDispatch;
@@ -8,6 +10,9 @@ use crate::error::SquallError;
 use crate::parsers::codex::CodexParser;
 use crate::parsers::gemini::GeminiParser;
 use crate::parsers::OutputParser;
+
+/// Max concurrent CLI subprocesses per Squall instance.
+const CLI_MAX_CONCURRENT: usize = 4;
 
 /// Backend-specific configuration. Prevents invalid states
 /// (e.g., a CLI entry with an HTTP URL or vice versa).
@@ -80,6 +85,7 @@ pub struct Registry {
     models: HashMap<String, ModelEntry>,
     http: HttpDispatch,
     cli: CliDispatch,
+    cli_semaphore: Semaphore,
 }
 
 impl Registry {
@@ -88,7 +94,13 @@ impl Registry {
             models: config.models,
             http: HttpDispatch::new(),
             cli: CliDispatch::new(),
+            cli_semaphore: Semaphore::new(CLI_MAX_CONCURRENT),
         }
+    }
+
+    /// Returns the number of CLI semaphore permits (for testing).
+    pub fn cli_semaphore_permits(&self) -> usize {
+        self.cli_semaphore.available_permits()
     }
 
     pub fn get(&self, model: &str) -> Option<&ModelEntry> {
@@ -100,11 +112,14 @@ impl Registry {
     }
 
     /// Resolve the appropriate parser for a CLI provider.
-    fn parser_for(provider: &str) -> Box<dyn OutputParser> {
+    /// Returns an error for unknown providers instead of silently falling back.
+    pub fn parser_for(provider: &str) -> Result<Box<dyn OutputParser>, SquallError> {
         match provider {
-            "gemini" => Box::new(GeminiParser),
-            "codex" => Box::new(CodexParser),
-            _ => Box::new(GeminiParser), // fallback to Gemini JSON parser
+            "gemini" => Ok(Box::new(GeminiParser)),
+            "codex" => Ok(Box::new(CodexParser)),
+            _ => Err(SquallError::ModelNotFound(format!(
+                "no parser for CLI provider: {provider}"
+            ))),
         }
     }
 
@@ -124,7 +139,10 @@ impl Registry {
                 executable,
                 args_template,
             } => {
-                let parser = Self::parser_for(&entry.provider);
+                let parser = Self::parser_for(&entry.provider)?;
+                let _permit = self.cli_semaphore.acquire().await.map_err(|_| {
+                    SquallError::Other("CLI semaphore closed".to_string())
+                })?;
                 self.cli
                     .query_model(req, &entry.provider, executable, args_template, &*parser)
                     .await

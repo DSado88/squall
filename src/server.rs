@@ -15,7 +15,7 @@ use crate::response::{PalMetadata, PalToolResponse};
 use crate::tools::chat::ChatRequest;
 use crate::tools::clink::ClinkRequest;
 use crate::tools::listmodels::{ListModelsResponse, ModelInfo};
-use crate::tools::parallel::ParallelRequest;
+
 
 #[derive(Clone)]
 pub struct SquallServer {
@@ -156,26 +156,6 @@ impl SquallServer {
         Ok(response.into_call_tool_result())
     }
 
-    #[tool(
-        name = "query_parallel",
-        description = "Query multiple AI models concurrently. Returns partial results if some models fail.",
-        annotations(read_only_hint = true)
-    )]
-    async fn query_parallel(
-        &self,
-        Parameters(_req): Parameters<ParallelRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        let response = PalToolResponse::error(
-            "query_parallel not yet implemented — Phase 3".to_string(),
-            PalMetadata {
-                tool_name: "query_parallel".to_string(),
-                model_used: "none".to_string(),
-                provider_used: "none".to_string(),
-                duration_seconds: 0.0,
-            },
-        );
-        Ok(response.into_call_tool_result())
-    }
 }
 
 #[tool_handler]

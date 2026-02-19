@@ -102,6 +102,7 @@ impl HttpDispatch {
             return Err(SquallError::Upstream {
                 provider: provider.to_string(),
                 message: format!("{status}: {text}"),
+                status: Some(status.as_u16()),
             });
         }
 
@@ -110,6 +111,7 @@ impl HttpDispatch {
             SquallError::Upstream {
                 provider: provider.to_string(),
                 message: format!("failed to read response body: {e}"),
+                status: None,
             }
         })?;
 
@@ -121,6 +123,7 @@ impl HttpDispatch {
                     bytes.len(),
                     MAX_RESPONSE_BYTES
                 ),
+                status: None,
             });
         }
 
@@ -137,6 +140,7 @@ impl HttpDispatch {
             .ok_or_else(|| SquallError::Upstream {
                 provider: provider.to_string(),
                 message: "empty choices or null content".to_string(),
+                status: None,
             })?;
 
         let latency_ms = start.elapsed().as_millis() as u64;

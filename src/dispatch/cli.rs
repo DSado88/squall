@@ -61,6 +61,7 @@ impl CliDispatch {
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .process_group(0) // Kill entire process tree on timeout, not just top-level
             .kill_on_drop(true);
 
         let child = cmd.spawn().map_err(|e| SquallError::Other(

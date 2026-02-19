@@ -161,6 +161,7 @@ fn p1_6_error_exposes_provider_for_upstream() {
     let err = SquallError::Upstream {
         provider: "openrouter".to_string(),
         message: "500 Internal Server Error".to_string(),
+        status: Some(500),
     };
     assert_eq!(err.provider(), Some("openrouter"));
 }

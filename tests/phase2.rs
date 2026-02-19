@@ -51,20 +51,24 @@ fn gemini_parser_rejects_invalid_json() {
 #[test]
 fn codex_parser_extracts_message_content() {
     let parser = CodexParser;
-    // Codex JSONL event stream with a response.completed event containing a message
+    // Real Codex JSONL event stream format
     let input = concat!(
-        r#"{"type":"response.created","item":{"type":"message"}}"#, "\n",
-        r#"{"type":"response.completed","item":{"type":"message","content":[{"type":"output_text","text":"Hello from Codex!"}]}}"#, "\n",
+        r#"{"type":"thread.started","thread_id":"abc123"}"#, "\n",
+        r#"{"type":"turn.started"}"#, "\n",
+        r#"{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Hello from Codex!"}}"#, "\n",
+        r#"{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":20}}"#, "\n",
     );
     let result = parser.parse(input.as_bytes()).unwrap();
     assert_eq!(result, "Hello from Codex!");
 }
 
 #[test]
-fn codex_parser_joins_multiple_text_parts() {
+fn codex_parser_joins_multiple_messages() {
     let parser = CodexParser;
     let input = concat!(
-        r#"{"type":"response.completed","item":{"type":"message","content":[{"type":"output_text","text":"Part 1"},{"type":"output_text","text":"Part 2"}]}}"#, "\n",
+        r#"{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Part 1"}}"#, "\n",
+        r#"{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Part 2"}}"#, "\n",
+        r#"{"type":"turn.completed","usage":{}}"#, "\n",
     );
     let result = parser.parse(input.as_bytes()).unwrap();
     assert_eq!(result, "Part 1\nPart 2");
@@ -81,12 +85,14 @@ fn codex_parser_rejects_empty_stream() {
 #[test]
 fn codex_parser_skips_non_message_events() {
     let parser = CodexParser;
+    // Only tool calls, no agent_message events
     let input = concat!(
-        r#"{"type":"response.created","item":{"type":"function_call"}}"#, "\n",
-        r#"{"type":"response.completed","item":{"type":"function_call","content":[{"type":"output_text","text":"ignored"}]}}"#, "\n",
+        r#"{"type":"thread.started","thread_id":"abc"}"#, "\n",
+        r#"{"type":"item.completed","item":{"id":"item_0","type":"tool_call","text":"ignored"}}"#, "\n",
+        r#"{"type":"turn.completed","usage":{}}"#, "\n",
     );
     let result = parser.parse(input.as_bytes());
-    assert!(result.is_err(), "Should reject stream with no message events");
+    assert!(result.is_err(), "Should reject stream with no agent_message events");
 }
 
 // ---------------------------------------------------------------------------

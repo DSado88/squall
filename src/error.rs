@@ -12,7 +12,11 @@ pub enum SquallError {
     RateLimited { provider: String },
 
     #[error("upstream error from {provider}: {message}")]
-    Upstream { provider: String, message: String },
+    Upstream {
+        provider: String,
+        message: String,
+        status: Option<u16>,
+    },
 
     #[error("auth failed for {provider}: {message}")]
     AuthFailed { provider: String, message: String },
@@ -39,6 +43,20 @@ impl SquallError {
             Self::Upstream { provider, .. } => Some(provider),
             Self::AuthFailed { provider, .. } => Some(provider),
             _ => None,
+        }
+    }
+
+    /// Returns true for transient errors that may succeed on retry.
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::RateLimited { .. } => true,
+            Self::Timeout(_) => true,
+            Self::Upstream { status, .. } => {
+                // 5xx = server error (retryable), 4xx = client error (not retryable)
+                status.is_none_or(|s| s >= 500)
+            }
+            Self::Request(_) => true, // connection errors may be transient
+            _ => false,
         }
     }
 

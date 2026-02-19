@@ -4,7 +4,11 @@ use crate::error::SquallError;
 use crate::parsers::OutputParser;
 
 /// Parses Codex CLI `--json` JSONL event stream.
-/// Extracts text from `response.completed` events where `item.type == "message"`.
+/// Real format (captured from `codex exec --json`):
+///   {"type":"thread.started","thread_id":"..."}
+///   {"type":"turn.started"}
+///   {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"..."}}
+///   {"type":"turn.completed","usage":{...}}
 pub struct CodexParser;
 
 #[derive(Deserialize)]
@@ -18,22 +22,15 @@ struct CodexEvent {
 struct CodexItem {
     #[serde(rename = "type")]
     item_type: Option<String>,
-    content: Option<Vec<CodexContent>>,
-}
-
-#[derive(Deserialize)]
-struct CodexContent {
-    #[serde(rename = "type")]
-    content_type: Option<String>,
     text: Option<String>,
 }
 
 impl OutputParser for CodexParser {
     fn parse(&self, stdout: &[u8]) -> Result<String, SquallError> {
-        let text = String::from_utf8_lossy(stdout);
+        let raw = String::from_utf8_lossy(stdout);
         let mut parts: Vec<String> = Vec::new();
 
-        for line in text.lines() {
+        for line in raw.lines() {
             let line = line.trim();
             if line.is_empty() {
                 continue;
@@ -44,12 +41,13 @@ impl OutputParser for CodexParser {
                 Err(_) => continue,
             };
 
-            let is_completed = event
+            // Look for item.completed events with agent_message type
+            let is_item_completed = event
                 .event_type
                 .as_deref()
-                .is_some_and(|t| t == "response.completed");
+                .is_some_and(|t| t == "item.completed");
 
-            if !is_completed {
+            if !is_item_completed {
                 continue;
             }
 
@@ -57,31 +55,16 @@ impl OutputParser for CodexParser {
                 continue;
             };
 
-            let is_message = item
+            let is_agent_message = item
                 .item_type
                 .as_deref()
-                .is_some_and(|t| t == "message");
+                .is_some_and(|t| t == "agent_message");
 
-            if !is_message {
-                continue;
-            }
-
-            let Some(content) = &item.content else {
-                continue;
-            };
-
-            for c in content {
-                let is_output_text = c
-                    .content_type
-                    .as_deref()
-                    .is_some_and(|t| t == "output_text");
-
-                if is_output_text
-                    && let Some(text) = &c.text
-                    && !text.is_empty()
-                {
-                    parts.push(text.clone());
-                }
+            if is_agent_message
+                && let Some(text) = &item.text
+                && !text.is_empty()
+            {
+                parts.push(text.clone());
             }
         }
 
