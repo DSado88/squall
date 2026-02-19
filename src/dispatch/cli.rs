@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 use crate::dispatch::{ProviderRequest, ProviderResult};
@@ -64,7 +65,12 @@ impl CliDispatch {
             .process_group(0) // Kill entire process tree on timeout, not just top-level
             .kill_on_drop(true);
 
-        let child = cmd.spawn().map_err(|e| SquallError::Other(
+        // Set working directory for CLI subprocess if provided
+        if let Some(ref wd) = req.working_directory {
+            cmd.current_dir(wd);
+        }
+
+        let mut child = cmd.spawn().map_err(|e| SquallError::Other(
             format!("failed to spawn {executable}: {e}"),
         ))?;
 
@@ -72,36 +78,51 @@ impl CliDispatch {
         // process_group(0) makes the child its own group leader (pgid == pid).
         let child_pid = child.id();
 
-        // Wait with timeout — on expiry, kill the entire process group
-        let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
-            Ok(result) => result.map_err(|e| SquallError::Other(
-                format!("failed to wait for {executable}: {e}"),
-            ))?,
-            Err(_) => {
-                // Timeout: kill the process group, not just the leader
-                if let Some(pid) = child_pid {
-                    // Send SIGKILL to the negative pgid to kill all processes in the group
-                    unsafe { libc::kill(-(pid as i32), libc::SIGKILL); }
+        // Take pipe handles for capped reading — prevents OOM from runaway processes.
+        // Unlike wait_with_output() which buffers ALL output, take() caps at MAX_OUTPUT_BYTES.
+        let stdout_pipe = child.stdout.take().expect("stdout was piped");
+        let stderr_pipe = child.stderr.take().expect("stderr was piped");
+
+        let read_future = async {
+            let mut stdout_buf = Vec::with_capacity(MAX_OUTPUT_BYTES.min(64 * 1024));
+            let mut stderr_buf = Vec::with_capacity(MAX_OUTPUT_BYTES.min(64 * 1024));
+
+            // Bind take() to named variables so they outlive the join!
+            let mut stdout_capped = stdout_pipe.take(MAX_OUTPUT_BYTES as u64);
+            let mut stderr_capped = stderr_pipe.take(MAX_OUTPUT_BYTES as u64);
+
+            // Read stdout and stderr concurrently, each capped at MAX_OUTPUT_BYTES.
+            let (_, _) = tokio::join!(
+                stdout_capped.read_to_end(&mut stdout_buf),
+                stderr_capped.read_to_end(&mut stderr_buf),
+            );
+
+            // Wait for process exit after pipes are drained
+            let status = child.wait().await?;
+            Ok::<_, std::io::Error>((stdout_buf, stderr_buf, status))
+        };
+
+        let (stdout, stderr_raw, status) =
+            match tokio::time::timeout(timeout, read_future).await {
+                Ok(result) => result.map_err(|e| {
+                    SquallError::Other(format!("failed to read from {executable}: {e}"))
+                })?,
+                Err(_) => {
+                    // Timeout: kill the process group, not just the leader
+                    if let Some(pid) = child_pid {
+                        unsafe {
+                            libc::kill(-(pid as i32), libc::SIGKILL);
+                        }
+                    }
+                    let elapsed_ms = start.elapsed().as_millis() as u64;
+                    return Err(SquallError::Timeout(elapsed_ms));
                 }
-                let elapsed_ms = start.elapsed().as_millis() as u64;
-                return Err(SquallError::Timeout(elapsed_ms));
-            }
-        };
+            };
 
-        // Cap output size
-        let stdout = if output.stdout.len() > MAX_OUTPUT_BYTES {
-            &output.stdout[..MAX_OUTPUT_BYTES]
-        } else {
-            &output.stdout
-        };
+        let stderr_text = String::from_utf8_lossy(&stderr_raw).to_string();
 
-        let stderr_text = String::from_utf8_lossy(
-            &output.stderr[..output.stderr.len().min(MAX_OUTPUT_BYTES)],
-        )
-        .to_string();
-
-        if !output.status.success() {
-            let code = output.status.code().unwrap_or(-1);
+        if !status.success() {
+            let code = status.code().unwrap_or(-1);
             tracing::warn!(
                 executable,
                 code,
@@ -119,7 +140,7 @@ impl CliDispatch {
         }
 
         // Parse the stdout through the appropriate parser
-        let text = parser.parse(stdout)?;
+        let text = parser.parse(&stdout)?;
 
         let latency_ms = start.elapsed().as_millis() as u64;
 

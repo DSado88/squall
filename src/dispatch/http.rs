@@ -45,6 +45,23 @@ impl HttpDispatch {
         Self { client }
     }
 
+    /// Read response body in chunks, stopping at `max_bytes`.
+    /// Prevents OOM on chunked-encoding responses that omit Content-Length.
+    async fn stream_body_capped(
+        response: &mut reqwest::Response,
+        max_bytes: usize,
+    ) -> Vec<u8> {
+        let mut body = Vec::with_capacity(max_bytes.min(64 * 1024));
+        while let Ok(Some(chunk)) = response.chunk().await {
+            body.extend_from_slice(&chunk);
+            if body.len() > max_bytes {
+                body.truncate(max_bytes);
+                break;
+            }
+        }
+        body
+    }
+
     pub async fn query_model(
         &self,
         req: &ProviderRequest,
@@ -66,7 +83,7 @@ impl HttpDispatch {
             "messages": [{"role": "user", "content": req.prompt}]
         });
 
-        let response = self
+        let mut response = self
             .client
             .post(base_url)
             .header("Authorization", format!("Bearer {}", api_key))
@@ -94,11 +111,9 @@ impl HttpDispatch {
         }
 
         // Catch-all for any non-success status (4xx, 5xx, 3xx that wasn't followed)
-        // Cap error body reads to MAX_RESPONSE_BYTES to prevent memory exhaustion
         if !status.is_success() {
-            let error_bytes = response.bytes().await.unwrap_or_default();
-            let truncated = &error_bytes[..error_bytes.len().min(MAX_RESPONSE_BYTES)];
-            let text = String::from_utf8_lossy(truncated);
+            let error_body = Self::stream_body_capped(&mut response, MAX_RESPONSE_BYTES).await;
+            let text = String::from_utf8_lossy(&error_body);
             return Err(SquallError::Upstream {
                 provider: provider.to_string(),
                 message: format!("{status}: {text}"),
@@ -106,8 +121,7 @@ impl HttpDispatch {
             });
         }
 
-        // Pre-read size guard: reject responses that declare Content-Length > cap
-        // This prevents buffering a multi-GB body before checking size.
+        // Pre-read size guard: fast rejection for responses that declare Content-Length > cap
         if let Some(cl) = response.content_length()
             && cl > MAX_RESPONSE_BYTES as u64
         {
@@ -120,20 +134,14 @@ impl HttpDispatch {
             });
         }
 
-        let bytes = response.bytes().await.map_err(|e| {
-            SquallError::Upstream {
-                provider: provider.to_string(),
-                message: format!("failed to read response body: {e}"),
-                status: None,
-            }
-        })?;
-
-        // Post-read guard: catch cases where Content-Length was absent or lied
+        // Stream body with size cap — prevents OOM on chunked responses
+        // that omit Content-Length. Aborts as soon as limit is exceeded.
+        let bytes = Self::stream_body_capped(&mut response, MAX_RESPONSE_BYTES).await;
         if bytes.len() > MAX_RESPONSE_BYTES {
             return Err(SquallError::Upstream {
                 provider: provider.to_string(),
                 message: format!(
-                    "response too large: {} bytes (max {})",
+                    "response too large: >{}B (max {})",
                     bytes.len(),
                     MAX_RESPONSE_BYTES
                 ),
