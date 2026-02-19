@@ -9,6 +9,8 @@ pub struct ProviderRequest {
     pub prompt: String,
     pub model: String,
     pub deadline: Instant,
+    /// Working directory for CLI subprocess cwd (None for HTTP backends).
+    pub working_directory: Option<String>,
 }
 
 /// Internal result type — both backends return this.

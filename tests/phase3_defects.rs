@@ -146,6 +146,8 @@ fn clink_request_has_no_role_field() {
     let req = ClinkRequest {
         prompt: "hello".to_string(),
         cli_name: "gemini".to_string(),
+        file_paths: None,
+        working_directory: None,
     };
     assert_eq!(req.prompt, "hello");
     assert_eq!(req.cli_name, "gemini");

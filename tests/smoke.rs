@@ -80,12 +80,16 @@ fn chat_request_default_model() {
     let req = ChatRequest {
         prompt: "hello".to_string(),
         model: None,
+        file_paths: None,
+        working_directory: None,
     };
     assert_eq!(req.model_or_default(), "grok-4-1-fast-reasoning");
 
     let req = ChatRequest {
         prompt: "hello".to_string(),
         model: Some("moonshotai/kimi-k2.5".to_string()),
+        file_paths: None,
+        working_directory: None,
     };
     assert_eq!(req.model_or_default(), "moonshotai/kimi-k2.5");
 }

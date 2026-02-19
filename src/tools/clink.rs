@@ -7,4 +7,8 @@ pub struct ClinkRequest {
     pub prompt: String,
     /// CLI agent name: "gemini" or "codex"
     pub cli_name: String,
+    /// Relative file paths to include as context manifest (paths only for CLI)
+    pub file_paths: Option<Vec<String>>,
+    /// Working directory for resolving file_paths and as subprocess cwd
+    pub working_directory: Option<String>,
 }

@@ -197,6 +197,8 @@ fn p1_8_empty_model_string_uses_default() {
     let req = ChatRequest {
         prompt: "hello".to_string(),
         model: Some("".to_string()),
+        file_paths: None,
+        working_directory: None,
     };
     assert_eq!(
         req.model_or_default(),
@@ -210,6 +212,8 @@ fn p1_8_whitespace_model_string_uses_default() {
     let req = ChatRequest {
         prompt: "hello".to_string(),
         model: Some("   ".to_string()),
+        file_paths: None,
+        working_directory: None,
     };
     assert_eq!(
         req.model_or_default(),

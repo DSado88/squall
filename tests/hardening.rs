@@ -105,6 +105,7 @@ async fn semaphore_acquire_respects_deadline() {
         prompt: "test".to_string(),
         model: "test-cli".to_string(),
         deadline: Instant::now() + Duration::from_millis(500),
+        working_directory: None,
     };
 
     // The query should fail (nonexistent binary), but it should fail FAST,

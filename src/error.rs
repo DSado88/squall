@@ -30,6 +30,9 @@ pub enum SquallError {
     #[error("request error: {0}")]
     Request(#[from] reqwest::Error),
 
+    #[error("file context error: {0}")]
+    FileContext(String),
+
     #[error("{0}")]
     Other(String),
 }
@@ -81,6 +84,7 @@ impl SquallError {
             }
             Self::ProcessExit { code, .. } => format!("CLI process exited with code {code}"),
             Self::Request(_) => "request to provider failed".to_string(),
+            Self::FileContext(msg) => format!("file context error: {msg}"),
             Self::Other(_) => "an error occurred".to_string(),
         }
     }
