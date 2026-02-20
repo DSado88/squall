@@ -11,12 +11,16 @@ pub struct ProviderRequest {
     pub deadline: Instant,
     /// Working directory for CLI subprocess cwd (None for HTTP backends).
     pub working_directory: Option<String>,
+    /// System prompt to set model behavior (HTTP: separate message, CLI: prepended to stdin).
+    pub system_prompt: Option<String>,
+    /// Sampling temperature (0 = deterministic, 1 = creative). Passed to HTTP APIs only.
+    pub temperature: Option<f64>,
 }
 
 /// Internal result type — both backends return this.
+#[derive(Debug)]
 pub struct ProviderResult {
     pub text: String,
     pub model: String,
     pub provider: String,
-    pub latency_ms: u64,
 }

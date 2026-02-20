@@ -20,6 +20,12 @@ pub fn escape_xml_attr(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// Escape text for inclusion in XML comments.
+/// XML comments cannot contain `--`, so we replace it to prevent injection.
+fn escape_xml_comment(s: &str) -> String {
+    s.replace("--", "&#45;&#45;")
+}
+
 /// Validate that a path is safe: relative, no `..` components.
 fn validate_path(path: &str) -> Result<(), SquallError> {
     let p = Path::new(path);
@@ -155,20 +161,21 @@ pub async fn resolve_file_context(
         )));
     }
 
-    // Append manifest comment noting skipped/errored files
+    // Append manifest comment noting skipped/errored files.
+    // Escape "--" sequences to prevent XML comment injection from filenames.
     if !skipped.is_empty() || !errors.is_empty() {
-        output.push_str("<!-- ");
+        let mut comment = String::new();
         if !skipped.is_empty() {
             let names: Vec<_> = skipped
                 .iter()
                 .map(|(n, sz)| format!("{n} ({sz}B)"))
                 .collect();
-            output.push_str(&format!("Budget skipped: {}. ", names.join(", ")));
+            comment.push_str(&format!("Budget skipped: {}. ", names.join(", ")));
         }
         if !errors.is_empty() {
-            output.push_str(&format!("Errors: {}. ", errors.join("; ")));
+            comment.push_str(&format!("Errors: {}. ", errors.join("; ")));
         }
-        output.push_str("-->\n");
+        output.push_str(&format!("<!-- {} -->\n", escape_xml_comment(&comment)));
     }
 
     if output.is_empty() {

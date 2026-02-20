@@ -82,6 +82,8 @@ fn chat_request_default_model() {
         model: None,
         file_paths: None,
         working_directory: None,
+        system_prompt: None,
+        temperature: None,
     };
     assert_eq!(req.model_or_default(), "grok-4-1-fast-reasoning");
 
@@ -90,6 +92,8 @@ fn chat_request_default_model() {
         model: Some("moonshotai/kimi-k2.5".to_string()),
         file_paths: None,
         working_directory: None,
+        system_prompt: None,
+        temperature: None,
     };
     assert_eq!(req.model_or_default(), "moonshotai/kimi-k2.5");
 }

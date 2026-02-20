@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 use crate::dispatch::{ProviderRequest, ProviderResult};
@@ -47,19 +47,17 @@ impl CliDispatch {
             .filter(|d| *d > Duration::from_millis(100))
             .ok_or(SquallError::Timeout(0))?;
 
-        // Build args by substituting {prompt} and {model} in the template.
+        // Build args by substituting {model} in the template.
+        // Prompt is delivered via stdin to avoid ARG_MAX limits (~128KB-2MB).
         // No shell — Command::new() + .args() prevents shell injection.
         let args: Vec<String> = args_template
             .iter()
-            .map(|a| {
-                a.replace("{prompt}", &req.prompt)
-                    .replace("{model}", &req.model)
-            })
+            .map(|a| a.replace("{model}", &req.model))
             .collect();
 
         let mut cmd = Command::new(executable);
         cmd.args(&args)
-            .stdin(std::process::Stdio::null())
+            .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .process_group(0) // Kill entire process tree on timeout, not just top-level
@@ -74,6 +72,25 @@ impl CliDispatch {
             format!("failed to spawn {executable}: {e}"),
         ))?;
 
+        // Write prompt to stdin, then close it so the child sees EOF.
+        // This avoids ARG_MAX limits that apply to argv delivery.
+        {
+            let mut stdin = child.stdin.take().expect("stdin was piped");
+            // Prepend system prompt if provided (CLI tools don't have a system message channel)
+            if let Some(ref system) = req.system_prompt {
+                stdin.write_all(system.as_bytes()).await.map_err(|e| {
+                    SquallError::Other(format!("failed to write system prompt to {executable} stdin: {e}"))
+                })?;
+                stdin.write_all(b"\n\n").await.map_err(|e| {
+                    SquallError::Other(format!("failed to write to {executable} stdin: {e}"))
+                })?;
+            }
+            stdin.write_all(req.prompt.as_bytes()).await.map_err(|e| {
+                SquallError::Other(format!("failed to write prompt to {executable} stdin: {e}"))
+            })?;
+            // drop closes the pipe → child sees EOF on stdin
+        }
+
         // Get the PID so we can kill the entire process group on timeout.
         // process_group(0) makes the child its own group leader (pgid == pid).
         let child_pid = child.id();
@@ -84,20 +101,59 @@ impl CliDispatch {
         let stderr_pipe = child.stderr.take().expect("stderr was piped");
 
         let read_future = async {
-            let mut stdout_buf = Vec::with_capacity(MAX_OUTPUT_BYTES.min(64 * 1024));
-            let mut stderr_buf = Vec::with_capacity(MAX_OUTPUT_BYTES.min(64 * 1024));
+            // Spawn pipe readers as separate tasks so they run concurrently.
+            // select! on the handles: whichever finishes first, check if it hit
+            // the cap. If so, kill the child to unblock the other reader
+            // (which waits for EOF that only comes when the child exits).
+            let stdout_handle = tokio::spawn(async move {
+                let mut buf = Vec::with_capacity(MAX_OUTPUT_BYTES.min(64 * 1024));
+                let mut capped = stdout_pipe.take(MAX_OUTPUT_BYTES as u64);
+                if let Err(e) = capped.read_to_end(&mut buf).await {
+                    tracing::warn!("stdout pipe read error: {e}");
+                }
+                buf
+            });
 
-            // Bind take() to named variables so they outlive the join!
-            let mut stdout_capped = stdout_pipe.take(MAX_OUTPUT_BYTES as u64);
-            let mut stderr_capped = stderr_pipe.take(MAX_OUTPUT_BYTES as u64);
+            let stderr_handle = tokio::spawn(async move {
+                let mut buf = Vec::with_capacity(MAX_OUTPUT_BYTES.min(64 * 1024));
+                let mut capped = stderr_pipe.take(MAX_OUTPUT_BYTES as u64);
+                if let Err(e) = capped.read_to_end(&mut buf).await {
+                    tracing::warn!("stderr pipe read error: {e}");
+                }
+                buf
+            });
 
-            // Read stdout and stderr concurrently, each capped at MAX_OUTPUT_BYTES.
-            let (_, _) = tokio::join!(
-                stdout_capped.read_to_end(&mut stdout_buf),
-                stderr_capped.read_to_end(&mut stderr_buf),
-            );
+            // Wait for whichever stream finishes first. If EITHER hit the cap,
+            // the child may be blocked writing to the full pipe — kill it to
+            // unblock the other reader (which waits for EOF on child exit).
+            let mut stdout_handle = stdout_handle;
+            let mut stderr_handle = stderr_handle;
 
-            // Wait for process exit after pipes are drained
+            let (stdout_buf, stderr_buf) = tokio::select! {
+                result = &mut stdout_handle => {
+                    let buf = result.unwrap_or_default();
+                    // Kill entire process group on cap breach — not just leader.
+                    // start_kill() only kills the direct child; grandchildren
+                    // survive holding pipes open → deadlock.
+                    if buf.len() >= MAX_OUTPUT_BYTES
+                        && let Some(pid) = child_pid
+                    {
+                        unsafe { libc::kill(-(pid as i32), libc::SIGKILL); }
+                    }
+                    let stderr_buf = stderr_handle.await.unwrap_or_default();
+                    (buf, stderr_buf)
+                }
+                result = &mut stderr_handle => {
+                    let buf = result.unwrap_or_default();
+                    if buf.len() >= MAX_OUTPUT_BYTES
+                        && let Some(pid) = child_pid
+                    {
+                        unsafe { libc::kill(-(pid as i32), libc::SIGKILL); }
+                    }
+                    let stdout_buf = stdout_handle.await.unwrap_or_default();
+                    (stdout_buf, buf)
+                }
+            };
             let status = child.wait().await?;
             Ok::<_, std::io::Error>((stdout_buf, stderr_buf, status))
         };
@@ -142,13 +198,10 @@ impl CliDispatch {
         // Parse the stdout through the appropriate parser
         let text = parser.parse(&stdout)?;
 
-        let latency_ms = start.elapsed().as_millis() as u64;
-
         Ok(ProviderResult {
             text,
             model: req.model.clone(),
             provider: provider.to_string(),
-            latency_ms,
         })
     }
 }

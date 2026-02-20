@@ -73,9 +73,10 @@ impl Config {
                     backend: BackendConfig::Cli {
                         executable: "gemini".to_string(),
                         args_template: vec![
+                            "-m".to_string(),
+                            "gemini-3-pro-preview".to_string(),
                             "-o".to_string(),
                             "json".to_string(),
-                            "{prompt}".to_string(),
                         ],
                     },
                 },
@@ -96,7 +97,6 @@ impl Config {
                         args_template: vec![
                             "exec".to_string(),
                             "--json".to_string(),
-                            "{prompt}".to_string(),
                         ],
                     },
                 },
