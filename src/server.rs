@@ -13,9 +13,11 @@ use crate::context;
 use crate::dispatch::registry::Registry;
 use crate::dispatch::ProviderRequest;
 use crate::response::{PalMetadata, PalToolResponse};
+use crate::review::ReviewExecutor;
 use crate::tools::chat::ChatRequest;
 use crate::tools::clink::ClinkRequest;
 use crate::tools::listmodels::{ListModelsResponse, ModelInfo};
+use crate::tools::review::ReviewRequest;
 
 
 #[derive(Clone)]
@@ -73,8 +75,10 @@ impl SquallServer {
         let provider_req = ProviderRequest {
             prompt,
             model: model.clone(),
-            deadline: Instant::now() + Duration::from_secs(120),
+            deadline: Instant::now() + Duration::from_secs(300), // HTTP gets 5 min
             working_directory: None,
+            system_prompt: req.system_prompt,
+            temperature: req.temperature,
         };
 
         let response = match self.registry.query(&provider_req).await {
@@ -148,12 +152,12 @@ impl SquallServer {
         let cli_name = req.cli_name.clone();
         let start = Instant::now();
 
-        // Resolve file manifest and working directory for CLI
+        // Resolve file manifest and working directory for CLI.
+        // Use canonical path from validate_working_directory() — not the original
+        // string — to prevent TOCTOU (symlink retargeted between validation and use).
         let mut prompt = req.prompt;
-        let working_directory = req.working_directory.clone();
-
-        if let Some(ref file_paths) = req.file_paths {
-            let wd = working_directory.as_deref().ok_or_else(|| {
+        let working_directory = if let Some(ref file_paths) = req.file_paths {
+            let wd = req.working_directory.as_deref().ok_or_else(|| {
                 McpError::invalid_params(
                     "working_directory is required when file_paths is set",
                     None,
@@ -169,18 +173,23 @@ impl SquallServer {
             {
                 prompt = format!("{manifest}\n\n{prompt}");
             }
-        } else if let Some(ref wd) = working_directory {
-            // Validate even without file_paths (used as subprocess cwd)
-            context::validate_working_directory(wd)
+            Some(base_dir.to_string_lossy().to_string())
+        } else if let Some(ref wd) = req.working_directory {
+            let base_dir = context::validate_working_directory(wd)
                 .await
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        }
+            Some(base_dir.to_string_lossy().to_string())
+        } else {
+            None
+        };
 
         let provider_req = ProviderRequest {
             prompt,
             model: cli_name.clone(),
-            deadline: Instant::now() + Duration::from_secs(300), // CLIs get 5 min
+            deadline: Instant::now() + Duration::from_secs(600), // CLIs get 10 min
             working_directory,
+            system_prompt: req.system_prompt,
+            temperature: req.temperature,
         };
 
         let response = match self.registry.query(&provider_req).await {
@@ -207,6 +216,70 @@ impl SquallServer {
                 )
             }
         };
+
+        Ok(response.into_call_tool_result())
+    }
+
+    #[tool(
+        name = "review",
+        description = "Dispatch prompt to multiple models with straggler cutoff. Returns per-model results.",
+        annotations(read_only_hint = true)
+    )]
+    async fn review(
+        &self,
+        Parameters(req): Parameters<ReviewRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let start = std::time::Instant::now();
+
+        // Resolve file context and working directory (same pattern as clink handler).
+        // Use canonical path from validate_working_directory() to prevent TOCTOU.
+        let mut prompt = req.prompt.clone();
+        let working_directory = if let Some(ref file_paths) = req.file_paths {
+            let wd = req.working_directory.as_deref().ok_or_else(|| {
+                McpError::invalid_params(
+                    "working_directory is required when file_paths is set",
+                    None,
+                )
+            })?;
+            let base_dir = context::validate_working_directory(wd)
+                .await
+                .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+            if let Some(ctx) = context::resolve_file_context(
+                file_paths,
+                &base_dir,
+                context::MAX_FILE_CONTEXT_BYTES,
+            )
+            .await
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?
+            {
+                prompt = format!("{ctx}\n{prompt}");
+            }
+            Some(base_dir.to_string_lossy().to_string())
+        } else if let Some(ref wd) = req.working_directory {
+            let base_dir = context::validate_working_directory(wd)
+                .await
+                .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+            Some(base_dir.to_string_lossy().to_string())
+        } else {
+            None
+        };
+
+        let executor = ReviewExecutor::new(self.registry.clone());
+        let review_response = executor.execute(&req, prompt, working_directory).await;
+
+        // Serialize the full review response as the MCP content
+        let json = serde_json::to_string(&review_response)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        let response = PalToolResponse::success(
+            json,
+            PalMetadata {
+                tool_name: "review".to_string(),
+                model_used: "multi".to_string(),
+                provider_used: "multi".to_string(),
+                duration_seconds: start.elapsed().as_secs_f64(),
+            },
+        );
 
         Ok(response.into_call_tool_result())
     }

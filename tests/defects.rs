@@ -199,6 +199,8 @@ fn p1_8_empty_model_string_uses_default() {
         model: Some("".to_string()),
         file_paths: None,
         working_directory: None,
+        system_prompt: None,
+        temperature: None,
     };
     assert_eq!(
         req.model_or_default(),
@@ -214,6 +216,8 @@ fn p1_8_whitespace_model_string_uses_default() {
         model: Some("   ".to_string()),
         file_paths: None,
         working_directory: None,
+        system_prompt: None,
+        temperature: None,
     };
     assert_eq!(
         req.model_or_default(),

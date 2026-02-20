@@ -106,7 +106,7 @@ fn backend_config_cli_stores_executable_and_args() {
         provider: "google".to_string(),
         backend: BackendConfig::Cli {
             executable: "/usr/local/bin/gemini".to_string(),
-            args_template: vec!["-o".to_string(), "json".to_string(), "{prompt}".to_string()],
+            args_template: vec!["-o".to_string(), "json".to_string()],
         },
     };
 
@@ -157,28 +157,28 @@ fn process_exit_error_carries_stderr() {
 }
 
 // ---------------------------------------------------------------------------
-// CLI arg template substitution doesn't allow shell injection
+// CLI arg template substitution doesn't allow shell injection.
+// Prompt is delivered via stdin (not argv), so shell metacharacters
+// in the prompt never reach the arg vector. Model substitution still
+// uses args, so we test that.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn cli_args_template_handles_special_chars_safely() {
-    // This tests the template substitution logic directly.
-    // The key safety property is that args are passed to Command::args(),
-    // not through a shell, so shell metacharacters are inert.
+fn cli_args_template_substitutes_model_safely() {
     let template = [
+        "-m".to_string(),
+        "{model}".to_string(),
         "-o".to_string(),
         "json".to_string(),
-        "{prompt}".to_string(),
     ];
 
-    let dangerous_prompt = "hello; rm -rf / && echo pwned";
+    let dangerous_model = "test; rm -rf /";
     let args: Vec<String> = template
         .iter()
-        .map(|a| a.replace("{prompt}", dangerous_prompt))
+        .map(|a| a.replace("{model}", dangerous_model))
         .collect();
 
-    // The dangerous string is preserved as-is (it will be a single arg to the CLI)
-    assert_eq!(args[2], "hello; rm -rf / && echo pwned");
-    // Verify there are exactly 3 args (no splitting occurred)
-    assert_eq!(args.len(), 3);
+    // The string is preserved as-is (Command::args, no shell)
+    assert_eq!(args[1], "test; rm -rf /");
+    assert_eq!(args.len(), 4);
 }

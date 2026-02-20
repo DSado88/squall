@@ -47,19 +47,27 @@ impl HttpDispatch {
 
     /// Read response body in chunks, stopping at `max_bytes`.
     /// Prevents OOM on chunked-encoding responses that omit Content-Length.
+    /// Propagates chunk read errors instead of silently swallowing them.
     async fn stream_body_capped(
         response: &mut reqwest::Response,
         max_bytes: usize,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, reqwest::Error> {
         let mut body = Vec::with_capacity(max_bytes.min(64 * 1024));
-        while let Ok(Some(chunk)) = response.chunk().await {
-            body.extend_from_slice(&chunk);
-            if body.len() > max_bytes {
-                body.truncate(max_bytes);
-                break;
+        loop {
+            match response.chunk().await {
+                Ok(Some(chunk)) => {
+                    body.extend_from_slice(&chunk);
+                    if body.len() > max_bytes {
+                        // Don't truncate — let the caller see len > max_bytes
+                        // so the post-cap overflow check can detect it.
+                        break;
+                    }
+                }
+                Ok(None) => break, // End of body
+                Err(e) => return Err(e),
             }
         }
-        body
+        Ok(body)
     }
 
     pub async fn query_model(
@@ -69,8 +77,6 @@ impl HttpDispatch {
         base_url: &str,
         api_key: &str,
     ) -> Result<ProviderResult, SquallError> {
-        let start = Instant::now();
-
         // Check for expired deadline before making the request
         let timeout = req
             .deadline
@@ -78,10 +84,19 @@ impl HttpDispatch {
             .filter(|d| *d > Duration::from_millis(100))
             .ok_or(SquallError::Timeout(0))?;
 
-        let body = serde_json::json!({
+        let mut messages = Vec::new();
+        if let Some(ref system) = req.system_prompt {
+            messages.push(serde_json::json!({"role": "system", "content": system}));
+        }
+        messages.push(serde_json::json!({"role": "user", "content": req.prompt}));
+
+        let mut body = serde_json::json!({
             "model": req.model,
-            "messages": [{"role": "user", "content": req.prompt}]
+            "messages": messages,
         });
+        if let Some(temp) = req.temperature {
+            body["temperature"] = serde_json::json!(temp);
+        }
 
         let mut response = self
             .client
@@ -112,7 +127,9 @@ impl HttpDispatch {
 
         // Catch-all for any non-success status (4xx, 5xx, 3xx that wasn't followed)
         if !status.is_success() {
-            let error_body = Self::stream_body_capped(&mut response, MAX_RESPONSE_BYTES).await;
+            let error_body = Self::stream_body_capped(&mut response, MAX_RESPONSE_BYTES)
+                .await
+                .unwrap_or_default();
             let text = String::from_utf8_lossy(&error_body);
             return Err(SquallError::Upstream {
                 provider: provider.to_string(),
@@ -136,7 +153,7 @@ impl HttpDispatch {
 
         // Stream body with size cap — prevents OOM on chunked responses
         // that omit Content-Length. Aborts as soon as limit is exceeded.
-        let bytes = Self::stream_body_capped(&mut response, MAX_RESPONSE_BYTES).await;
+        let bytes = Self::stream_body_capped(&mut response, MAX_RESPONSE_BYTES).await?;
         if bytes.len() > MAX_RESPONSE_BYTES {
             return Err(SquallError::Upstream {
                 provider: provider.to_string(),
@@ -151,7 +168,19 @@ impl HttpDispatch {
 
         let completion: ChatCompletion =
             serde_json::from_slice(&bytes).map_err(|e| {
-                SquallError::SchemaParse(format!("failed to parse response: {e}"))
+                let preview = String::from_utf8_lossy(
+                    &bytes[..bytes.len().min(200)]
+                );
+                tracing::warn!(
+                    provider,
+                    bytes = bytes.len(),
+                    preview = %preview,
+                    "failed to parse response"
+                );
+                SquallError::SchemaParse(format!(
+                    "failed to parse response ({} bytes): {e}; starts with: {preview:.200}",
+                    bytes.len()
+                ))
             })?;
 
         let text = completion
@@ -165,13 +194,10 @@ impl HttpDispatch {
                 status: None,
             })?;
 
-        let latency_ms = start.elapsed().as_millis() as u64;
-
         Ok(ProviderResult {
             text,
             model: req.model.clone(),
             provider: provider.to_string(),
-            latency_ms,
         })
     }
 }

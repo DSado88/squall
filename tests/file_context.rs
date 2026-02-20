@@ -310,6 +310,8 @@ fn chat_request_has_file_context_fields() {
         model: None,
         file_paths: Some(vec!["src/lib.rs".to_string()]),
         working_directory: Some("/tmp".to_string()),
+        system_prompt: None,
+        temperature: None,
     };
 }
 
@@ -321,6 +323,8 @@ fn clink_request_has_file_context_fields() {
         cli_name: "gemini".to_string(),
         file_paths: Some(vec!["src/lib.rs".to_string()]),
         working_directory: Some("/tmp".to_string()),
+        system_prompt: None,
+        temperature: None,
     };
 }
 
@@ -337,6 +341,8 @@ fn provider_request_has_working_directory() {
         model: "test".to_string(),
         deadline: Instant::now() + Duration::from_secs(10),
         working_directory: Some("/tmp".to_string()),
+        system_prompt: None,
+        temperature: None,
     };
 }
 
