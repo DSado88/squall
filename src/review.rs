@@ -1,7 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+static PERSIST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use tokio::task::{Id as TaskId, JoinSet};
 
@@ -259,9 +262,9 @@ async fn persist_results(
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_nanos();
-    let pid = std::process::id();
-    let filename = format!("{ts}_{pid}.json");
+        .as_millis();
+    let seq = PERSIST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let filename = format!("{ts}_{seq}.json");
     let path = reviews_dir.join(&filename);
 
     let payload = serde_json::json!({
