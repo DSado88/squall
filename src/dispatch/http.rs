@@ -56,10 +56,12 @@ impl HttpDispatch {
         loop {
             match response.chunk().await {
                 Ok(Some(chunk)) => {
-                    body.extend_from_slice(&chunk);
+                    // Cap the copy to prevent OOM from a single oversized chunk.
+                    // Copy at most enough to exceed max_bytes by 1 (triggers overflow detection).
+                    let remaining = (max_bytes + 1).saturating_sub(body.len());
+                    let to_copy = chunk.len().min(remaining);
+                    body.extend_from_slice(&chunk[..to_copy]);
                     if body.len() > max_bytes {
-                        // Don't truncate — let the caller see len > max_bytes
-                        // so the post-cap overflow check can detect it.
                         break;
                     }
                 }
@@ -131,9 +133,15 @@ impl HttpDispatch {
                 .await
                 .unwrap_or_default();
             let text = String::from_utf8_lossy(&error_body);
+            let truncated: String = text.chars().take(500).collect();
+            let message = if truncated.len() < text.len() {
+                format!("{status}: {truncated}... [{} bytes total]", error_body.len())
+            } else {
+                format!("{status}: {truncated}")
+            };
             return Err(SquallError::Upstream {
                 provider: provider.to_string(),
-                message: format!("{status}: {text}"),
+                message,
                 status: Some(status.as_u16()),
             });
         }

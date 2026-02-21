@@ -45,6 +45,11 @@ impl SquallServer {
         &self,
         Parameters(req): Parameters<ChatRequest>,
     ) -> Result<CallToolResult, McpError> {
+        context::validate_prompt(&req.prompt)
+            .map_err(|msg| McpError::invalid_params(msg, None))?;
+        context::validate_temperature(req.temperature)
+            .map_err(|msg| McpError::invalid_params(msg, None))?;
+
         let model = req.model_or_default().to_string();
         let start = Instant::now();
 
@@ -60,14 +65,14 @@ impl SquallServer {
             let base_dir = context::validate_working_directory(wd)
                 .await
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-            if let Some(ctx) = context::resolve_file_context(
+            let file_result = context::resolve_file_context(
                 file_paths,
                 &base_dir,
                 context::MAX_FILE_CONTEXT_BYTES,
             )
             .await
-            .map_err(|e| McpError::invalid_params(e.to_string(), None))?
-            {
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+            if let Some(ctx) = file_result.context {
                 prompt = format!("{ctx}\n{prompt}");
             }
         }
@@ -149,6 +154,11 @@ impl SquallServer {
         &self,
         Parameters(req): Parameters<ClinkRequest>,
     ) -> Result<CallToolResult, McpError> {
+        context::validate_prompt(&req.prompt)
+            .map_err(|msg| McpError::invalid_params(msg, None))?;
+        context::validate_temperature(req.temperature)
+            .map_err(|msg| McpError::invalid_params(msg, None))?;
+
         let cli_name = req.cli_name.clone();
         let start = Instant::now();
 
@@ -229,11 +239,17 @@ impl SquallServer {
         &self,
         Parameters(req): Parameters<ReviewRequest>,
     ) -> Result<CallToolResult, McpError> {
+        context::validate_prompt(&req.prompt)
+            .map_err(|msg| McpError::invalid_params(msg, None))?;
+        context::validate_temperature(req.temperature)
+            .map_err(|msg| McpError::invalid_params(msg, None))?;
+
         let start = std::time::Instant::now();
 
         // Resolve file context and working directory (same pattern as clink handler).
         // Use canonical path from validate_working_directory() to prevent TOCTOU.
         let mut prompt = req.prompt.clone();
+        let mut files_skipped = None;
         let working_directory = if let Some(ref file_paths) = req.file_paths {
             let wd = req.working_directory.as_deref().ok_or_else(|| {
                 McpError::invalid_params(
@@ -244,14 +260,23 @@ impl SquallServer {
             let base_dir = context::validate_working_directory(wd)
                 .await
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-            if let Some(ctx) = context::resolve_file_context(
+            let file_result = context::resolve_file_context(
                 file_paths,
                 &base_dir,
                 context::MAX_FILE_CONTEXT_BYTES,
             )
             .await
-            .map_err(|e| McpError::invalid_params(e.to_string(), None))?
-            {
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+            if !file_result.skipped.is_empty() {
+                files_skipped = Some(
+                    file_result
+                        .skipped
+                        .iter()
+                        .map(|(name, sz)| format!("{name} ({sz}B)"))
+                        .collect(),
+                );
+            }
+            if let Some(ctx) = file_result.context {
                 prompt = format!("{ctx}\n{prompt}");
             }
             Some(base_dir.to_string_lossy().to_string())
@@ -264,8 +289,19 @@ impl SquallServer {
             None
         };
 
+        // Inject diff context (shared budget with file context)
+        if let Some(ref diff_text) = req.diff {
+            let file_context_used = prompt.len() - req.prompt.len();
+            let diff_budget =
+                context::MAX_FILE_CONTEXT_BYTES.saturating_sub(file_context_used);
+            if let Some(wrapped) = context::wrap_diff_context(diff_text, diff_budget) {
+                prompt = format!("{wrapped}\n{prompt}");
+            }
+        }
+
         let executor = ReviewExecutor::new(self.registry.clone());
-        let review_response = executor.execute(&req, prompt, working_directory).await;
+        let mut review_response = executor.execute(&req, prompt, working_directory).await;
+        review_response.files_skipped = files_skipped;
 
         // Serialize the full review response as the MCP content
         let json = serde_json::to_string(&review_response)

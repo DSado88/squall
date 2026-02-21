@@ -5,6 +5,9 @@ use crate::error::SquallError;
 /// Maximum bytes of file content to inject into HTTP model prompts.
 pub const MAX_FILE_CONTEXT_BYTES: usize = 512 * 1024;
 
+/// Maximum number of file paths allowed per request (prevents DoS).
+pub const MAX_FILE_PATHS: usize = 100;
+
 /// Escape XML content characters: `<`, `>`, `&`.
 pub fn escape_xml_content(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -56,12 +59,21 @@ async fn validate_no_symlink_escape(
     })?;
 
     if !canonical.starts_with(base_dir) {
-        return Err(SquallError::FileContext(format!(
-            "path escapes base directory: {rel_path}"
-        )));
+        return Err(SquallError::SymlinkEscape(rel_path.to_string()));
     }
 
     Ok(canonical)
+}
+
+/// Result of resolving file context, with structured skip/error metadata.
+#[derive(Debug)]
+pub struct FileContextResult {
+    /// The XML-formatted file context string (None if no files included).
+    pub context: Option<String>,
+    /// Files skipped due to budget (filename, size in bytes).
+    pub skipped: Vec<(String, usize)>,
+    /// Files that had read errors (non-fatal).
+    pub errors: Vec<String>,
 }
 
 /// Read files and format as XML context. All paths must be relative to `base_dir`.
@@ -71,9 +83,21 @@ pub async fn resolve_file_context(
     paths: &[String],
     base_dir: &Path,
     budget: usize,
-) -> Result<Option<String>, SquallError> {
+) -> Result<FileContextResult, SquallError> {
     if paths.is_empty() {
-        return Ok(None);
+        return Ok(FileContextResult {
+            context: None,
+            skipped: vec![],
+            errors: vec![],
+        });
+    }
+
+    if paths.len() > MAX_FILE_PATHS {
+        return Err(SquallError::FileContext(format!(
+            "too many file paths: {} (max {})",
+            paths.len(),
+            MAX_FILE_PATHS
+        )));
     }
 
     // Validate all paths first — traversal = reject entire request
@@ -101,11 +125,8 @@ pub async fn resolve_file_context(
         // canonicalize and go into errors (non-fatal).
         let canonical = match validate_no_symlink_escape(&full_path, base_dir, rel_path).await {
             Ok(c) => c,
+            Err(e @ SquallError::SymlinkEscape(_)) => return Err(e),
             Err(e) => {
-                // Symlink escape = hard reject (security). File not found = soft skip.
-                if e.to_string().contains("escapes") {
-                    return Err(e);
-                }
                 errors.push(format!("{rel_path}: {e}"));
                 continue;
             }
@@ -178,11 +199,11 @@ pub async fn resolve_file_context(
         output.push_str(&format!("<!-- {} -->\n", escape_xml_comment(&comment)));
     }
 
-    if output.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(output))
-    }
+    Ok(FileContextResult {
+        context: if output.is_empty() { None } else { Some(output) },
+        skipped,
+        errors,
+    })
 }
 
 /// Lightweight manifest for CLI backends (paths only, no content).
@@ -193,6 +214,14 @@ pub async fn resolve_file_manifest(
 ) -> Result<Option<String>, SquallError> {
     if paths.is_empty() {
         return Ok(None);
+    }
+
+    if paths.len() > MAX_FILE_PATHS {
+        return Err(SquallError::FileContext(format!(
+            "too many file paths: {} (max {})",
+            paths.len(),
+            MAX_FILE_PATHS
+        )));
     }
 
     for p in paths {
@@ -212,11 +241,8 @@ pub async fn resolve_file_manifest(
             Ok(_) => {
                 lines.push(format!("- {rel_path} (exists)"));
             }
-            Err(e) => {
-                // Symlink escape = hard reject
-                if e.to_string().contains("escapes") {
-                    return Err(e);
-                }
+            Err(e @ SquallError::SymlinkEscape(_)) => return Err(e),
+            Err(_) => {
                 lines.push(format!("- {rel_path} (not found)"));
             }
         }
@@ -224,6 +250,84 @@ pub async fn resolve_file_manifest(
 
     let manifest = format!("Files referenced:\n{}", lines.join("\n"));
     Ok(Some(manifest))
+}
+
+/// Wrap diff text in XML tags for model prompt injection.
+/// XML-escapes content to prevent prompt framing breaks (e.g. diff editing XML files
+/// could contain `</diff>`). Budget is enforced on the **escaped** output to prevent
+/// XML entity expansion (e.g. `<` → `&lt;`) from blowing past the limit.
+/// Returns None if diff is empty or budget is zero.
+pub fn wrap_diff_context(diff: &str, budget: usize) -> Option<String> {
+    if diff.trim().is_empty() || budget == 0 {
+        return None;
+    }
+
+    // Pre-truncate raw text to prevent OOM from huge inputs.
+    // Without this, escape_xml_content allocates proportional to full input
+    // (e.g., 500MB diff → 500MB+ allocation before truncation).
+    let was_pre_truncated = diff.len() > budget;
+    let diff = if was_pre_truncated {
+        let safe_end = floor_char_boundary(diff, budget);
+        &diff[..safe_end]
+    } else {
+        diff
+    };
+
+    // Escape then enforce budget on escaped output.
+    let escaped = escape_xml_content(diff);
+
+    let truncated = if escaped.len() > budget {
+        // Find a safe UTF-8 char boundary, then find the last newline before it
+        let safe_end = floor_char_boundary(&escaped, budget);
+        match escaped[..safe_end].rfind('\n') {
+            Some(pos) => &escaped[..pos + 1],
+            None => &escaped[..safe_end], // single long line — hard cut
+        }
+    } else {
+        &escaped
+    };
+
+    let was_truncated = was_pre_truncated || truncated.len() < escaped.len();
+    let suffix = if was_truncated {
+        "\n<!-- diff truncated due to budget -->"
+    } else {
+        ""
+    };
+
+    Some(format!("<diff>\n{truncated}{suffix}\n</diff>"))
+}
+
+/// Find the largest byte index ≤ `index` that is a valid UTF-8 char boundary.
+/// Equivalent to `str::floor_char_boundary` (nightly-only as of Rust 1.xx).
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    let mut i = index;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Validate temperature parameter: must be finite and in [0.0, 2.0].
+pub fn validate_temperature(temp: Option<f64>) -> Result<(), String> {
+    if let Some(t) = temp
+        && (t.is_nan() || t.is_infinite() || !(0.0..=2.0).contains(&t))
+    {
+        return Err(format!(
+            "temperature must be between 0.0 and 2.0, got {t}"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate prompt is non-empty.
+pub fn validate_prompt(prompt: &str) -> Result<(), String> {
+    if prompt.trim().is_empty() {
+        return Err("prompt must not be empty".to_string());
+    }
+    Ok(())
 }
 
 /// Validate working directory exists, is a directory, and canonicalize it.

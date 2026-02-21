@@ -18,6 +18,8 @@ pub struct ReviewRequest {
     pub file_paths: Option<Vec<String>>,
     /// Working directory for resolving file_paths
     pub working_directory: Option<String>,
+    /// Unified diff text (e.g. git diff output) to include as review context
+    pub diff: Option<String>,
 }
 
 impl ReviewRequest {
@@ -60,4 +62,8 @@ pub struct ReviewResponse {
     pub elapsed_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persist_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_skipped: Option<Vec<String>>,
 }

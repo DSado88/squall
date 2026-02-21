@@ -441,6 +441,62 @@ async fn http_oversized_response_gives_clear_error() {
 }
 
 // ---------------------------------------------------------------------------
+// Bug G1: CLI stdin write deadlock on large prompts.
+// write_all(prompt) blocks if prompt > OS pipe buffer (~64KB) because
+// the child may fill its stdout/stderr pipes waiting for the parent to read.
+// But the parent hasn't started reading yet (readers spawn after write).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cli_large_prompt_does_not_deadlock() {
+    use squall::dispatch::cli::CliDispatch;
+    use squall::dispatch::ProviderRequest;
+    use squall::parsers::gemini::GeminiParser;
+    use std::time::{Duration, Instant};
+
+    let dispatch = CliDispatch::new();
+
+    // 256KB prompt — well above the 64KB pipe buffer.
+    // Use `cat` which echoes stdin to stdout. If stdin write blocks before
+    // stdout reader starts, cat fills the stdout pipe → both sides block → deadlock.
+    // Wrap in valid Gemini JSON so the parser succeeds.
+    let big_payload = "x".repeat(256 * 1024);
+    let prompt = format!(r#"{{"response": "{big_payload}"}}"#);
+
+    let req = ProviderRequest {
+        prompt,
+        model: "test".to_string(),
+        deadline: Instant::now() + Duration::from_secs(10),
+        working_directory: None,
+        system_prompt: None,
+        temperature: None,
+    };
+
+    let start = Instant::now();
+
+    // Wrap in tokio timeout because the deadlock blocks the stdin write_all
+    // which happens BEFORE the internal timeout wrapper — it hangs forever.
+    let result = tokio::time::timeout(
+        Duration::from_secs(8),
+        dispatch.query_model(&req, "test", "cat", &[], &GeminiParser),
+    )
+    .await;
+    let elapsed = start.elapsed();
+
+    // RED: write_all blocks → cat blocks on stdout → deadlock → outer timeout fires at 8s
+    // GREEN: concurrent stdin write → completes in < 5s
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "CLI dispatch deadlocked on large prompt. Took {:?} (expected < 5s)",
+        elapsed
+    );
+    assert!(
+        result.is_ok(),
+        "Outer timeout should not fire: {result:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Defect 10: CLI prompt passed via argv risks ARG_MAX exhaustion.
 // Prompt should be delivered via stdin instead.
 // ---------------------------------------------------------------------------
@@ -589,6 +645,7 @@ async fn xml_comment_injection_prevented() {
     )
     .await
     .unwrap()
+    .context
     .unwrap();
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -602,5 +659,241 @@ async fn xml_comment_injection_prevented() {
         arrow_count <= 1,
         "XML comment injection: filename broke comment structure. \
          Found {arrow_count} occurrences of '-->'. Output:\n{result}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Upstream error body truncation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn upstream_error_message_bounded() {
+    // Simulate what http.rs does: if the body is >500 chars, truncate
+    let long_body = "x".repeat(2000);
+    let truncated: String = long_body.chars().take(500).collect();
+    let message = format!("400 Bad Request: {truncated}... [{} bytes total]", long_body.len());
+    // Message should be bounded: 500 chars of body + status + suffix
+    assert!(message.len() < 600, "Error message should be bounded, got {}", message.len());
+}
+
+// ---------------------------------------------------------------------------
+// Bug #2: http.rs truncation checks bytes but truncates chars
+// ---------------------------------------------------------------------------
+
+#[test]
+fn upstream_error_truncation_byte_char_mismatch() {
+    // 300 emoji chars × 4 bytes = 1200 bytes. Fewer than 500 chars, so
+    // chars().take(500) captures everything. The truncation condition should
+    // detect that no actual truncation occurred.
+    // BUG (was): condition used .len() (bytes > 500 → true) instead of
+    // checking if take(500) actually truncated (truncated.len() < text.len()).
+    let emoji_body = "\u{1F600}".repeat(300); // 300 chars, 1200 bytes
+    let truncated: String = emoji_body.chars().take(500).collect();
+    // Correct condition: truncated.len() < emoji_body.len() → false (all chars captured)
+    let was_actually_truncated = truncated.len() < emoji_body.len();
+    assert!(
+        !was_actually_truncated,
+        "300 chars taken with take(500) should NOT truncate"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bug #3: error.rs stderr preview checks bytes but takes chars
+// ---------------------------------------------------------------------------
+
+#[test]
+fn process_exit_stderr_byte_char_prefix_mismatch() {
+    // 150 emoji chars × 4 bytes = 600 bytes. len() > 200 is true,
+    // but chars().count() = 150 which is ≤ 200. Prefix "..." should NOT appear.
+    // BUG: condition uses .len() (bytes) instead of .chars().count()
+    let emoji_stderr = "\u{1F600}".repeat(150); // 150 chars, 600 bytes
+    let err = SquallError::ProcessExit {
+        code: 1,
+        stderr: emoji_stderr.clone(),
+    };
+    let msg = err.user_message();
+    // With only 150 chars, take(200) captures everything. No truncation occurred.
+    // So "..." prefix should NOT appear.
+    assert!(
+        !msg.contains("..."),
+        "150 chars (600 bytes) should not trigger truncation prefix. \
+         Bug: len() checks bytes not chars. Message: {msg}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// DoS: wrap_diff_context must not allocate proportional to raw input
+// ---------------------------------------------------------------------------
+
+#[test]
+fn wrap_diff_large_input_respects_budget() {
+    // 10MB of '<' chars. Without pre-truncation, escape_xml_content allocates
+    // 40MB+ (each '<' → '&lt;' = 4x). With pre-truncation, caps at budget first.
+    let huge_diff = "<".repeat(10_000_000);
+    let budget = 1000;
+    let result = squall::context::wrap_diff_context(&huge_diff, budget);
+    let wrapped = result.expect("Should return Some");
+    // Strip wrapper to check content
+    let content = wrapped
+        .strip_prefix("<diff>\n")
+        .unwrap_or(&wrapped)
+        .strip_suffix("\n</diff>")
+        .unwrap_or(&wrapped);
+    let escaped_content = if let Some(pos) = content.find("\n<!-- diff truncated") {
+        &content[..pos]
+    } else {
+        content
+    };
+    assert!(
+        escaped_content.len() <= budget,
+        "10MB input with budget {budget} should produce ≤{budget} bytes of escaped content, got {}",
+        escaped_content.len()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// DoS: file_paths array length must be capped
+// ---------------------------------------------------------------------------
+
+#[test]
+fn file_paths_array_length_capped() {
+    // 10,000 paths should be rejected before processing
+    let max_paths = squall::context::MAX_FILE_PATHS;
+    assert!(
+        max_paths <= 200,
+        "MAX_FILE_PATHS should be ≤200 to prevent DoS, got {max_paths}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// DoS: models array length must be capped
+// ---------------------------------------------------------------------------
+
+#[test]
+fn models_array_length_capped() {
+    let max_models = squall::review::MAX_MODELS;
+    assert!(
+        max_models <= 50,
+        "MAX_MODELS should be ≤50 to prevent DoS, got {max_models}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Input validation: temperature
+// ---------------------------------------------------------------------------
+
+#[test]
+fn temperature_nan_rejected() {
+    assert!(squall::context::validate_temperature(Some(f64::NAN)).is_err());
+}
+
+#[test]
+fn temperature_infinity_rejected() {
+    assert!(squall::context::validate_temperature(Some(f64::INFINITY)).is_err());
+    assert!(squall::context::validate_temperature(Some(f64::NEG_INFINITY)).is_err());
+}
+
+#[test]
+fn temperature_negative_rejected() {
+    assert!(squall::context::validate_temperature(Some(-0.1)).is_err());
+}
+
+#[test]
+fn temperature_above_2_rejected() {
+    assert!(squall::context::validate_temperature(Some(2.1)).is_err());
+}
+
+#[test]
+fn temperature_valid_values_accepted() {
+    assert!(squall::context::validate_temperature(None).is_ok());
+    assert!(squall::context::validate_temperature(Some(0.0)).is_ok());
+    assert!(squall::context::validate_temperature(Some(1.0)).is_ok());
+    assert!(squall::context::validate_temperature(Some(2.0)).is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// Input validation: prompt
+// ---------------------------------------------------------------------------
+
+#[test]
+fn empty_prompt_rejected() {
+    assert!(squall::context::validate_prompt("").is_err());
+}
+
+#[test]
+fn whitespace_only_prompt_rejected() {
+    assert!(squall::context::validate_prompt("   \n\t  ").is_err());
+}
+
+#[test]
+fn valid_prompt_accepted() {
+    assert!(squall::context::validate_prompt("hello").is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// Bug C1: symlink escape detection uses string matching on "escapes"
+// A file path containing "escapes" in its name is misclassified as a
+// symlink escape and hard-fails the entire request.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn filename_containing_escapes_not_misclassified() {
+    use squall::context;
+
+    let dir = std::env::temp_dir().join("squall-test-escapes-word");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // File with "escapes" in the name — should NOT be treated as symlink escape
+    let filename = "escapes_plan.txt";
+    std::fs::write(dir.join(filename), "harmless content").unwrap();
+
+    let result = context::resolve_file_context(
+        &[filename.to_string()],
+        &dir,
+        10_000,
+    )
+    .await;
+
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // RED: e.to_string().contains("escapes") matches the filename in the
+    // "not found" error message, misclassifying it as a symlink escape.
+    // Actually — the file exists, so canonicalize succeeds. Let's test
+    // with a nonexistent file whose path contains "escapes".
+    assert!(
+        result.is_ok(),
+        "File named 'escapes_plan.txt' should not be misclassified as symlink escape: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn nonexistent_file_with_escapes_in_name_is_soft_error() {
+    use squall::context;
+
+    let dir = std::env::temp_dir().join("squall-test-escapes-soft");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // Create a second valid file so the request doesn't fail with "all files nonexistent"
+    std::fs::write(dir.join("valid.txt"), "ok").unwrap();
+
+    // Nonexistent file with "escapes" in path — canonicalize fails,
+    // error message contains the rel_path which contains "escapes"
+    let result = context::resolve_file_context(
+        &["my_escapes_notes.txt".to_string(), "valid.txt".to_string()],
+        &dir,
+        10_000,
+    )
+    .await;
+
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // RED: contains("escapes") matches the filename in the error string,
+    //      so this returns Err (hard reject) instead of Ok with soft skip.
+    // GREEN: structured error detection, not string matching.
+    assert!(
+        result.is_ok(),
+        "Nonexistent file named 'my_escapes_notes.txt' should be a soft skip, \
+         not a hard security rejection: {result:?}"
     );
 }

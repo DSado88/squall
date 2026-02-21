@@ -23,6 +23,7 @@ fn review_request_default_timeout() {
         temperature: None,
         file_paths: None,
         working_directory: None,
+        diff: None,
     };
     assert_eq!(req.timeout_secs(), 180);
 }
@@ -37,6 +38,7 @@ fn review_request_custom_timeout() {
         temperature: None,
         file_paths: None,
         working_directory: None,
+        diff: None,
     };
     assert_eq!(req.timeout_secs(), 60);
 }
@@ -61,12 +63,15 @@ fn review_response_serializes_to_json() {
         cutoff_seconds: 180,
         elapsed_ms: 1234,
         results_file: Some(".squall/reviews/test.json".to_string()),
+        persist_error: None,
+        files_skipped: None,
     };
 
     let json = serde_json::to_string(&resp).unwrap();
     assert!(json.contains("\"status\":\"success\""));
     assert!(json.contains("\"model\":\"grok\""));
     assert!(json.contains("\"results_file\""));
+    assert!(!json.contains("persist_error"), "None persist_error should be omitted");
 }
 
 #[test]
@@ -85,6 +90,8 @@ fn review_response_omits_none_fields() {
         cutoff_seconds: 180,
         elapsed_ms: 180000,
         results_file: None,
+        persist_error: None,
+        files_skipped: None,
     };
 
     let json = serde_json::to_string(&resp).unwrap();
@@ -92,6 +99,52 @@ fn review_response_omits_none_fields() {
     assert!(!json.contains("\"response\":null"), "None fields should be skipped: {json}");
     // results_file should be omitted
     assert!(!json.contains("\"results_file\":null"), "None fields should be skipped: {json}");
+}
+
+#[test]
+fn review_response_includes_persist_error_when_set() {
+    let resp = ReviewResponse {
+        results: vec![],
+        not_started: vec![],
+        cutoff_seconds: 180,
+        elapsed_ms: 100,
+        results_file: None,
+        persist_error: Some("permission denied".to_string()),
+        files_skipped: None,
+    };
+    let json = serde_json::to_string(&resp).unwrap();
+    assert!(json.contains("\"persist_error\":\"permission denied\""));
+}
+
+#[test]
+fn review_response_includes_files_skipped_when_set() {
+    let resp = ReviewResponse {
+        results: vec![],
+        not_started: vec![],
+        cutoff_seconds: 180,
+        elapsed_ms: 100,
+        results_file: None,
+        persist_error: None,
+        files_skipped: Some(vec!["large_file.rs (50000B)".to_string()]),
+    };
+    let json = serde_json::to_string(&resp).unwrap();
+    assert!(json.contains("\"files_skipped\""));
+    assert!(json.contains("large_file.rs"));
+}
+
+#[test]
+fn review_response_omits_files_skipped_when_none() {
+    let resp = ReviewResponse {
+        results: vec![],
+        not_started: vec![],
+        cutoff_seconds: 180,
+        elapsed_ms: 100,
+        results_file: None,
+        persist_error: None,
+        files_skipped: None,
+    };
+    let json = serde_json::to_string(&resp).unwrap();
+    assert!(!json.contains("files_skipped"), "None files_skipped should be omitted: {json}");
 }
 
 #[test]
@@ -122,6 +175,7 @@ async fn executor_unknown_models_go_to_not_started() {
         temperature: None,
         file_paths: None,
         working_directory: None,
+        diff: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -160,6 +214,7 @@ async fn executor_none_models_uses_all_configured() {
         temperature: None,
         file_paths: None,
         working_directory: None,
+        diff: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -202,6 +257,7 @@ async fn executor_cutoff_aborts_slow_models() {
         temperature: None,
         file_paths: None,
         working_directory: None,
+        diff: None,
     };
 
     let start = Instant::now();
@@ -250,6 +306,7 @@ async fn executor_fast_models_complete_before_cutoff() {
         temperature: None,
         file_paths: None,
         working_directory: None,
+        diff: None,
     };
 
     let start = Instant::now();
@@ -308,6 +365,7 @@ async fn executor_mixed_fast_and_slow() {
         temperature: None,
         file_paths: None,
         working_directory: None,
+        diff: None,
     };
 
     let start = Instant::now();
@@ -345,6 +403,7 @@ async fn executor_persists_results_to_disk() {
         temperature: None,
         file_paths: None,
         working_directory: None,
+        diff: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -449,12 +508,148 @@ async fn executor_clamps_huge_timeout() {
         temperature: None,
         file_paths: None,
         working_directory: None,
+        diff: None,
     };
 
     // Should not panic — timeout is clamped internally
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
-    assert!(
-        resp.cutoff_seconds == u64::MAX,
-        "Response should report the requested timeout (unclamped for transparency)"
+    assert_eq!(
+        resp.cutoff_seconds,
+        squall::review::MAX_TIMEOUT_SECS,
+        "Response should report the effective (clamped) cutoff, not the raw request"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Bug #1: Duplicate model IDs should be deduplicated
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn executor_deduplicates_model_ids() {
+    // A fast-fail model (connection refused immediately)
+    let mut models = HashMap::new();
+    models.insert(
+        "dupe-model".to_string(),
+        ModelEntry {
+            model_id: "dupe-model".to_string(),
+            provider: "test".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://127.0.0.1:1/v1/chat".to_string(),
+                api_key: "fake".to_string(),
+            },
+        },
+    );
+    let config = Config { models };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["dupe-model".to_string(), "dupe-model".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+    };
+
+    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+
+    // Should produce exactly 1 result, not 2
+    assert_eq!(
+        resp.results.len(),
+        1,
+        "Duplicate model IDs should be deduped — got {} results: {:?}",
+        resp.results.len(),
+        resp.results.iter().map(|r| &r.model).collect::<Vec<_>>()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bug C2: MAX_MODELS not enforced on None branch (all configured models)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn executor_caps_all_configured_models() {
+    // Insert MAX_MODELS + 5 models into config
+    let mut models = HashMap::new();
+    for i in 0..(squall::review::MAX_MODELS + 5) {
+        let id = format!("model-{i}");
+        models.insert(
+            id.clone(),
+            ModelEntry {
+                model_id: id,
+                provider: "test".to_string(),
+                backend: BackendConfig::Http {
+                    base_url: "http://127.0.0.1:1/v1/chat".to_string(),
+                    api_key: "fake".to_string(),
+                },
+            },
+        );
+    }
+    let config = Config { models };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    // models: None → use all configured → should still be capped
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: None, // <-- the None branch
+        timeout_secs: Some(2),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+    };
+
+    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let total = resp.results.len() + resp.not_started.len();
+
+    // RED: None branch doesn't apply .take(MAX_MODELS), so all 25 models run
+    // GREEN: .take(MAX_MODELS) applied → capped at 20
+    assert!(
+        total <= squall::review::MAX_MODELS,
+        "models=None should be capped at MAX_MODELS ({}), got {total} total (results={}, not_started={})",
+        squall::review::MAX_MODELS,
+        resp.results.len(),
+        resp.not_started.len(),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bug #2: Persist filename should include PID for cross-process uniqueness
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn persist_filename_includes_pid() {
+    let config = Config {
+        models: HashMap::new(),
+    };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["nonexistent".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+    };
+
+    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let path = resp.results_file.expect("should persist results");
+    let pid = std::process::id().to_string();
+
+    assert!(
+        path.contains(&pid),
+        "Filename should include PID for cross-process safety, got: {path}"
+    );
+
+    // Cleanup
+    let _ = tokio::fs::remove_file(&path).await;
 }

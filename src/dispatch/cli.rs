@@ -72,23 +72,23 @@ impl CliDispatch {
             format!("failed to spawn {executable}: {e}"),
         ))?;
 
-        // Write prompt to stdin, then close it so the child sees EOF.
-        // This avoids ARG_MAX limits that apply to argv delivery.
+        // Write prompt to stdin concurrently with stdout/stderr reading.
+        // CRITICAL: must NOT await write_all before spawning pipe readers.
+        // If prompt > OS pipe buffer (~64KB) and child echoes output, both sides
+        // block: parent waiting for child to drain stdin, child waiting for parent
+        // to drain stdout. Spawning a task avoids this deadlock.
         {
             let mut stdin = child.stdin.take().expect("stdin was piped");
-            // Prepend system prompt if provided (CLI tools don't have a system message channel)
-            if let Some(ref system) = req.system_prompt {
-                stdin.write_all(system.as_bytes()).await.map_err(|e| {
-                    SquallError::Other(format!("failed to write system prompt to {executable} stdin: {e}"))
-                })?;
-                stdin.write_all(b"\n\n").await.map_err(|e| {
-                    SquallError::Other(format!("failed to write to {executable} stdin: {e}"))
-                })?;
-            }
-            stdin.write_all(req.prompt.as_bytes()).await.map_err(|e| {
-                SquallError::Other(format!("failed to write prompt to {executable} stdin: {e}"))
-            })?;
-            // drop closes the pipe → child sees EOF on stdin
+            let system_prompt = req.system_prompt.clone();
+            let prompt = req.prompt.clone();
+            tokio::spawn(async move {
+                if let Some(ref system) = system_prompt {
+                    let _ = stdin.write_all(system.as_bytes()).await;
+                    let _ = stdin.write_all(b"\n\n").await;
+                }
+                let _ = stdin.write_all(prompt.as_bytes()).await;
+                // drop closes the pipe → child sees EOF on stdin
+            });
         }
 
         // Get the PID so we can kill the entire process group on timeout.

@@ -33,6 +33,9 @@ pub enum SquallError {
     #[error("file context error: {0}")]
     FileContext(String),
 
+    #[error("path escapes base directory: {0}")]
+    SymlinkEscape(String),
+
     #[error("{0}")]
     Other(String),
 }
@@ -82,9 +85,21 @@ impl SquallError {
             Self::SchemaParse(_) => {
                 "failed to parse provider response".to_string()
             }
-            Self::ProcessExit { code, .. } => format!("CLI process exited with code {code}"),
+            Self::ProcessExit { code, stderr } => {
+                if stderr.trim().is_empty() {
+                    format!("CLI process exited with code {code}")
+                } else {
+                    // Take tail (last 200 chars) — CLI tools dump banners first,
+                    // the actual error is at the end.
+                    let preview: String =
+                        stderr.chars().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect();
+                    let prefix = if preview.len() < stderr.len() { "..." } else { "" };
+                    format!("CLI process exited with code {code}: {prefix}{preview}")
+                }
+            }
             Self::Request(_) => "request to provider failed".to_string(),
             Self::FileContext(msg) => format!("file context error: {msg}"),
+            Self::SymlinkEscape(path) => format!("path escapes sandbox: {path}"),
             Self::Other(_) => "an error occurred".to_string(),
         }
     }

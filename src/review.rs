@@ -8,6 +8,9 @@ static PERSIST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use tokio::task::{Id as TaskId, JoinSet};
 
+/// Maximum number of models per review request (prevents DoS).
+pub const MAX_MODELS: usize = 20;
+
 use crate::dispatch::registry::Registry;
 use crate::dispatch::ProviderRequest;
 use crate::error::SquallError;
@@ -39,17 +42,26 @@ impl ReviewExecutor {
         prompt: String,
         working_directory: Option<String>,
     ) -> ReviewResponse {
-        // Fix #3: Clamp timeout to prevent Instant overflow from untrusted input
-        let cutoff = Duration::from_secs(req.timeout_secs().min(MAX_TIMEOUT_SECS));
+        // Fix #3: Clamp timeout to prevent Instant overflow from untrusted input.
+        // Report the effective (clamped) value in the response, not the raw request.
+        let effective_cutoff_secs = req.timeout_secs().min(MAX_TIMEOUT_SECS);
+        let cutoff = Duration::from_secs(effective_cutoff_secs);
         let start = Instant::now();
 
-        // Determine which models to query
+        // Determine which models to query (deduplicate, cap at MAX_MODELS)
         let target_models: Vec<String> = if let Some(ref specific) = req.models {
-            specific.clone()
+            let mut seen = HashSet::new();
+            specific
+                .iter()
+                .filter(|m| seen.insert((*m).clone()))
+                .take(MAX_MODELS)
+                .cloned()
+                .collect()
         } else {
             self.registry
                 .list_models()
                 .iter()
+                .take(MAX_MODELS)
                 .map(|m| m.model_id.clone())
                 .collect()
         };
@@ -143,8 +155,10 @@ impl ReviewExecutor {
                             });
                             if set.is_empty() { break; }
                         }
-                        // Fix #1: Attribute panics to the correct model via task ID
-                        Some(Err(join_err)) => {
+                        // Fix #1: Attribute panics to the correct model via task ID.
+                        // Guard with is_panic() — cancelled tasks should not be
+                        // reported as panics (defensive; cancellation is unexpected here).
+                        Some(Err(join_err)) if join_err.is_panic() => {
                             tracing::error!("review task panicked: {join_err}");
                             if let Some((model_id, provider)) = task_model_map.get(&join_err.id()) {
                                 completed_models.insert(model_id.clone());
@@ -160,6 +174,10 @@ impl ReviewExecutor {
                             }
                             if set.is_empty() { break; }
                         }
+                        Some(Err(_)) => {
+                            // Cancelled (unexpected pre-abort) — ignore
+                            if set.is_empty() { break; }
+                        }
                         None => break, // All tasks done
                     }
                 }
@@ -171,33 +189,62 @@ impl ReviewExecutor {
             }
         }
 
-        // Fix #5: Drain any results that completed during abort_all().
-        // A task can finish between the deadline arm winning and abort_all() completing.
-        while let Some(join_result) = set.join_next().await {
-            if let Ok((model_id, provider, query_result, latency_ms)) = join_result {
-                completed_models.insert(model_id.clone());
-                results.push(match query_result {
-                    Ok(pr) => ReviewModelResult {
-                        model: pr.model,
-                        provider: pr.provider,
-                        status: ModelStatus::Success,
-                        response: Some(pr.text),
-                        error: None,
-                        reason: None,
-                        latency_ms,
-                    },
-                    Err(e) => ReviewModelResult {
-                        model: model_id,
-                        provider,
-                        status: ModelStatus::Error,
-                        response: None,
-                        error: Some(e.user_message()),
-                        reason: Some(error_reason(&e)),
-                        latency_ms,
-                    },
-                });
+        // Fix #5+#6: Drain results that completed during abort_all(), with a
+        // grace-period timeout to prevent infinite hang if tasks ignore cancellation.
+        let drain_grace = tokio::time::sleep(Duration::from_secs(5));
+        tokio::pin!(drain_grace);
+        loop {
+            tokio::select! {
+                biased;
+                join_result = set.join_next() => {
+                    match join_result {
+                        Some(Ok((model_id, provider, query_result, latency_ms))) => {
+                            completed_models.insert(model_id.clone());
+                            results.push(match query_result {
+                                Ok(pr) => ReviewModelResult {
+                                    model: pr.model,
+                                    provider: pr.provider,
+                                    status: ModelStatus::Success,
+                                    response: Some(pr.text),
+                                    error: None,
+                                    reason: None,
+                                    latency_ms,
+                                },
+                                Err(e) => ReviewModelResult {
+                                    model: model_id,
+                                    provider,
+                                    status: ModelStatus::Error,
+                                    response: None,
+                                    error: Some(e.user_message()),
+                                    reason: Some(error_reason(&e)),
+                                    latency_ms,
+                                },
+                            });
+                        }
+                        Some(Err(join_err)) if join_err.is_panic() => {
+                            // Panic during drain — attribute to correct model
+                            if let Some((model_id, provider)) = task_model_map.get(&join_err.id()) {
+                                completed_models.insert(model_id.clone());
+                                results.push(ReviewModelResult {
+                                    model: model_id.clone(),
+                                    provider: provider.clone(),
+                                    status: ModelStatus::Error,
+                                    response: None,
+                                    error: Some(format!("task panicked: {join_err}")),
+                                    reason: Some("panic".to_string()),
+                                    latency_ms: start.elapsed().as_millis() as u64,
+                                });
+                            }
+                        }
+                        Some(Err(_)) => {} // Cancelled — expected after abort_all()
+                        None => break,
+                    }
+                }
+                _ = &mut drain_grace => {
+                    tracing::warn!("{} tasks hung after abort, abandoning drain", set.len());
+                    break;
+                }
             }
-            // Aborted tasks return JoinError with is_cancelled — ignore them
         }
 
         // Mark cutoff models (spawned but didn't complete before deadline)
@@ -217,20 +264,23 @@ impl ReviewExecutor {
         }
 
         // Persist to disk — failure must never lose in-memory results
-        let results_file = match persist_results(&results, &not_started, req.timeout_secs(), elapsed_ms).await {
-            Ok(path) => Some(path),
-            Err(e) => {
-                tracing::warn!("failed to persist review results: {e}");
-                None
-            }
-        };
+        let (results_file, persist_error) =
+            match persist_results(&results, &not_started, effective_cutoff_secs, elapsed_ms).await {
+                Ok(path) => (Some(path), None),
+                Err(e) => {
+                    tracing::warn!("failed to persist review results: {e}");
+                    (None, Some(e.to_string()))
+                }
+            };
 
         ReviewResponse {
             results,
             not_started,
-            cutoff_seconds: req.timeout_secs(),
+            cutoff_seconds: effective_cutoff_secs,
             elapsed_ms,
             results_file,
+            persist_error,
+            files_skipped: None, // Set by server.rs after execute()
         }
     }
 }
@@ -248,8 +298,9 @@ fn error_reason(e: &SquallError) -> String {
     }
 }
 
-/// Write review results to `.squall/reviews/{timestamp}_{pid}.json`.
-/// Uses epoch nanos + PID for filename uniqueness across concurrent invocations.
+/// Write review results to `.squall/reviews/{timestamp}_{pid}_{seq}.json`.
+/// Uses epoch millis + PID + atomic counter for filename uniqueness across
+/// concurrent invocations and concurrent processes.
 async fn persist_results(
     results: &[ReviewModelResult],
     not_started: &[String],
@@ -263,8 +314,9 @@ async fn persist_results(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
+    let pid = std::process::id();
     let seq = PERSIST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let filename = format!("{ts}_{seq}.json");
+    let filename = format!("{ts}_{pid}_{seq}.json");
     let path = reviews_dir.join(&filename);
 
     let payload = serde_json::json!({
@@ -280,7 +332,10 @@ async fn persist_results(
     // Atomic write: temp file + rename prevents partial reads
     let tmp_path = path.with_extension("tmp");
     tokio::fs::write(&tmp_path, json.as_bytes()).await?;
-    tokio::fs::rename(&tmp_path, &path).await?;
+    if let Err(e) = tokio::fs::rename(&tmp_path, &path).await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(e);
+    }
 
     Ok(format!(".squall/reviews/{filename}"))
 }

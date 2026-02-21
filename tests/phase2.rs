@@ -150,10 +150,33 @@ fn process_exit_error_carries_stderr() {
     // Display should contain the code
     let display = format!("{err}");
     assert!(display.contains("1"));
-    // user_message should be sanitized (no stderr leaked)
+    // user_message now includes stderr preview for debuggability
     let msg = err.user_message();
     assert!(msg.contains("code 1"));
-    assert!(!msg.contains("model not found"), "user_message must not leak stderr");
+    assert!(msg.contains("model not found"), "user_message should include stderr preview");
+}
+
+#[test]
+fn process_exit_stderr_truncated_at_200_chars() {
+    let long_stderr = "x".repeat(500);
+    let err = SquallError::ProcessExit {
+        code: 1,
+        stderr: long_stderr,
+    };
+    let msg = err.user_message();
+    assert!(msg.contains("..."), "Long stderr should be truncated with ellipsis");
+    // 200 chars of stderr + "..." prefix + "CLI process exited with code 1: " ≈ ~240 chars
+    assert!(msg.len() < 300, "Message should be bounded, got {}", msg.len());
+}
+
+#[test]
+fn process_exit_empty_stderr_no_colon() {
+    let err = SquallError::ProcessExit {
+        code: 1,
+        stderr: String::new(),
+    };
+    let msg = err.user_message();
+    assert_eq!(msg, "CLI process exited with code 1");
 }
 
 // ---------------------------------------------------------------------------
