@@ -205,6 +205,64 @@ fn gemini_poll_interval_is_45_seconds() {
 }
 
 // ---------------------------------------------------------------------------
+// Backoff calculation (exponential, not linear)
+// ---------------------------------------------------------------------------
+
+use squall::dispatch::async_poll::AsyncPollDispatch;
+
+#[test]
+fn backoff_is_exponential() {
+    let api = OpenAiResponsesApi;
+    // base=5s, factor=1.5x per attempt, cap=60s
+    let d0 = AsyncPollDispatch::next_poll_delay(&api, 0);
+    let d1 = AsyncPollDispatch::next_poll_delay(&api, 1);
+    let d2 = AsyncPollDispatch::next_poll_delay(&api, 2);
+    let d10 = AsyncPollDispatch::next_poll_delay(&api, 10);
+
+    assert_eq!(d0, std::time::Duration::from_secs(5));                  // 5 * 1.5^0 = 5
+    assert_eq!(d1, std::time::Duration::from_millis(7500));             // 5 * 1.5^1 = 7.5
+    assert_eq!(d2, std::time::Duration::from_millis(11250));            // 5 * 1.5^2 = 11.25
+    assert_eq!(d10, std::time::Duration::from_secs(60));                // capped at max
+}
+
+#[test]
+fn gemini_backoff_caps_at_120s() {
+    let api = GeminiInteractionsApi;
+    // base=45s, cap=120s
+    let d0 = AsyncPollDispatch::next_poll_delay(&api, 0);
+    let d1 = AsyncPollDispatch::next_poll_delay(&api, 1);
+    let d5 = AsyncPollDispatch::next_poll_delay(&api, 5);
+
+    assert_eq!(d0, std::time::Duration::from_secs(45));                 // 45 * 1.5^0 = 45
+    assert_eq!(d1, std::time::Duration::from_millis(67500));            // 45 * 1.5^1 = 67.5
+    assert_eq!(d5, std::time::Duration::from_secs(120));                // capped at max
+}
+
+// ---------------------------------------------------------------------------
+// Model name sanitization
+// ---------------------------------------------------------------------------
+
+use squall::dispatch::async_poll::sanitize_model_name;
+
+#[test]
+fn sanitize_model_name_preserves_normal_names() {
+    assert_eq!(sanitize_model_name("o3-deep-research"), "o3-deep-research");
+    assert_eq!(sanitize_model_name("gemini"), "gemini");
+}
+
+#[test]
+fn sanitize_model_name_replaces_slashes() {
+    assert_eq!(sanitize_model_name("moonshotai/kimi-k2.5"), "moonshotai_kimi-k2_5");
+}
+
+#[test]
+fn sanitize_model_name_strips_traversal_and_special_chars() {
+    assert_eq!(sanitize_model_name("../../etc/passwd"), "______etc_passwd");
+    assert_eq!(sanitize_model_name("model\x00name"), "model_name");
+    assert_eq!(sanitize_model_name("a\\b"), "a_b");
+}
+
+// ---------------------------------------------------------------------------
 // BackendConfig::AsyncPoll and ModelEntry
 // ---------------------------------------------------------------------------
 

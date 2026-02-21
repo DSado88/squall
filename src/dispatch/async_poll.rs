@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use reqwest::Client;
@@ -12,6 +13,9 @@ const MAX_POLL_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 /// Max consecutive poll failures before giving up.
 const MAX_POLL_FAILURES: u32 = 5;
 
+/// Atomic counter for unique persist filenames (same pattern as review.rs).
+static PERSIST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 /// Result of polling an async job.
 #[derive(Debug)]
 pub enum PollStatus {
@@ -24,7 +28,6 @@ pub enum PollStatus {
 }
 
 /// Provider-specific request/response handling for async-poll APIs.
-#[allow(dead_code)]
 pub trait AsyncPollApi: Send + Sync {
     /// Build the launch request. Returns (url, headers, body).
     fn build_launch_request(
@@ -53,9 +56,6 @@ pub trait AsyncPollApi: Send + Sync {
 
     /// Maximum poll interval (backoff cap).
     fn max_poll_interval(&self) -> Duration;
-
-    /// Provider name for error reporting.
-    fn provider_name(&self) -> &str;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,10 +145,6 @@ impl AsyncPollApi for OpenAiResponsesApi {
 
     fn max_poll_interval(&self) -> Duration {
         Duration::from_secs(60)
-    }
-
-    fn provider_name(&self) -> &str {
-        "openai"
     }
 }
 
@@ -246,10 +242,6 @@ impl AsyncPollApi for GeminiInteractionsApi {
     fn max_poll_interval(&self) -> Duration {
         Duration::from_secs(120)
     }
-
-    fn provider_name(&self) -> &str {
-        "gemini-api"
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -283,8 +275,8 @@ impl AsyncPollDispatch {
         }
     }
 
-    /// Compute next poll delay with linear backoff: base × 1.5^attempt, capped.
-    fn next_poll_delay(api: &dyn AsyncPollApi, attempt: u32) -> Duration {
+    /// Compute next poll delay with exponential backoff: base × 1.5^attempt, capped.
+    pub fn next_poll_delay(api: &dyn AsyncPollApi, attempt: u32) -> Duration {
         let base = api.poll_interval();
         let max = api.max_poll_interval();
         let delay = base.mul_f64(1.5_f64.powi(attempt as i32));
@@ -319,7 +311,8 @@ impl AsyncPollDispatch {
             launch_req = launch_req.header(k, v);
         }
 
-        let launch_resp = tokio::time::timeout(Duration::from_secs(30), async {
+        let launch_timeout = remaining.min(Duration::from_secs(30));
+        let launch_resp = tokio::time::timeout(launch_timeout, async {
             launch_req
                 .json(&launch_body)
                 .send()
@@ -327,7 +320,7 @@ impl AsyncPollDispatch {
                 .map_err(SquallError::Request)
         })
         .await
-        .map_err(|_| SquallError::Timeout(30_000))??;
+        .map_err(|_| SquallError::Timeout(start.elapsed().as_millis() as u64))??;
 
         let launch_status = launch_resp.status();
         if launch_status == reqwest::StatusCode::UNAUTHORIZED
@@ -385,6 +378,14 @@ impl AsyncPollDispatch {
             tokio::time::sleep(delay).await;
             attempt += 1;
 
+            // Recalculate remaining AFTER sleep to prevent deadline drift.
+            // Without this, poll_timeout uses the stale pre-sleep value and
+            // can overrun the deadline by up to (delay - actual_remaining).
+            let remaining = req
+                .deadline
+                .checked_duration_since(Instant::now())
+                .ok_or_else(|| SquallError::Timeout(start.elapsed().as_millis() as u64))?;
+
             let (poll_url, poll_headers) = api.build_poll_request(&job_id, api_key);
 
             let mut poll_req = self.client.get(&poll_url);
@@ -419,14 +420,30 @@ impl AsyncPollDispatch {
                     continue;
                 }
                 Err(_) => {
-                    // Timeout on individual poll — retry
                     consecutive_failures += 1;
+                    tracing::warn!(
+                        provider = provider,
+                        job_id = job_id,
+                        attempt = attempt,
+                        failures = consecutive_failures,
+                        "poll request timed out"
+                    );
                     if consecutive_failures >= MAX_POLL_FAILURES {
                         return Err(SquallError::Timeout(start.elapsed().as_millis() as u64));
                     }
                     continue;
                 }
             };
+
+            // Auth failures during poll are not transient — fail fast
+            if poll_resp.status() == reqwest::StatusCode::UNAUTHORIZED
+                || poll_resp.status() == reqwest::StatusCode::FORBIDDEN
+            {
+                return Err(SquallError::AuthFailed {
+                    provider: provider.to_string(),
+                    message: format!("poll HTTP {}", poll_resp.status()),
+                });
+            }
 
             // Handle rate limiting on poll
             if poll_resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
@@ -534,7 +551,20 @@ impl AsyncPollDispatch {
     }
 }
 
-/// Persist deep research results to `.squall/research/{timestamp}_{model}.json`.
+/// Sanitize a model name for use in filenames. Only allows alphanumeric, `-`, `_`.
+pub fn sanitize_model_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Persist deep research results to `.squall/research/{timestamp}_{seq}_{model}.json`.
 async fn persist_research_result(
     model: &str,
     provider: &str,
@@ -549,8 +579,9 @@ async fn persist_research_result(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let safe_model = model.replace('/', "_");
-    let filename = format!("{ts}_{safe_model}.json");
+    let seq = PERSIST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let safe_model = sanitize_model_name(model);
+    let filename = format!("{ts}_{seq}_{safe_model}.json");
     let path = dir.join(&filename);
 
     let payload = serde_json::json!({
@@ -564,11 +595,13 @@ async fn persist_research_result(
     let json = serde_json::to_string_pretty(&payload)
         .map_err(std::io::Error::other)?;
 
+    // Atomic write: temp file + rename prevents partial reads
     let tmp_path = path.with_extension("tmp");
     tokio::fs::write(&tmp_path, json.as_bytes()).await?;
-    tokio::fs::rename(&tmp_path, &path).await.inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp_path);
-    })?;
+    if let Err(e) = tokio::fs::rename(&tmp_path, &path).await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(e);
+    }
 
     Ok(format!(".squall/research/{filename}"))
 }
