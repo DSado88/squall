@@ -80,7 +80,13 @@ impl SquallServer {
         let provider_req = ProviderRequest {
             prompt,
             model: model.clone(),
-            deadline: Instant::now() + Duration::from_secs(300), // HTTP gets 5 min
+            deadline: Instant::now() + Duration::from_secs(
+                if self.registry.get(&model).is_some_and(|e| e.is_async_poll()) {
+                    600 // async-poll deep research gets 10 min (MCP ceiling)
+                } else {
+                    300 // HTTP gets 5 min
+                }
+            ),
             working_directory: None,
             system_prompt: req.system_prompt,
             temperature: req.temperature,

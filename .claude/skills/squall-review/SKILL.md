@@ -42,7 +42,7 @@ Multi-model code review using Squall's `review` tool. Each model gets a tailored
 3. **Build per-model system prompts** with expertise lenses (see Lenses below)
 4. **Prepare the prompt** — include the diff/code and review instructions
 5. **Call `review`** with models, prompt, per_model_system_prompts, file_paths, working_directory
-6. **Read the results file** from `.squall/reviews/` and synthesize findings
+6. **Read the results file** from `.squall/reviews/` and synthesize findings (see Synthesis Phase below)
 
 ```
 ┌────────────┐    ┌────────────┐    ┌────────────┐    ┌────────────┐
@@ -58,6 +58,43 @@ Multi-model code review using Squall's `review` tool. Each model gets a tailored
                                                     │ synthesize │
                                                     └────────────┘
 ```
+
+## Synthesis Phase
+
+After `review` returns, read the persisted results file and synthesize findings. This is the most important step — raw model outputs have overlap, contradictions, and varying quality. Your job is to extract signal.
+
+### How to Synthesize
+
+1. **Read the results file** from the `results_file` path in the review response
+2. **Group findings by agreement:**
+   - **Consensus findings** — flagged by 2+ models → high confidence, report these first
+   - **Unique catches** — flagged by only 1 model → lower confidence but high coverage value (this is WHY we use multiple models)
+   - **Contradictions** — models disagree → flag for human judgment
+3. **Rank by severity:** critical > high > medium > low > info
+4. **Filter by model reliability** (use the scorecard):
+   - Codex findings at high confidence → almost certainly real (0 FP track record)
+   - Gemini systems-level findings → likely real
+   - Grok findings → check for known blind spots (XML escaping, edition 2024)
+   - GLM findings → treat as architectural advice, not bug reports
+   - Kimi findings → verify edge cases, may be contrarian but sometimes correct
+5. **Output format:**
+
+```
+### Consensus Findings (2+ models agree)
+- [critical] Description (models: gemini, codex, grok)
+- [high] Description (models: gemini, kimi)
+
+### Unique Catches (single model)
+- [medium] Description (model: codex) — high confidence given Codex track record
+- [low] Description (model: kimi) — edge case worth considering
+
+### Possible False Positives
+- [medium] Description (model: grok) — matches known Grok blind spot for X
+```
+
+### When to Skip Synthesis
+
+For **quick triage** (single model, Grok only), synthesis is unnecessary — just relay the findings directly. Synthesis adds value when 2+ models are involved.
 
 ## Model Selection
 

@@ -4,6 +4,7 @@ use std::time::Instant;
 use tokio::sync::Semaphore;
 
 use crate::config::Config;
+use crate::dispatch::async_poll::AsyncPollDispatch;
 use crate::dispatch::cli::CliDispatch;
 use crate::dispatch::http::HttpDispatch;
 use crate::dispatch::{ProviderRequest, ProviderResult};
@@ -18,6 +19,17 @@ const CLI_MAX_CONCURRENT: usize = 4;
 /// Max concurrent HTTP requests per Squall instance.
 const HTTP_MAX_CONCURRENT: usize = 8;
 
+/// Max concurrent async-poll jobs per Squall instance.
+/// Low limit since these are long-running (minutes to an hour).
+const ASYNC_POLL_MAX_CONCURRENT: usize = 4;
+
+/// Discriminant for async-poll API providers.
+#[derive(Clone, Debug)]
+pub enum AsyncPollProviderType {
+    OpenAiResponses,
+    GeminiInteractions,
+}
+
 /// Backend-specific configuration. Prevents invalid states
 /// (e.g., a CLI entry with an HTTP URL or vice versa).
 #[derive(Clone)]
@@ -29,6 +41,10 @@ pub enum BackendConfig {
     Cli {
         executable: String,
         args_template: Vec<String>,
+    },
+    AsyncPoll {
+        provider_type: AsyncPollProviderType,
+        api_key: String,
     },
 }
 
@@ -50,11 +66,17 @@ impl ModelEntry {
         matches!(self.backend, BackendConfig::Cli { .. })
     }
 
+    /// Returns true if this entry uses async-poll dispatch.
+    pub fn is_async_poll(&self) -> bool {
+        matches!(self.backend, BackendConfig::AsyncPoll { .. })
+    }
+
     /// Returns the backend type as a string for display purposes.
     pub fn backend_name(&self) -> &'static str {
         match &self.backend {
             BackendConfig::Http { .. } => "http",
             BackendConfig::Cli { .. } => "cli",
+            BackendConfig::AsyncPoll { .. } => "async_poll",
         }
     }
 }
@@ -79,6 +101,11 @@ impl std::fmt::Debug for ModelEntry {
                     .field("executable", executable)
                     .field("args_template", args_template);
             }
+            BackendConfig::AsyncPoll { provider_type, .. } => {
+                s.field("backend", &"async_poll")
+                    .field("provider_type", provider_type)
+                    .field("api_key", &"[REDACTED]");
+            }
         }
 
         s.finish()
@@ -89,8 +116,10 @@ pub struct Registry {
     models: HashMap<String, ModelEntry>,
     http: HttpDispatch,
     cli: CliDispatch,
+    async_poll: AsyncPollDispatch,
     cli_semaphore: Semaphore,
     http_semaphore: Semaphore,
+    async_poll_semaphore: Semaphore,
 }
 
 impl Registry {
@@ -99,8 +128,10 @@ impl Registry {
             models: config.models,
             http: HttpDispatch::new(),
             cli: CliDispatch::new(),
+            async_poll: AsyncPollDispatch::new(),
             cli_semaphore: Semaphore::new(CLI_MAX_CONCURRENT),
             http_semaphore: Semaphore::new(HTTP_MAX_CONCURRENT),
+            async_poll_semaphore: Semaphore::new(ASYNC_POLL_MAX_CONCURRENT),
         }
     }
 
@@ -199,6 +230,16 @@ impl Registry {
                 let _permit = Self::acquire_with_deadline(&self.cli_semaphore, req.deadline).await?;
                 self.cli
                     .query_model(req, &entry.provider, executable, args_template, &*parser)
+                    .await
+            }
+            BackendConfig::AsyncPoll {
+                provider_type,
+                api_key,
+            } => {
+                let _permit =
+                    Self::acquire_with_deadline(&self.async_poll_semaphore, req.deadline).await?;
+                self.async_poll
+                    .query_model(req, &entry.provider, provider_type, api_key)
                     .await
             }
         }

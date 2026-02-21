@@ -45,7 +45,7 @@ Squall bridges both gaps. Pass `file_paths` and `working_directory`, and:
 
 ## Models
 
-Squall has two dispatch backends: **HTTP** (OpenAI-compatible chat completions) and **CLI** (subprocess). They use separate auth — CLI models use OAuth/consumer auth at zero cost, HTTP models use API keys.
+Squall has three dispatch backends: **HTTP** (OpenAI-compatible chat completions), **CLI** (subprocess), and **async-poll** (launch-then-poll for deep research). Each uses separate auth — CLI models use OAuth/consumer auth at zero cost, HTTP models use API keys, and async-poll models use their own paid API keys.
 
 | Model | Provider | Backend | Auth |
 |-------|----------|---------|------|
@@ -54,19 +54,25 @@ Squall has two dispatch backends: **HTTP** (OpenAI-compatible chat completions) 
 | `z-ai/glm-5` | OpenRouter | HTTP | `OPENROUTER_API_KEY` |
 | `gemini` | Google | CLI | Google OAuth (free) |
 | `codex` | OpenAI | CLI | OpenAI auth (free) |
+| `o3-deep-research` | OpenAI | async-poll | `OPENAI_API_KEY` |
+| `o4-mini-deep-research` | OpenAI | async-poll | `OPENAI_API_KEY` |
+| `deep-research-pro` | Google | async-poll | `GOOGLE_API_KEY` |
 
 CLI models are auto-detected from PATH. If a model name is misspelled, the error includes "Did you mean: ..." suggestions.
 
-### Deep research (roadmap)
+### Deep research
 
-Both OpenAI and Google have deep research APIs behind paid keys. These are **not yet integrated** — today, `/squall-deep-research` works by sending research prompts through Codex CLI's normal web search via the existing `clink` tool.
+OpenAI and Google deep research models use async launch-then-poll APIs (not standard chat completions). Squall's async-poll backend handles the full lifecycle: launch a background job, poll for completion with exponential backoff, extract the result, and persist it to `.squall/research/`.
 
-| Capability | API | Key | What's needed |
-|------------|-----|-----|---------------|
-| OpenAI deep research | Responses API (`o3-deep-research`, `o4-mini-deep-research`) | `OPENAI_API_KEY` | New async-poll dispatch backend |
-| Gemini deep research | Interactions API (launch-then-poll) | `GEMINI_API_KEY` | New async-poll dispatch backend |
+| Model | API | Poll interval | Typical duration |
+|-------|-----|---------------|------------------|
+| `o3-deep-research` | OpenAI Responses API | 5s base | 5–10 min |
+| `o4-mini-deep-research` | OpenAI Responses API | 5s base | 3–8 min |
+| `deep-research-pro` | Gemini Interactions API | 45s base | 10–60 min |
 
-Neither uses the standard chat completions endpoint — both are async launch-then-poll APIs, which means Squall needs a new dispatch backend type to support them. The existing `codex` and `gemini` CLI models would remain unaffected — different names, different backends, different auth.
+Deep research models work with `chat` and `review` — no special tool needed. They get a 600s deadline (the MCP ceiling) instead of the standard 300s. Results persist to `.squall/research/` regardless of whether the MCP call completes.
+
+Auth is fully isolated: `OPENAI_API_KEY` is for the Responses API (paid), separate from the `codex` CLI which uses consumer auth. `GOOGLE_API_KEY` is for the Interactions API (paid), separate from the `gemini` CLI which uses OAuth.
 
 ## Setup
 
@@ -80,8 +86,10 @@ cargo build --release
 |----------|--------|
 | `XAI_API_KEY` | Grok |
 | `OPENROUTER_API_KEY` | Kimi, GLM (any OpenRouter model) |
+| `OPENAI_API_KEY` | o3-deep-research, o4-mini-deep-research |
+| `GOOGLE_API_KEY` | deep-research-pro |
 
-CLI models (gemini, codex) need their respective CLIs installed and authenticated.
+CLI models (gemini, codex) need their respective CLIs installed and authenticated. Deep research models are optional — they only appear in `listmodels` when their API key is set.
 
 ### Claude Code MCP config
 
@@ -94,7 +102,9 @@ Add to `~/.claude.json`:
       "command": "/path/to/squall/target/release/squall",
       "env": {
         "XAI_API_KEY": "...",
-        "OPENROUTER_API_KEY": "..."
+        "OPENROUTER_API_KEY": "...",
+        "OPENAI_API_KEY": "...",
+        "GOOGLE_API_KEY": "..."
       }
     }
   }
@@ -107,7 +117,7 @@ Add to `~/.claude.json`:
 - **No shell** — CLI dispatch uses `Command::new` + discrete args, no shell interpolation
 - **Process group kill** — Timeouts SIGKILL the entire process tree via `libc::kill(-pgid, SIGKILL)`, not just the leader
 - **Capped reads** — HTTP responses streamed with 2MB cap. CLI stdout/stderr capped via `take()`. File context pre-checked via metadata before reading
-- **Concurrency limits** — Semaphores cap CLI (4) and HTTP (8) concurrent requests
+- **Concurrency limits** — Semaphores cap CLI (4), HTTP (8), and async-poll (4) concurrent requests
 - **No cascade** — MCP results never set `is_error: true`, preventing Claude Code sibling tool call failures
 - **Error sanitization** — User-facing messages never leak internal URLs or connection details
 
@@ -128,9 +138,14 @@ Claude Code
     │
     ├─► review(prompt, models?, timeout_secs?, per_model_system_prompts?, ...)
     │       │
-    │       ├─► Parallel fan-out to N models (HTTP + CLI mixed)
+    │       ├─► Parallel fan-out to N models (HTTP + CLI + async-poll mixed)
     │       ├─► Straggler cutoff: returns when all finish or timeout expires
     │       └─► Results persisted to .squall/reviews/ and returned inline
+    │
+    ├─► chat/clink with deep research model
+    │       │
+    │       └─► Registry → AsyncPollDispatch → POST launch → poll loop → result
+    │           └─► Results persisted to .squall/research/
     │
     └─► listmodels()
 ```
@@ -164,6 +179,6 @@ Each team member gets full MCP tool access — they can call `listmodels`, `revi
 ## Tests
 
 ```bash
-cargo test        # 158 tests
+cargo test        # 182 tests
 cargo clippy      # zero warnings
 ```

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 
-use crate::dispatch::registry::{BackendConfig, ModelEntry};
+use crate::dispatch::registry::{AsyncPollProviderType, BackendConfig, ModelEntry};
 
 pub struct Config {
     pub models: HashMap<String, ModelEntry>,
@@ -103,6 +103,53 @@ impl Config {
             );
         } else {
             tracing::warn!("codex CLI not found in PATH — codex unavailable");
+        }
+
+        // --- Async-poll models (deep research) ---
+
+        // OpenAI Responses API: OPENAI_API_KEY is separate from Codex CLI (which uses consumer auth)
+        if let Ok(key) = env::var("OPENAI_API_KEY") {
+            models.insert(
+                "o3-deep-research".to_string(),
+                ModelEntry {
+                    model_id: "o3-deep-research".to_string(),
+                    provider: "openai".to_string(),
+                    backend: BackendConfig::AsyncPoll {
+                        provider_type: AsyncPollProviderType::OpenAiResponses,
+                        api_key: key.clone(),
+                    },
+                },
+            );
+            models.insert(
+                "o4-mini-deep-research".to_string(),
+                ModelEntry {
+                    model_id: "o4-mini-deep-research".to_string(),
+                    provider: "openai".to_string(),
+                    backend: BackendConfig::AsyncPoll {
+                        provider_type: AsyncPollProviderType::OpenAiResponses,
+                        api_key: key,
+                    },
+                },
+            );
+        } else {
+            tracing::warn!("OPENAI_API_KEY not set — deep research models unavailable");
+        }
+
+        // Gemini Interactions API: GOOGLE_API_KEY is separate from Gemini CLI (which uses OAuth)
+        if let Ok(key) = env::var("GOOGLE_API_KEY") {
+            models.insert(
+                "deep-research-pro".to_string(),
+                ModelEntry {
+                    model_id: "deep-research-pro-preview-12-2025".to_string(),
+                    provider: "gemini-api".to_string(),
+                    backend: BackendConfig::AsyncPoll {
+                        provider_type: AsyncPollProviderType::GeminiInteractions,
+                        api_key: key,
+                    },
+                },
+            );
+        } else {
+            tracing::warn!("GOOGLE_API_KEY not set — Gemini deep research unavailable");
         }
 
         if models.is_empty() {

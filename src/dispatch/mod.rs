@@ -1,3 +1,4 @@
+pub mod async_poll;
 pub mod cli;
 pub mod http;
 pub mod registry;

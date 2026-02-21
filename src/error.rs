@@ -39,6 +39,16 @@ pub enum SquallError {
     #[error("path escapes base directory: {0}")]
     SymlinkEscape(String),
 
+    #[error("async job failed for {provider}: {message}")]
+    AsyncJobFailed { provider: String, message: String },
+
+    #[error("poll failed for {provider} job {job_id}: {message}")]
+    PollFailed {
+        provider: String,
+        job_id: String,
+        message: String,
+    },
+
     #[error("{0}")]
     Other(String),
 }
@@ -51,6 +61,8 @@ impl SquallError {
             Self::RateLimited { provider } => Some(provider),
             Self::Upstream { provider, .. } => Some(provider),
             Self::AuthFailed { provider, .. } => Some(provider),
+            Self::AsyncJobFailed { provider, .. } => Some(provider),
+            Self::PollFailed { provider, .. } => Some(provider),
             _ => None,
         }
     }
@@ -66,6 +78,7 @@ impl SquallError {
                 status.is_some_and(|s| s >= 500)
             }
             Self::Request(_) => true, // connection errors may be transient
+            Self::PollFailed { .. } => true, // transient poll failure
             _ => false,
         }
     }
@@ -112,6 +125,12 @@ impl SquallError {
             Self::Request(_) => "request to provider failed".to_string(),
             Self::FileContext(msg) => format!("file context error: {msg}"),
             Self::SymlinkEscape(path) => format!("path escapes sandbox: {path}"),
+            Self::AsyncJobFailed { provider, .. } => {
+                format!("deep research job failed for {provider}")
+            }
+            Self::PollFailed { provider, .. } => {
+                format!("failed to check research status for {provider}")
+            }
             Self::Other(_) => "an error occurred".to_string(),
         }
     }
