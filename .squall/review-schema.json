@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["findings", "summary"],
+  "additionalProperties": false,
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "category", "scope", "description", "confidence", "model"],
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Model that produced this finding (e.g., 'gemini', 'codex', 'grok-4-1-fast-reasoning')"
+          },
+          "severity": {
+            "enum": ["critical", "high", "medium", "low", "info"]
+          },
+          "category": {
+            "enum": ["bug", "security", "performance", "style", "logic", "concurrency", "memory", "architecture"]
+          },
+          "scope": {
+            "enum": ["line", "range", "function", "file", "module", "architecture"]
+          },
+          "file": {
+            "type": ["string", "null"]
+          },
+          "start_line": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "end_line": {
+            "type": ["integer", "null"]
+          },
+          "code_snippet": {
+            "type": ["string", "null"]
+          },
+          "description": {
+            "type": "string"
+          },
+          "reasoning": {
+            "type": ["string", "null"]
+          },
+          "confidence": {
+            "enum": ["high", "medium", "low"]
+          },
+          "rule_id": {
+            "type": ["string", "null"]
+          },
+          "suggested_fix": {
+            "type": ["object", "null"],
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "before": {
+                "type": "string"
+              },
+              "after": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "references": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "object",
+              "required": ["type"],
+              "properties": {
+                "type": {
+                  "enum": ["cwe", "cve", "owasp", "docs", "internal"]
+                },
+                "id": {
+                  "type": ["string", "null"]
+                },
+                "url": {
+                  "type": ["string", "null"]
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "string"
+    }
+  }
+}
