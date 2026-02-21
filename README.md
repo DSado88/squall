@@ -57,16 +57,16 @@ Squall has two dispatch backends: **HTTP** (OpenAI-compatible chat completions) 
 
 CLI models are auto-detected from PATH. If a model name is misspelled, the error includes "Did you mean: ..." suggestions.
 
-### Deep research models (not yet integrated)
+### Deep research (roadmap)
 
-Both Gemini and Codex have deep research capabilities behind paid API keys:
+Both Gemini and Codex have deep research capabilities behind paid API keys. These are **not yet integrated** — today, `/squall-deep-research` works by sending research prompts through Codex CLI's normal web search via the existing `clink` tool.
 
-| Capability | API | Key | Status |
-|------------|-----|-----|--------|
-| Codex deep research | OpenAI chat completions (`o4-mini-deep-research`) | `OPENAI_API_KEY` | Addable as HTTP model — fits existing dispatch |
-| Gemini deep research | Gemini Interactions API (launch-then-poll) | `GEMINI_API_KEY` | Needs new async-poll dispatch backend |
+| Capability | API | Key | What's needed |
+|------------|-----|-----|---------------|
+| Codex deep research | OpenAI chat completions (`o4-mini-deep-research`) | `OPENAI_API_KEY` | New HTTP model entry — fits existing dispatch |
+| Gemini deep research | Gemini Interactions API (launch-then-poll) | `GEMINI_API_KEY` | New async-poll dispatch backend |
 
-These are separate from the CLI models. Adding `OPENAI_API_KEY` to Squall's env would register a new HTTP model (`codex-deep-research`) without affecting the existing `codex` CLI model — different name, different backend, different auth. The CLI models continue using free OAuth/consumer auth regardless of whether API keys are present.
+The architecture keeps these cleanly separated from CLI models. A future `codex-deep-research` HTTP model would use `OPENAI_API_KEY` while the existing `codex` CLI model continues using free consumer auth — different name, different backend, no cross-contamination.
 
 ## Setup
 
