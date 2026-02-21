@@ -1,6 +1,6 @@
 # Squall
 
-Fast async MCP server for dispatching prompts to multiple AI models. ~2000 lines of Rust.
+MCP server for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that dispatches prompts to multiple AI models in parallel. ~2000 lines of Rust.
 
 ## Why multiple models
 
@@ -24,7 +24,7 @@ The redundancy isn't waste — it's the point.
 
 ## What it does
 
-Squall is an MCP server that Claude Code calls as a tool. It exposes four operations:
+Squall is an [MCP](https://modelcontextprotocol.io/) server built for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). It exposes four tools:
 
 - **chat** — Send a prompt to any HTTP model (OpenAI-compatible API). Optionally attach source files that Squall reads server-side and injects into the prompt as XML.
 - **clink** — Invoke a CLI agent (Gemini, Codex). Passes the working directory as subprocess cwd so the agent can read code itself, plus a manifest of relevant file paths.
@@ -45,15 +45,28 @@ Squall bridges both gaps. Pass `file_paths` and `working_directory`, and:
 
 ## Models
 
+Squall has two dispatch backends: **HTTP** (OpenAI-compatible chat completions) and **CLI** (subprocess). They use separate auth — CLI models use OAuth/consumer auth at zero cost, HTTP models use API keys.
+
 | Model | Provider | Backend | Auth |
 |-------|----------|---------|------|
 | `grok-4-1-fast-reasoning` | xAI | HTTP | `XAI_API_KEY` |
 | `moonshotai/kimi-k2.5` | OpenRouter | HTTP | `OPENROUTER_API_KEY` |
 | `z-ai/glm-5` | OpenRouter | HTTP | `OPENROUTER_API_KEY` |
 | `gemini` | Google | CLI | Google OAuth (free) |
-| `codex` | OpenAI | CLI | OpenAI auth |
+| `codex` | OpenAI | CLI | OpenAI auth (free) |
 
 CLI models are auto-detected from PATH. If a model name is misspelled, the error includes "Did you mean: ..." suggestions.
+
+### Deep research models (not yet integrated)
+
+Both Gemini and Codex have deep research capabilities behind paid API keys:
+
+| Capability | API | Key | Status |
+|------------|-----|-----|--------|
+| Codex deep research | OpenAI chat completions (`o4-mini-deep-research`) | `OPENAI_API_KEY` | Addable as HTTP model — fits existing dispatch |
+| Gemini deep research | Gemini Interactions API (launch-then-poll) | `GEMINI_API_KEY` | Needs new async-poll dispatch backend |
+
+These are separate from the CLI models. Adding `OPENAI_API_KEY` to Squall's env would register a new HTTP model (`codex-deep-research`) without affecting the existing `codex` CLI model — different name, different backend, different auth. The CLI models continue using free OAuth/consumer auth regardless of whether API keys are present.
 
 ## Setup
 
@@ -124,15 +137,29 @@ Claude Code
 
 ## Skills
 
-Squall ships with prompt-template skills that teach Claude Code how to use the tools effectively:
+Squall ships with [Claude Code skills](https://docs.anthropic.com/en/docs/claude-code/skills) — prompt templates that teach Claude how to use the tools effectively:
 
 | Skill | What it does |
 |-------|-------------|
 | `/squall-review` | Multi-model code review with per-model expertise lenses |
 | `/squall-research` | Team-based research swarm — N agents × WebSearch × Squall review |
-| `/squall-deep-research` | Codex web search via `clink` for deep sourced research |
+| `/squall-deep-research` | Deep sourced research via Codex web search |
 
 Skills are markdown files in `.claude/skills/`. They don't change the Rust server — they teach the caller how to wire up tools that already exist.
+
+### Team swarms
+
+The `/squall-research` skill spawns a team of parallel agents, each investigating a different research vector. This requires Claude Code's experimental agent teams feature. To enable it, add to `~/.claude/settings.json`:
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  }
+}
+```
+
+Each team member gets full MCP tool access — they can call `listmodels`, `review`, `chat`, and `clink` directly via `ToolSearch`.
 
 ## Tests
 
