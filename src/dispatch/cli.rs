@@ -105,9 +105,14 @@ impl CliDispatch {
             // select! on the handles: whichever finishes first, check if it hit
             // the cap. If so, kill the child to unblock the other reader
             // (which waits for EOF that only comes when the child exits).
+            // Read one extra byte beyond the limit to distinguish "exactly at limit"
+            // from "exceeded limit". Without +1, take(N) returns N bytes in both cases
+            // and we can't tell them apart — causing false kills at the exact boundary.
+            let read_limit = MAX_OUTPUT_BYTES as u64 + 1;
+
             let stdout_handle = tokio::spawn(async move {
                 let mut buf = Vec::with_capacity(MAX_OUTPUT_BYTES.min(64 * 1024));
-                let mut capped = stdout_pipe.take(MAX_OUTPUT_BYTES as u64);
+                let mut capped = stdout_pipe.take(read_limit);
                 if let Err(e) = capped.read_to_end(&mut buf).await {
                     tracing::warn!("stdout pipe read error: {e}");
                 }
@@ -116,7 +121,7 @@ impl CliDispatch {
 
             let stderr_handle = tokio::spawn(async move {
                 let mut buf = Vec::with_capacity(MAX_OUTPUT_BYTES.min(64 * 1024));
-                let mut capped = stderr_pipe.take(MAX_OUTPUT_BYTES as u64);
+                let mut capped = stderr_pipe.take(read_limit);
                 if let Err(e) = capped.read_to_end(&mut buf).await {
                     tracing::warn!("stderr pipe read error: {e}");
                 }
@@ -129,28 +134,30 @@ impl CliDispatch {
             let mut stdout_handle = stdout_handle;
             let mut stderr_handle = stderr_handle;
 
+            // Helper: kill the process group if either buffer hit the cap.
+            // Kill only when output strictly exceeds the limit (the extra byte
+            // from read_limit proves the process tried to write more than MAX_OUTPUT_BYTES).
+            let kill_on_cap = |buf: &[u8]| {
+                if buf.len() > MAX_OUTPUT_BYTES
+                    && let Some(pid) = child_pid
+                {
+                    unsafe { libc::kill(-(pid as i32), libc::SIGKILL); }
+                }
+            };
+
             let (stdout_buf, stderr_buf) = tokio::select! {
                 result = &mut stdout_handle => {
                     let buf = result.unwrap_or_default();
-                    // Kill entire process group on cap breach — not just leader.
-                    // start_kill() only kills the direct child; grandchildren
-                    // survive holding pipes open → deadlock.
-                    if buf.len() >= MAX_OUTPUT_BYTES
-                        && let Some(pid) = child_pid
-                    {
-                        unsafe { libc::kill(-(pid as i32), libc::SIGKILL); }
-                    }
+                    kill_on_cap(&buf);
                     let stderr_buf = stderr_handle.await.unwrap_or_default();
+                    kill_on_cap(&stderr_buf);
                     (buf, stderr_buf)
                 }
                 result = &mut stderr_handle => {
                     let buf = result.unwrap_or_default();
-                    if buf.len() >= MAX_OUTPUT_BYTES
-                        && let Some(pid) = child_pid
-                    {
-                        unsafe { libc::kill(-(pid as i32), libc::SIGKILL); }
-                    }
+                    kill_on_cap(&buf);
                     let stdout_buf = stdout_handle.await.unwrap_or_default();
+                    kill_on_cap(&stdout_buf);
                     (stdout_buf, buf)
                 }
             };
@@ -174,6 +181,15 @@ impl CliDispatch {
                     return Err(SquallError::Timeout(elapsed_ms));
                 }
             };
+
+        // Explicit overflow check: if either stream exceeded the cap (the +1 sentinel
+        // byte was present), reject regardless of exit status. This handles the race
+        // where the process exits cleanly before kill_on_cap's SIGKILL arrives.
+        if stdout.len() > MAX_OUTPUT_BYTES || stderr_raw.len() > MAX_OUTPUT_BYTES {
+            return Err(SquallError::Other(format!(
+                "CLI output exceeded {MAX_OUTPUT_BYTES} byte limit"
+            )));
+        }
 
         let stderr_text = String::from_utf8_lossy(&stderr_raw).to_string();
 

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +22,10 @@ pub struct ReviewRequest {
     pub working_directory: Option<String>,
     /// Unified diff text (e.g. git diff output) to include as review context
     pub diff: Option<String>,
+    /// Per-model system prompt overrides. Key = model name, value = system prompt.
+    /// Models not in this map use the shared system_prompt.
+    #[schemars(description = "Per-model system prompt overrides. Key = model name, value = system prompt. Models not in this map use the shared system_prompt.")]
+    pub per_model_system_prompts: Option<HashMap<String, String>>,
 }
 
 impl ReviewRequest {

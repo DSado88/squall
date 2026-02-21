@@ -897,3 +897,550 @@ async fn nonexistent_file_with_escapes_in_name_is_soft_error() {
          not a hard security rejection: {result:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Bug G2: stderr finishes first in select!, stdout cap breach doesn't kill
+// If stderr is empty (finishes instantly), select! enters stderr branch.
+// The awaited stdout handle may hit MAX_OUTPUT_BYTES, but its size is never
+// checked → process not killed → child.wait() hangs until outer timeout.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cli_cross_stream_cap_kills_process() {
+    use squall::dispatch::cli::CliDispatch;
+    use squall::dispatch::ProviderRequest;
+    use squall::parsers::gemini::GeminiParser;
+    use std::time::{Duration, Instant};
+
+    let dispatch = CliDispatch::new();
+    let req = ProviderRequest {
+        prompt: String::new(),
+        model: "test".to_string(),
+        deadline: Instant::now() + Duration::from_secs(10),
+        working_directory: None,
+        system_prompt: None,
+        temperature: None,
+    };
+
+    let start = Instant::now();
+
+    // `exec 2>&-` closes stderr fd immediately → stderr reader gets EOF → wins select!.
+    // `head -c 4194304 /dev/zero` writes 4MB to stdout → exceeds 2MB cap.
+    // sleep keeps process alive if not killed.
+    // BUG: stderr branch wins select!, awaits stdout, but never checks
+    // stdout's size → no kill → sleep keeps process alive → hangs.
+    let _result = tokio::time::timeout(
+        Duration::from_secs(8),
+        dispatch.query_model(
+            &req,
+            "test",
+            "sh",
+            &[
+                "-c".to_string(),
+                "exec 2>&-; head -c 4194304 /dev/zero; sleep 3600".to_string(),
+            ],
+            &GeminiParser,
+        ),
+    )
+    .await;
+
+    let elapsed = start.elapsed();
+
+    // GREEN: cross-stream cap check kills process → completes in < 5s
+    // RED: no kill → hangs for 10s deadline
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "Cross-stream cap breach should kill process. Took {:?} (expected < 5s). \
+         stderr finished first, stdout cap breach was unchecked.",
+        elapsed
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Bug G1-R4: floor_entity_boundary panics on multibyte UTF-8 characters.
+// index.saturating_sub(4) can land inside a multibyte char (e.g., 4-byte emoji),
+// causing s[start..index] to panic at a non-char-boundary.
+// Scenario: "🦀<" → escaped "🦀&lt;" (8 bytes). Budget 6 → floor_char_boundary
+// returns 6 (inside &lt;), saturating_sub(4) = 2 which is mid-emoji → panic.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn floor_entity_boundary_no_panic_on_multibyte() {
+    // "🦀<" escapes to "🦀&lt;" (4 bytes emoji + 4 bytes entity = 8 bytes total)
+    // Budget 6: floor_char_boundary(8-byte string, 6) = 4 (emoji boundary)
+    // floor_entity_boundary called with index=4. saturating_sub(4) = 0. OK here.
+    // Budget 5: floor_char_boundary returns 4. Same thing.
+    // Budget 7: floor_char_boundary returns 7 (inside &lt;).
+    //           saturating_sub(4) = 3 which is INSIDE the 4-byte emoji → PANIC
+    let diff = "🦀<\n";
+    // Budget 7 triggers the panic path
+    let result = std::panic::catch_unwind(|| {
+        squall::context::wrap_diff_context(diff, 7)
+    });
+    assert!(
+        result.is_ok(),
+        "floor_entity_boundary panicked on multibyte char: {result:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bug G3: wrap_diff_context can split XML entities mid-entity
+// escape_xml_content produces multi-char entities like &lt; (4 chars).
+// floor_char_boundary only respects UTF-8 boundaries, not entity boundaries.
+// Truncation at budget can produce malformed XML like "&l" or "&am".
+// ---------------------------------------------------------------------------
+
+#[test]
+fn wrap_diff_entity_not_split_mid_entity() {
+    // Craft a diff where escaping produces entities right at the budget boundary.
+    // "a<" → "a&lt;" (5 chars). Budget 3 → floor_char_boundary truncates to "a&l"
+    // which is a broken XML entity.
+    let diff = "a<b\n";
+    // Budget 3: escaped "a&lt;b\n" (7 chars), truncate at 3 → "a&l" (broken entity)
+    let result = squall::context::wrap_diff_context(diff, 3).unwrap();
+
+    // Extract content between <diff>\n and \n</diff>
+    let content = result
+        .strip_prefix("<diff>\n")
+        .unwrap_or(&result)
+        .strip_suffix("\n</diff>")
+        .unwrap_or(&result);
+
+    // Strip truncation comment if present
+    let escaped_part = if let Some(pos) = content.find("\n<!-- diff truncated") {
+        &content[..pos]
+    } else {
+        content
+    };
+
+    // A dangling '&' not followed by a complete entity is malformed XML
+    // Check: no '&' that isn't part of a complete entity (&amp; &lt; &gt;)
+    let mut i = 0;
+    let bytes = escaped_part.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'&' {
+            let rest = &escaped_part[i..];
+            assert!(
+                rest.starts_with("&amp;") || rest.starts_with("&lt;") || rest.starts_with("&gt;"),
+                "Dangling/split XML entity at position {i}: {:?}",
+                &escaped_part[i..escaped_part.len().min(i + 10)]
+            );
+        }
+        i += 1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bug R2-C1: Parser sees N+1 bytes if process exits cleanly at exact overflow.
+// After take(N+1), process that writes N+1 bytes and exits status 0 before
+// SIGKILL arrives → parser runs on over-limit data. Should reject explicitly.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cli_overflow_by_one_byte_is_rejected() {
+    use squall::dispatch::cli::{CliDispatch, MAX_OUTPUT_BYTES};
+    use squall::dispatch::ProviderRequest;
+    use squall::error::SquallError;
+    use squall::parsers::gemini::GeminiParser;
+    use std::time::{Duration, Instant};
+
+    let dispatch = CliDispatch::new();
+    let req = ProviderRequest {
+        prompt: "test".to_string(),
+        model: "test".to_string(),
+        deadline: Instant::now() + Duration::from_secs(10),
+        working_directory: None,
+        system_prompt: None,
+        temperature: None,
+    };
+
+    // Output exactly MAX_OUTPUT_BYTES + 1. Process exits cleanly (status 0).
+    // kill_on_cap sends SIGKILL to already-dead process (no-op).
+    // Without overflow check, parser runs on N+1 bytes.
+    let result = dispatch
+        .query_model(
+            &req,
+            "gemini",
+            "bash",
+            &[
+                "-c".to_string(),
+                format!("yes | head -c {}", MAX_OUTPUT_BYTES + 1),
+            ],
+            &GeminiParser,
+        )
+        .await;
+
+    // The process outputs N+1 bytes and may exit before SIGKILL.
+    // Either way, we should get an error (ProcessExit from kill, or explicit overflow).
+    // Must NOT get SchemaParse (parser running on over-limit data).
+    let err = result.unwrap_err();
+    let err_msg = err.to_string();
+    assert!(
+        matches!(err, SquallError::ProcessExit { .. } | SquallError::Other(_)),
+        "N+1 byte output should be rejected as overflow or ProcessExit, not SchemaParse. Got: {err:?}"
+    );
+    // If it's the explicit overflow path, verify the message
+    if matches!(err, SquallError::Other(_)) {
+        assert!(
+            err_msg.contains("exceeded") && err_msg.contains("limit"),
+            "Overflow error should mention exceeding limit. Got: {err_msg}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bug R3-C1: Overflow check only on stdout, not stderr.
+// A process dumping huge stderr but small stdout passes the overflow check.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cli_stderr_overflow_is_rejected() {
+    use squall::dispatch::cli::{CliDispatch, MAX_OUTPUT_BYTES};
+    use squall::dispatch::ProviderRequest;
+    use squall::error::SquallError;
+    use squall::parsers::gemini::GeminiParser;
+    use std::time::{Duration, Instant};
+
+    let dispatch = CliDispatch::new();
+    let req = ProviderRequest {
+        prompt: "test".to_string(),
+        model: "test".to_string(),
+        deadline: Instant::now() + Duration::from_secs(10),
+        working_directory: None,
+        system_prompt: None,
+        temperature: None,
+    };
+
+    // Small stdout (valid exit), huge stderr (N+1 bytes).
+    // Without stderr overflow check, this would pass the stdout check
+    // and reach the parser (or return ProcessExit from kill_on_cap).
+    let result = dispatch
+        .query_model(
+            &req,
+            "gemini",
+            "bash",
+            &[
+                "-c".to_string(),
+                format!("echo ok; yes >&2 | head -c {} >&2", MAX_OUTPUT_BYTES + 1),
+            ],
+            &GeminiParser,
+        )
+        .await;
+
+    // RED: stderr overflow not checked → parser runs on "ok\n" (SchemaParse)
+    //      or ProcessExit from kill_on_cap. Either way, no explicit overflow error.
+    // GREEN: explicit stderr overflow check catches it.
+    let err = result.unwrap_err();
+    let is_overflow = matches!(&err, SquallError::Other(msg) if msg.contains("exceeded"));
+    let is_process_exit = matches!(err, SquallError::ProcessExit { .. });
+    assert!(
+        is_overflow || is_process_exit,
+        "Stderr overflow should be caught explicitly or via kill. Got: {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Model name suggestions (suggest_models + enriched ModelNotFound)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn suggest_models_substring_match() {
+    use std::collections::HashMap;
+    use squall::config::Config;
+    use squall::dispatch::registry::{BackendConfig, ModelEntry, Registry};
+
+    let mut models = HashMap::new();
+    models.insert("grok-4-1-fast-reasoning".to_string(), ModelEntry {
+        model_id: "grok-4-1-fast-reasoning".to_string(),
+        provider: "xai".to_string(),
+        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string() },
+    });
+    models.insert("gemini".to_string(), ModelEntry {
+        model_id: "gemini".to_string(),
+        provider: "gemini".to_string(),
+        backend: BackendConfig::Cli { executable: "echo".to_string(), args_template: vec![] },
+    });
+    let registry = Registry::from_config(Config { models });
+
+    let suggestions = registry.suggest_models("grok");
+    assert!(
+        suggestions.iter().any(|s| s.contains("grok")),
+        "suggest_models('grok') should match grok model, got: {suggestions:?}"
+    );
+    assert!(
+        !suggestions.iter().any(|s| s.contains("gemini")),
+        "'grok' should not match 'gemini', got: {suggestions:?}"
+    );
+}
+
+#[test]
+fn suggest_models_reverse_match() {
+    use std::collections::HashMap;
+    use squall::config::Config;
+    use squall::dispatch::registry::{BackendConfig, ModelEntry, Registry};
+
+    let mut models = HashMap::new();
+    models.insert("grok-4-1-fast-reasoning".to_string(), ModelEntry {
+        model_id: "grok-4-1-fast-reasoning".to_string(),
+        provider: "xai".to_string(),
+        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string() },
+    });
+    let registry = Registry::from_config(Config { models });
+
+    // Query longer than model name — reverse contains should match
+    let suggestions = registry.suggest_models("grok-4-1-fast-reasoning-turbo");
+    assert!(
+        suggestions.iter().any(|s| s.contains("grok")),
+        "Longer query should suggest shorter match via reverse contains, got: {suggestions:?}"
+    );
+}
+
+#[test]
+fn suggest_models_no_match() {
+    use std::collections::HashMap;
+    use squall::config::Config;
+    use squall::dispatch::registry::{BackendConfig, ModelEntry, Registry};
+
+    let mut models = HashMap::new();
+    models.insert("grok-4-1-fast-reasoning".to_string(), ModelEntry {
+        model_id: "grok-4-1-fast-reasoning".to_string(),
+        provider: "xai".to_string(),
+        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string() },
+    });
+    let registry = Registry::from_config(Config { models });
+
+    let suggestions = registry.suggest_models("zzz-nonexistent-model");
+    assert!(
+        suggestions.is_empty(),
+        "Nonexistent model should produce no suggestions, got: {suggestions:?}"
+    );
+}
+
+#[test]
+fn suggest_models_empty_query() {
+    use std::collections::HashMap;
+    use squall::config::Config;
+    use squall::dispatch::registry::{BackendConfig, ModelEntry, Registry};
+
+    let mut models = HashMap::new();
+    models.insert("grok-4-1-fast-reasoning".to_string(), ModelEntry {
+        model_id: "grok-4-1-fast-reasoning".to_string(),
+        provider: "xai".to_string(),
+        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string() },
+    });
+    let registry = Registry::from_config(Config { models });
+
+    let suggestions = registry.suggest_models("");
+    assert!(
+        suggestions.is_empty(),
+        "Empty query should return no suggestions (not all models), got: {suggestions:?}"
+    );
+
+    let whitespace = registry.suggest_models("   ");
+    assert!(
+        whitespace.is_empty(),
+        "Whitespace query should return no suggestions, got: {whitespace:?}"
+    );
+}
+
+#[test]
+fn suggest_models_sorted_and_capped() {
+    use std::collections::HashMap;
+    use squall::dispatch::registry::{BackendConfig, ModelEntry, Registry};
+    use squall::config::Config;
+
+    // Create a registry with 10 models all containing "test"
+    let mut models = HashMap::new();
+    for i in 0..10 {
+        let name = format!("test-model-{:02}", 9 - i); // Insert in reverse order
+        models.insert(
+            name.clone(),
+            ModelEntry {
+                model_id: name.clone(),
+                provider: "test".to_string(),
+                backend: BackendConfig::Http {
+                    base_url: "http://test".to_string(),
+                    api_key: "key".to_string(),
+                },
+            },
+        );
+    }
+    let config = Config { models };
+    let registry = Registry::from_config(config);
+
+    let suggestions = registry.suggest_models("test");
+    assert!(
+        suggestions.len() <= 5,
+        "Suggestions should be capped at 5, got {}",
+        suggestions.len()
+    );
+    // Check sorted
+    let mut sorted = suggestions.clone();
+    sorted.sort();
+    assert_eq!(
+        suggestions, sorted,
+        "Suggestions should be alphabetically sorted"
+    );
+}
+
+#[test]
+fn model_not_found_includes_suggestion() {
+    let err = SquallError::ModelNotFound {
+        model: "grok".to_string(),
+        suggestions: vec!["grok-4-1-fast-reasoning".to_string()],
+    };
+    let msg = err.user_message();
+    assert!(
+        msg.contains("Did you mean"),
+        "Error with suggestions should include 'Did you mean', got: {msg}"
+    );
+    assert!(
+        msg.contains("grok-4-1-fast-reasoning"),
+        "Suggestion should be in message, got: {msg}"
+    );
+}
+
+#[test]
+fn model_not_found_no_suggestion() {
+    let err = SquallError::ModelNotFound {
+        model: "zzz".to_string(),
+        suggestions: vec![],
+    };
+    let msg = err.user_message();
+    assert_eq!(
+        msg, "model not found: zzz",
+        "Error without suggestions should be clean, got: {msg}"
+    );
+    assert!(
+        !msg.contains("Did you mean"),
+        "No suggestions = no 'Did you mean'"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bug R1-C1/G1: Off-by-one in CLI output cap kill.
+// take(MAX_OUTPUT_BYTES) + kill_on_cap(>= MAX_OUTPUT_BYTES) means a process
+// outputting exactly MAX_OUTPUT_BYTES is killed. Should read N+1 and check > N.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cli_exact_limit_output_not_killed() {
+    use squall::dispatch::cli::{CliDispatch, MAX_OUTPUT_BYTES};
+    use squall::dispatch::ProviderRequest;
+    use squall::error::SquallError;
+    use squall::parsers::gemini::GeminiParser;
+    use std::time::{Duration, Instant};
+
+    let dispatch = CliDispatch::new();
+    let req = ProviderRequest {
+        prompt: "test".to_string(),
+        model: "test".to_string(),
+        deadline: Instant::now() + Duration::from_secs(10),
+        working_directory: None,
+        system_prompt: None,
+        temperature: None,
+    };
+
+    // Use head to output exactly MAX_OUTPUT_BYTES of 'y\n' data.
+    // This won't be valid JSON, so the parser will fail with SchemaParse.
+    // But if kill_on_cap fires (the bug), we get ProcessExit { code: -1 }
+    // instead, because SIGKILL causes signal death.
+    let result = dispatch
+        .query_model(
+            &req,
+            "gemini",
+            "bash",
+            &[
+                "-c".to_string(),
+                format!("yes | head -c {MAX_OUTPUT_BYTES}"),
+            ],
+            &GeminiParser,
+        )
+        .await;
+
+    // RED: buf.len() >= MAX_OUTPUT_BYTES → kill → ProcessExit { code: -1 }
+    // GREEN: buf.len() > MAX_OUTPUT_BYTES (after reading N+1) → no kill → SchemaParse
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, SquallError::SchemaParse(_)),
+        "Output of exactly MAX_OUTPUT_BYTES should produce SchemaParse (bad JSON), \
+         not ProcessExit (signal kill). Got: {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bug R1-C2: Nondeterministic model selection in review None branch.
+// HashMap::values().take(MAX_MODELS) gives different subsets across runs
+// when >MAX_MODELS models are configured. Should sort first.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn review_none_branch_model_selection_is_sorted() {
+    use std::collections::HashMap;
+    use squall::config::Config;
+    use squall::dispatch::registry::{BackendConfig, ModelEntry, Registry};
+    use squall::review::ReviewExecutor;
+    use squall::tools::review::ReviewRequest;
+    use std::sync::Arc;
+
+    // Create more than MAX_MODELS (20) models
+    let mut models = HashMap::new();
+    for i in 0..25 {
+        // Names intentionally in reverse order to exercise sorting
+        let name = format!("model-{:02}", 24 - i);
+        models.insert(
+            name.clone(),
+            ModelEntry {
+                model_id: name.clone(),
+                provider: "test".to_string(),
+                backend: BackendConfig::Http {
+                    base_url: "http://127.0.0.1:1/v1/chat".to_string(),
+                    api_key: "key".to_string(),
+                },
+            },
+        );
+    }
+    let config = Config { models };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let req = ReviewRequest {
+        prompt: "test".to_string(),
+        models: None, // triggers the None branch
+        timeout_secs: Some(3),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+    };
+
+    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    // Collect all models that were attempted (results + not_started won't
+    // include not_started here since all models exist in registry)
+    let mut selected: Vec<String> = resp.results.iter().map(|r| r.model.clone()).collect();
+    selected.sort();
+
+    // With 25 models and MAX_MODELS=20, the first 20 alphabetically should be selected.
+    // That's model-00 through model-19.
+    // RED: HashMap iteration is arbitrary → might include model-20..24 instead of model-00..04
+    // GREEN: sorted before take → always picks model-00 through model-19
+    assert_eq!(
+        selected.len(),
+        squall::review::MAX_MODELS,
+        "Should select exactly MAX_MODELS"
+    );
+    assert_eq!(
+        selected[0], "model-00",
+        "First model should be model-00 (alphabetically first). Got: {}",
+        selected[0]
+    );
+    assert_eq!(
+        selected.last().unwrap(),
+        "model-19",
+        "Last model should be model-19 (20th alphabetically). Got: {}",
+        selected.last().unwrap()
+    );
+}

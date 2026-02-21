@@ -18,7 +18,7 @@ fn parser_for_unknown_provider_returns_error() {
     assert!(result.is_err(), "Unknown provider should return Err, not fallback to GeminiParser");
     if let Err(e) = result {
         assert!(
-            matches!(e, SquallError::ModelNotFound(_)),
+            matches!(e, SquallError::ModelNotFound { .. }),
             "Expected ModelNotFound for unknown parser, got: {e:?}"
         );
     }
@@ -79,7 +79,7 @@ fn error_is_not_retryable_for_auth_failed() {
 
 #[test]
 fn error_is_not_retryable_for_model_not_found() {
-    let err = SquallError::ModelNotFound("foo".to_string());
+    let err = SquallError::ModelNotFound { model: "foo".to_string(), suggestions: vec![] };
     assert!(!err.is_retryable(), "ModelNotFound should NOT be retryable");
 }
 

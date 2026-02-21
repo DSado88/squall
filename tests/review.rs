@@ -10,6 +10,20 @@ use squall::review::ReviewExecutor;
 use squall::tools::review::{ModelStatus, ReviewRequest, ReviewResponse};
 
 // ---------------------------------------------------------------------------
+// Helper: resolve per-model system prompt (mirrors executor logic exactly)
+// ---------------------------------------------------------------------------
+fn resolve_system_prompt(
+    per_model: &Option<HashMap<String, String>>,
+    model_id: &str,
+    shared: &Option<String>,
+) -> Option<String> {
+    per_model
+        .as_ref()
+        .and_then(|map| map.get(model_id).cloned())
+        .or_else(|| shared.clone())
+}
+
+// ---------------------------------------------------------------------------
 // ReviewRequest defaults
 // ---------------------------------------------------------------------------
 
@@ -24,6 +38,7 @@ fn review_request_default_timeout() {
         file_paths: None,
         working_directory: None,
         diff: None,
+        per_model_system_prompts: None,
     };
     assert_eq!(req.timeout_secs(), 180);
 }
@@ -39,6 +54,7 @@ fn review_request_custom_timeout() {
         file_paths: None,
         working_directory: None,
         diff: None,
+        per_model_system_prompts: None,
     };
     assert_eq!(req.timeout_secs(), 60);
 }
@@ -176,6 +192,7 @@ async fn executor_unknown_models_go_to_not_started() {
         file_paths: None,
         working_directory: None,
         diff: None,
+        per_model_system_prompts: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -215,6 +232,7 @@ async fn executor_none_models_uses_all_configured() {
         file_paths: None,
         working_directory: None,
         diff: None,
+        per_model_system_prompts: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -258,6 +276,7 @@ async fn executor_cutoff_aborts_slow_models() {
         file_paths: None,
         working_directory: None,
         diff: None,
+        per_model_system_prompts: None,
     };
 
     let start = Instant::now();
@@ -307,6 +326,7 @@ async fn executor_fast_models_complete_before_cutoff() {
         file_paths: None,
         working_directory: None,
         diff: None,
+        per_model_system_prompts: None,
     };
 
     let start = Instant::now();
@@ -366,6 +386,7 @@ async fn executor_mixed_fast_and_slow() {
         file_paths: None,
         working_directory: None,
         diff: None,
+        per_model_system_prompts: None,
     };
 
     let start = Instant::now();
@@ -404,6 +425,7 @@ async fn executor_persists_results_to_disk() {
         file_paths: None,
         working_directory: None,
         diff: None,
+        per_model_system_prompts: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -509,6 +531,7 @@ async fn executor_clamps_huge_timeout() {
         file_paths: None,
         working_directory: None,
         diff: None,
+        per_model_system_prompts: None,
     };
 
     // Should not panic — timeout is clamped internally
@@ -552,6 +575,7 @@ async fn executor_deduplicates_model_ids() {
         file_paths: None,
         working_directory: None,
         diff: None,
+        per_model_system_prompts: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -602,6 +626,7 @@ async fn executor_caps_all_configured_models() {
         file_paths: None,
         working_directory: None,
         diff: None,
+        per_model_system_prompts: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -639,6 +664,7 @@ async fn persist_filename_includes_pid() {
         file_paths: None,
         working_directory: None,
         diff: None,
+        per_model_system_prompts: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -652,4 +678,102 @@ async fn persist_filename_includes_pid() {
 
     // Cleanup
     let _ = tokio::fs::remove_file(&path).await;
+}
+
+// ---------------------------------------------------------------------------
+// Per-model system prompt resolution
+// ---------------------------------------------------------------------------
+
+#[test]
+fn per_model_system_prompt_overrides_shared() {
+    let per_model = Some(HashMap::from([
+        ("model-a".to_string(), "You are a security reviewer".to_string()),
+    ]));
+    let shared = Some("You are a code reviewer".to_string());
+
+    let result = resolve_system_prompt(&per_model, "model-a", &shared);
+    assert_eq!(
+        result.as_deref(),
+        Some("You are a security reviewer"),
+        "Per-model prompt should override shared"
+    );
+}
+
+#[test]
+fn per_model_system_prompt_falls_back_to_shared() {
+    let per_model = Some(HashMap::from([
+        ("model-a".to_string(), "You are a security reviewer".to_string()),
+    ]));
+    let shared = Some("You are a code reviewer".to_string());
+
+    let result = resolve_system_prompt(&per_model, "model-b", &shared);
+    assert_eq!(
+        result.as_deref(),
+        Some("You are a code reviewer"),
+        "Model not in per-model map should fall back to shared"
+    );
+}
+
+#[test]
+fn per_model_both_none_yields_none() {
+    let result = resolve_system_prompt(&None, "model-a", &None);
+    assert_eq!(result, None, "Both absent should yield None");
+}
+
+#[test]
+fn per_model_empty_string_overrides() {
+    // Intentional: explicit empty string means "no system prompt for this model"
+    let per_model = Some(HashMap::from([
+        ("model-a".to_string(), "".to_string()),
+    ]));
+    let shared = Some("You are a code reviewer".to_string());
+
+    let result = resolve_system_prompt(&per_model, "model-a", &shared);
+    assert_eq!(
+        result.as_deref(),
+        Some(""),
+        "Empty string in per-model map should override shared (intentional: explicitly no system prompt)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Per-model system prompts: executor integration (runs without panic)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn executor_with_per_model_system_prompts() {
+    let mut models = HashMap::new();
+    models.insert(
+        "model-a".to_string(),
+        ModelEntry {
+            model_id: "model-a".to_string(),
+            provider: "test".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://127.0.0.1:1/v1/chat".to_string(),
+                api_key: "fake".to_string(),
+            },
+        },
+    );
+    let config = Config { models };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let req = ReviewRequest {
+        prompt: "review this".to_string(),
+        models: Some(vec!["model-a".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: Some("shared prompt".to_string()),
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: Some(HashMap::from([
+            ("model-a".to_string(), "You are a security expert".to_string()),
+        ])),
+    };
+
+    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    // Model will fail (fake endpoint), but executor should not panic
+    assert_eq!(resp.results.len(), 1, "Should have one result");
+    assert_eq!(resp.results[0].status, ModelStatus::Error, "Should error on fake endpoint");
 }

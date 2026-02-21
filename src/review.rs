@@ -58,12 +58,14 @@ impl ReviewExecutor {
                 .cloned()
                 .collect()
         } else {
-            self.registry
+            let mut all: Vec<String> = self.registry
                 .list_models()
                 .iter()
-                .take(MAX_MODELS)
                 .map(|m| m.model_id.clone())
-                .collect()
+                .collect();
+            all.sort();
+            all.truncate(MAX_MODELS);
+            all
         };
 
         // Build model→provider map for cutoff reporting
@@ -88,12 +90,29 @@ impl ReviewExecutor {
         // Fix #4: Compute internal deadline once before loop (not per-iteration)
         let internal_deadline = Instant::now() + cutoff + Duration::from_secs(15);
 
+        // Warn on unused per_model_system_prompts keys (likely caller typos)
+        if let Some(ref per_model) = req.per_model_system_prompts {
+            let target_set: HashSet<&String> = model_providers.iter().map(|(m, _)| m).collect();
+            let unused: Vec<&String> = per_model.keys().filter(|k| !target_set.contains(k)).collect();
+            if !unused.is_empty() {
+                tracing::warn!(
+                    unused_keys = ?unused,
+                    "per_model_system_prompts contains keys not in target models"
+                );
+            }
+        }
+
         for (model_id, provider) in &model_providers {
             let registry = self.registry.clone();
             let model_id = model_id.clone();
             let provider = provider.clone();
             let prompt = prompt.clone();
-            let system_prompt = req.system_prompt.clone();
+            // Per-model system prompt: check per_model map first, fall back to shared
+            let system_prompt = req
+                .per_model_system_prompts
+                .as_ref()
+                .and_then(|map| map.get(&model_id).cloned())
+                .or_else(|| req.system_prompt.clone());
             let temperature = req.temperature;
             // Fix #2: Thread working_directory through to CLI models
             let wd = working_directory.clone();
@@ -291,7 +310,7 @@ fn error_reason(e: &SquallError) -> String {
         SquallError::Timeout(_) => "timeout".to_string(),
         SquallError::RateLimited { .. } => "rate_limited".to_string(),
         SquallError::AuthFailed { .. } => "auth_failed".to_string(),
-        SquallError::ModelNotFound(_) => "model_not_found".to_string(),
+        SquallError::ModelNotFound { .. } => "model_not_found".to_string(),
         SquallError::SchemaParse(_) => "parse_error".to_string(),
         SquallError::ProcessExit { .. } => "process_exit".to_string(),
         _ => "error".to_string(),

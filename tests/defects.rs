@@ -178,7 +178,7 @@ fn p1_6_error_exposes_provider_for_auth_failed() {
 
 #[test]
 fn p1_6_error_returns_none_for_model_not_found() {
-    let err = SquallError::ModelNotFound("foo".to_string());
+    let err = SquallError::ModelNotFound { model: "foo".to_string(), suggestions: vec![] };
     assert_eq!(err.provider(), None);
 }
 
@@ -255,7 +255,7 @@ fn p0_4_rate_limited_user_message_is_clean() {
 
 #[test]
 fn p0_4_model_not_found_user_message_is_clean() {
-    let err = SquallError::ModelNotFound("bad-model".to_string());
+    let err = SquallError::ModelNotFound { model: "bad-model".to_string(), suggestions: vec![] };
     let msg = err.user_message();
     assert!(msg.contains("bad-model"), "Should mention the model. Got: {msg}");
 }

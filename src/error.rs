@@ -2,8 +2,11 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum SquallError {
-    #[error("model not found: {0}")]
-    ModelNotFound(String),
+    #[error("model not found: {model}")]
+    ModelNotFound {
+        model: String,
+        suggestions: Vec<String>,
+    },
 
     #[error("timeout after {0}ms")]
     Timeout(u64),
@@ -71,7 +74,16 @@ impl SquallError {
     /// Does not leak internal URLs, connection details, or upstream error bodies.
     pub fn user_message(&self) -> String {
         match self {
-            Self::ModelNotFound(model) => format!("model not found: {model}"),
+            Self::ModelNotFound { model, suggestions } => {
+                if suggestions.is_empty() {
+                    format!("model not found: {model}")
+                } else {
+                    format!(
+                        "model not found: {model}. Did you mean: {}?",
+                        suggestions.join(", ")
+                    )
+                }
+            }
             Self::Timeout(ms) => format!("request timed out after {ms}ms"),
             Self::RateLimited { provider } => {
                 format!("rate limited by {provider} — try again shortly")

@@ -38,7 +38,7 @@ impl SquallServer {
 
     #[tool(
         name = "chat",
-        description = "Query a single AI model. Parameter is `prompt`, NOT `message`.",
+        description = "Query a single AI model via HTTP (OpenAI-compatible). Use for one-off questions to a specific model. Use `listmodels` first to see available model names.",
         annotations(read_only_hint = true)
     )]
     async fn chat(
@@ -147,7 +147,7 @@ impl SquallServer {
 
     #[tool(
         name = "clink",
-        description = "Invoke a CLI agent (Gemini/Codex). Parameter is `prompt`, NOT `message`.",
+        description = "Query a CLI-based AI model (e.g. gemini, codex). Use for tasks that benefit from the model's native CLI capabilities. Use `listmodels` first to see available model names.",
         annotations(read_only_hint = true)
     )]
     async fn clink(
@@ -232,7 +232,7 @@ impl SquallServer {
 
     #[tool(
         name = "review",
-        description = "Dispatch prompt to multiple models with straggler cutoff. Returns per-model results.",
+        description = "Fan out a prompt to multiple models in parallel with straggler cutoff. Use this instead of multiple chat/clink calls when you want responses from several models. Supports per-model system prompts via `per_model_system_prompts` for different review angles (security, architecture, etc). Use `listmodels` first to get exact model names.",
         annotations(read_only_hint = true)
     )]
     async fn review(
@@ -332,7 +332,13 @@ impl ServerHandler for SquallServer {
                 ..Default::default()
             },
             instructions: Some(
-                "Squall: fast async dispatch to external AI models via HTTP and CLI subprocesses."
+                "Squall: parallel AI model dispatch via HTTP and CLI.\n\n\
+                 Tools:\n\
+                 - `listmodels`: List available models. Call this first to get exact model names.\n\
+                 - `chat`: Single HTTP model query.\n\
+                 - `clink`: Single CLI model query.\n\
+                 - `review`: Fan-out to multiple models in one call. Preferred over multiple chat/clink calls.\n\n\
+                 When querying multiple models, ALWAYS use `review` instead of separate chat/clink calls."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),

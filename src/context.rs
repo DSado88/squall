@@ -279,6 +279,8 @@ pub fn wrap_diff_context(diff: &str, budget: usize) -> Option<String> {
     let truncated = if escaped.len() > budget {
         // Find a safe UTF-8 char boundary, then find the last newline before it
         let safe_end = floor_char_boundary(&escaped, budget);
+        // Backtrack past any partial XML entity (e.g. "&l" from "&lt;")
+        let safe_end = floor_entity_boundary(&escaped, safe_end);
         match escaped[..safe_end].rfind('\n') {
             Some(pos) => &escaped[..pos + 1],
             None => &escaped[..safe_end], // single long line — hard cut
@@ -295,6 +297,31 @@ pub fn wrap_diff_context(diff: &str, budget: usize) -> Option<String> {
     };
 
     Some(format!("<diff>\n{truncated}{suffix}\n</diff>"))
+}
+
+/// Find the largest byte index ≤ `index` that doesn't split an XML entity.
+/// If `index` lands inside `&amp;`, `&lt;`, or `&gt;`, backtrack to just before the `&`.
+fn floor_entity_boundary(s: &str, index: usize) -> usize {
+    if index == 0 || index >= s.len() {
+        return index;
+    }
+    // Search backwards from index for '&'. If found, check whether a complete
+    // entity (ending with ';') exists between that '&' and index.
+    // Max entity length is 5 ("&amp;"), so look back at most 4 bytes.
+    // Use floor_char_boundary to avoid slicing inside a multibyte character.
+    let start = floor_char_boundary(s, index.saturating_sub(4));
+    if let Some(amp_offset) = s[start..index].rfind('&') {
+        let amp_pos = start + amp_offset;
+        // Check if there's a ';' completing the entity before our cut point
+        let after_amp = &s[amp_pos..s.len().min(amp_pos + 5)];
+        if let Some(semi) = after_amp.find(';')
+            && amp_pos + semi >= index
+        {
+            // The ';' is at or beyond our cut point → entity is split → backtrack
+            return amp_pos;
+        }
+    }
+    index
 }
 
 /// Find the largest byte index ≤ `index` that is a valid UTF-8 char boundary.

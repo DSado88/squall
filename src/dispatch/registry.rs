@@ -122,15 +122,37 @@ impl Registry {
         self.models.values().collect()
     }
 
+    /// Suggest similar model names for a failed lookup (substring match).
+    /// Sorted alphabetically, capped at 5 to keep error messages readable.
+    pub fn suggest_models(&self, query: &str) -> Vec<String> {
+        let q = query.trim().to_lowercase();
+        if q.is_empty() {
+            return vec![];
+        }
+        let mut suggestions: Vec<String> = self
+            .models
+            .keys()
+            .filter(|k| {
+                let k_lower = k.to_lowercase();
+                k_lower.contains(&q) || q.contains(&k_lower)
+            })
+            .cloned()
+            .collect();
+        suggestions.sort();
+        suggestions.truncate(5);
+        suggestions
+    }
+
     /// Resolve the appropriate parser for a CLI provider.
     /// Returns an error for unknown providers instead of silently falling back.
     pub fn parser_for(provider: &str) -> Result<Box<dyn OutputParser>, SquallError> {
         match provider {
             "gemini" => Ok(Box::new(GeminiParser)),
             "codex" => Ok(Box::new(CodexParser)),
-            _ => Err(SquallError::ModelNotFound(format!(
-                "no parser for CLI provider: {provider}"
-            ))),
+            _ => Err(SquallError::ModelNotFound {
+                model: format!("no parser for CLI provider: {provider}"),
+                suggestions: vec![],
+            }),
         }
     }
 
@@ -154,7 +176,13 @@ impl Registry {
         let entry = self
             .models
             .get(&req.model)
-            .ok_or_else(|| SquallError::ModelNotFound(req.model.clone()))?;
+            .ok_or_else(|| {
+                let suggestions = self.suggest_models(&req.model);
+                SquallError::ModelNotFound {
+                    model: req.model.clone(),
+                    suggestions,
+                }
+            })?;
 
         match &entry.backend {
             BackendConfig::Http { base_url, api_key } => {
