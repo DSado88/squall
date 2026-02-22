@@ -39,37 +39,17 @@ impl Config {
         }
 
         if let Some(key) = openrouter_key {
-            let base_url = "https://openrouter.ai/api/v1/chat/completions".to_string();
-
-            models.insert(
-                "moonshotai/kimi-k2.5".to_string(),
-                ModelEntry {
-                    model_id: "moonshotai/kimi-k2.5".to_string(),
-                    provider: "openrouter".to_string(),
-                    backend: BackendConfig::Http {
-                        base_url: base_url.clone(),
-                        api_key: key.clone(),
-                        api_format: ApiFormat::OpenAi,
-                    },
-                    description: "Moonshot's Kimi K2.5, contrarian reviewer with edge case focus".to_string(),
-                    strengths: vec!["contrarian perspective".to_string(), "edge case detection".to_string()],
-                    weaknesses: vec!["frequent timeouts at 300s".to_string(), "inconsistent quality".to_string()],
-                    speed_tier: "slow".to_string(),
-                    precision_tier: "medium".to_string(),
-                },
-            );
-
             models.insert(
                 "z-ai/glm-5".to_string(),
                 ModelEntry {
                     model_id: "z-ai/glm-5".to_string(),
                     provider: "openrouter".to_string(),
                     backend: BackendConfig::Http {
-                        base_url,
+                        base_url: "https://openrouter.ai/api/v1/chat/completions".to_string(),
                         api_key: key,
                         api_format: ApiFormat::OpenAi,
                     },
-                    description: "Zhipu's GLM-5, strong architectural framing".to_string(),
+                    description: "Zhipu's GLM-5, architectural framing via OpenRouter".to_string(),
                     strengths: vec!["clear architectural analysis".to_string(), "structured output".to_string()],
                     weaknesses: vec!["rarely finds real bugs".to_string(), "surface-level findings".to_string()],
                     speed_tier: "medium".to_string(),
@@ -143,19 +123,57 @@ impl Config {
             );
         }
 
-        // Qwen 3.5 via Together AI
+        // Together AI models: Kimi, DeepSeek V3.2, Qwen 3.5 — US-hosted, single API key
         if let Ok(key) = env::var("TOGETHER_API_KEY") {
+            let together_url = "https://api.together.xyz/v1/chat/completions".to_string();
+
+            models.insert(
+                "kimi-k2.5".to_string(),
+                ModelEntry {
+                    model_id: "moonshotai/Kimi-K2.5".to_string(),
+                    provider: "together".to_string(),
+                    backend: BackendConfig::Http {
+                        base_url: together_url.clone(),
+                        api_key: key.clone(),
+                        api_format: ApiFormat::OpenAi,
+                    },
+                    description: "Moonshot's Kimi K2.5 via Together (US-hosted), contrarian edge case reviewer".to_string(),
+                    strengths: vec!["contrarian perspective".to_string(), "edge case detection".to_string()],
+                    weaknesses: vec!["inconsistent quality".to_string()],
+                    speed_tier: "medium".to_string(),
+                    precision_tier: "medium".to_string(),
+                },
+            );
+
+            models.insert(
+                "deepseek-v3.2".to_string(),
+                ModelEntry {
+                    model_id: "DeepSeek-AI/DeepSeek-V3-2-Exp".to_string(),
+                    provider: "together".to_string(),
+                    backend: BackendConfig::Http {
+                        base_url: together_url.clone(),
+                        api_key: key.clone(),
+                        api_format: ApiFormat::OpenAi,
+                    },
+                    description: "DeepSeek V3.2 via Together (US-hosted), top open-source coder".to_string(),
+                    strengths: vec!["90% LiveCodeBench".to_string(), "strong reasoning".to_string(), "finds real bugs".to_string()],
+                    weaknesses: vec!["verbose output".to_string()],
+                    speed_tier: "medium".to_string(),
+                    precision_tier: "high".to_string(),
+                },
+            );
+
             models.insert(
                 "qwen-3.5".to_string(),
                 ModelEntry {
                     model_id: "Qwen/Qwen3.5-72B".to_string(),
                     provider: "together".to_string(),
                     backend: BackendConfig::Http {
-                        base_url: "https://api.together.xyz/v1/chat/completions".to_string(),
+                        base_url: together_url,
                         api_key: key,
                         api_format: ApiFormat::OpenAi,
                     },
-                    description: "Alibaba's Qwen 3.5 72B, strong multilingual code model".to_string(),
+                    description: "Alibaba's Qwen 3.5 72B via Together (US-hosted), strong multilingual code model".to_string(),
                     strengths: vec!["multilingual understanding".to_string(), "good at pattern matching".to_string()],
                     weaknesses: vec!["sometimes misses context".to_string()],
                     speed_tier: "medium".to_string(),
