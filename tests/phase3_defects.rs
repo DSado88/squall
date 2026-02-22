@@ -150,6 +150,8 @@ fn clink_request_has_no_role_field() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
     assert_eq!(req.prompt, "hello");
     assert_eq!(req.cli_name, "gemini");

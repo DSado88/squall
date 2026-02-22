@@ -1,4 +1,4 @@
-use squall::dispatch::registry::{BackendConfig, ModelEntry};
+use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry};
 use squall::response::{PalMetadata, PalToolResponse};
 
 #[test]
@@ -52,11 +52,11 @@ fn model_entry_backend_types() {
         backend: BackendConfig::Http {
             base_url: "https://api.x.ai/v1/chat/completions".to_string(),
             api_key: "test-key".to_string(),
+            api_format: ApiFormat::OpenAi,
         },
     };
 
-    assert!(http_entry.is_http());
-    assert!(!http_entry.is_cli());
+    assert!(matches!(http_entry.backend, BackendConfig::Http { .. }));
     assert_eq!(http_entry.backend_name(), "http");
 
     let cli_entry = ModelEntry {
@@ -68,8 +68,7 @@ fn model_entry_backend_types() {
         },
     };
 
-    assert!(cli_entry.is_cli());
-    assert!(!cli_entry.is_http());
+    assert!(matches!(cli_entry.backend, BackendConfig::Cli { .. }));
     assert_eq!(cli_entry.backend_name(), "cli");
 }
 
@@ -84,6 +83,8 @@ fn chat_request_default_model() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
     assert_eq!(req.model_or_default(), "grok-4-1-fast-reasoning");
 
@@ -94,6 +95,8 @@ fn chat_request_default_model() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
     assert_eq!(req.model_or_default(), "moonshotai/kimi-k2.5");
 }

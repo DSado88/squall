@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use squall::config::Config;
-use squall::dispatch::registry::{BackendConfig, ModelEntry, Registry};
+use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
 use squall::review::ReviewExecutor;
 use squall::tools::review::{ModelStatus, ReviewRequest, ReviewResponse};
 
@@ -39,6 +39,10 @@ fn review_request_default_timeout() {
         working_directory: None,
         diff: None,
         per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
     assert_eq!(req.timeout_secs(), 180);
 }
@@ -55,6 +59,10 @@ fn review_request_custom_timeout() {
         working_directory: None,
         diff: None,
         per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
     assert_eq!(req.timeout_secs(), 60);
 }
@@ -74,6 +82,7 @@ fn review_response_serializes_to_json() {
             error: None,
             reason: None,
             latency_ms: 1234,
+            partial: false,
         }],
         not_started: vec![],
         cutoff_seconds: 180,
@@ -101,6 +110,7 @@ fn review_response_omits_none_fields() {
             error: Some("timeout".to_string()),
             reason: Some("cutoff".to_string()),
             latency_ms: 180000,
+            partial: false,
         }],
         not_started: vec![],
         cutoff_seconds: 180,
@@ -193,6 +203,10 @@ async fn executor_unknown_models_go_to_not_started() {
         working_directory: None,
         diff: None,
         per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -216,6 +230,7 @@ async fn executor_none_models_uses_all_configured() {
             backend: BackendConfig::Http {
                 base_url: "http://127.0.0.1:1/v1/chat".to_string(),
                 api_key: "fake-key".to_string(),
+                api_format: ApiFormat::OpenAi,
             },
         },
     );
@@ -233,6 +248,10 @@ async fn executor_none_models_uses_all_configured() {
         working_directory: None,
         diff: None,
         per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -260,6 +279,7 @@ async fn executor_cutoff_aborts_slow_models() {
                 // 192.0.2.1 is TEST-NET-1 — packets are silently dropped (simulates slow)
                 base_url: "http://192.0.2.1:80/v1/chat".to_string(),
                 api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
             },
         },
     );
@@ -277,16 +297,20 @@ async fn executor_cutoff_aborts_slow_models() {
         working_directory: None,
         diff: None,
         per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
 
     let start = Instant::now();
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
     let elapsed = start.elapsed();
 
-    // Should complete within ~2-3s (cutoff + small overhead), not hang forever
+    // Should complete within ~2s cutoff + 3s cooperative grace + overhead, not hang forever
     assert!(
-        elapsed.as_secs() < 5,
-        "Cutoff should have fired within ~2s, took {elapsed:?}"
+        elapsed.as_secs() < 8,
+        "Cutoff should have fired within ~5s (2s cutoff + 3s grace), took {elapsed:?}"
     );
 
     // The slow model should be marked as error with cutoff reason
@@ -310,6 +334,7 @@ async fn executor_fast_models_complete_before_cutoff() {
             backend: BackendConfig::Http {
                 base_url: "http://127.0.0.1:1/v1/chat".to_string(),
                 api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
             },
         },
     );
@@ -327,6 +352,10 @@ async fn executor_fast_models_complete_before_cutoff() {
         working_directory: None,
         diff: None,
         per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
 
     let start = Instant::now();
@@ -358,6 +387,7 @@ async fn executor_mixed_fast_and_slow() {
             backend: BackendConfig::Http {
                 base_url: "http://127.0.0.1:1/v1/chat".to_string(),
                 api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
             },
         },
     );
@@ -370,6 +400,7 @@ async fn executor_mixed_fast_and_slow() {
             backend: BackendConfig::Http {
                 base_url: "http://192.0.2.1:80/v1/chat".to_string(),
                 api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
             },
         },
     );
@@ -387,14 +418,18 @@ async fn executor_mixed_fast_and_slow() {
         working_directory: None,
         diff: None,
         per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
 
     let start = Instant::now();
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
     let elapsed = start.elapsed();
 
-    // Should take ~2s (cutoff), not more
-    assert!(elapsed.as_secs() < 5, "Took {elapsed:?}");
+    // Should take ~2s cutoff + 3s cooperative grace + overhead
+    assert!(elapsed.as_secs() < 8, "Took {elapsed:?}");
     // Should have 2 results
     assert_eq!(resp.results.len(), 2, "Expected results for both models");
     // Both should be errors (one connection refused, one cutoff)
@@ -426,6 +461,10 @@ async fn executor_persists_results_to_disk() {
         working_directory: None,
         diff: None,
         per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -532,6 +571,10 @@ async fn executor_clamps_huge_timeout() {
         working_directory: None,
         diff: None,
         per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
 
     // Should not panic — timeout is clamped internally
@@ -559,6 +602,7 @@ async fn executor_deduplicates_model_ids() {
             backend: BackendConfig::Http {
                 base_url: "http://127.0.0.1:1/v1/chat".to_string(),
                 api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
             },
         },
     );
@@ -576,6 +620,10 @@ async fn executor_deduplicates_model_ids() {
         working_directory: None,
         diff: None,
         per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -608,6 +656,7 @@ async fn executor_caps_all_configured_models() {
                 backend: BackendConfig::Http {
                     base_url: "http://127.0.0.1:1/v1/chat".to_string(),
                     api_key: "fake".to_string(),
+                    api_format: ApiFormat::OpenAi,
                 },
             },
         );
@@ -627,6 +676,10 @@ async fn executor_caps_all_configured_models() {
         working_directory: None,
         diff: None,
         per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -665,6 +718,10 @@ async fn persist_filename_includes_pid() {
         working_directory: None,
         diff: None,
         per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -751,6 +808,7 @@ async fn executor_with_per_model_system_prompts() {
             backend: BackendConfig::Http {
                 base_url: "http://127.0.0.1:1/v1/chat".to_string(),
                 api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
             },
         },
     );
@@ -770,10 +828,239 @@ async fn executor_with_per_model_system_prompts() {
         per_model_system_prompts: Some(HashMap::from([
             ("model-a".to_string(), "You are a security expert".to_string()),
         ])),
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
     // Model will fail (fake endpoint), but executor should not panic
     assert_eq!(resp.results.len(), 1, "Should have one result");
     assert_eq!(resp.results[0].status, ModelStatus::Error, "Should error on fake endpoint");
+}
+
+// ===========================================================================
+// Phase 0: Deep mode + per-model timeout + stall timeout
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 0A: Deep mode sets 600s timeout
+// ---------------------------------------------------------------------------
+
+#[test]
+fn deep_mode_sets_600s_effective_timeout() {
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: None,
+        timeout_secs: None, // no explicit timeout
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: Some(true),
+        max_tokens: None,
+        reasoning_effort: None,
+    };
+    assert_eq!(
+        req.effective_timeout_secs(),
+        600,
+        "deep: true should default timeout to 600s"
+    );
+    assert_eq!(
+        req.effective_reasoning_effort().as_deref(),
+        Some("high"),
+        "deep: true should default reasoning_effort to high"
+    );
+    assert_eq!(
+        req.effective_max_tokens(),
+        Some(16384),
+        "deep: true should default max_tokens to 16384"
+    );
+}
+
+#[test]
+fn deep_mode_does_not_override_explicit_values() {
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: None,
+        timeout_secs: Some(300),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: Some(true),
+        max_tokens: Some(4096),
+        reasoning_effort: Some("medium".to_string()),
+    };
+    // timeout_secs=300 < 600, so deep raises to 600
+    assert_eq!(req.effective_timeout_secs(), 600);
+    // explicit reasoning_effort should be kept
+    assert_eq!(req.effective_reasoning_effort().as_deref(), Some("medium"));
+    // explicit max_tokens should be kept
+    assert_eq!(req.effective_max_tokens(), Some(4096));
+}
+
+#[test]
+fn deep_false_uses_normal_defaults() {
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: None,
+        timeout_secs: None,
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: Some(false),
+        max_tokens: None,
+        reasoning_effort: None,
+    };
+    assert_eq!(req.effective_timeout_secs(), 180);
+    assert_eq!(req.effective_reasoning_effort(), None);
+    assert_eq!(req.effective_max_tokens(), None);
+}
+
+// ---------------------------------------------------------------------------
+// 0A: Deep mode executor integration — uses effective_timeout_secs for cutoff
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn deep_mode_executor_uses_effective_timeout() {
+    // Register a model pointing at black-hole — will hang until cutoff
+    let mut models = HashMap::new();
+    models.insert(
+        "slow-model".to_string(),
+        ModelEntry {
+            model_id: "slow-model".to_string(),
+            provider: "test".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://192.0.2.1:80/v1/chat".to_string(),
+                api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
+            },
+        },
+    );
+    let config = Config { models };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["slow-model".to_string()]),
+        timeout_secs: None, // would be 180 normally
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: Some(true), // should raise to 600s
+        max_tokens: None,
+        reasoning_effort: None,
+    };
+
+    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+
+    // RED: Currently executor uses req.timeout_secs() which returns 180 (ignoring deep).
+    // GREEN: executor should use req.effective_timeout_secs() → 600.
+    assert_eq!(
+        resp.cutoff_seconds, 600,
+        "deep: true should set effective cutoff to 600s, got {}",
+        resp.cutoff_seconds
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 0A: Per-model timeout does NOT extend global cutoff
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn per_model_timeout_does_not_extend_global_cutoff() {
+    // Two models: fast-fail and slow (black-hole)
+    let mut models = HashMap::new();
+    models.insert(
+        "fast-fail".to_string(),
+        ModelEntry {
+            model_id: "fast-fail".to_string(),
+            provider: "test".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://127.0.0.1:1/v1/chat".to_string(),
+                api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
+            },
+        },
+    );
+    models.insert(
+        "slow-model".to_string(),
+        ModelEntry {
+            model_id: "slow-model".to_string(),
+            provider: "test".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://192.0.2.1:80/v1/chat".to_string(),
+                api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
+            },
+        },
+    );
+    let config = Config { models };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let mut per_model = HashMap::new();
+    per_model.insert("slow-model".to_string(), 600u64); // per-model: 600s
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["fast-fail".to_string(), "slow-model".to_string()]),
+        timeout_secs: Some(3), // global cutoff: 3s
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+        per_model_timeout_secs: Some(per_model),
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
+    };
+
+    let start = Instant::now();
+    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let elapsed = start.elapsed();
+
+    // CRITICAL: Global cutoff at 3s should NOT be extended by per-model 600s.
+    // The slow model should be cut off by the global timer, not its per-model timeout.
+    assert!(
+        elapsed.as_secs() < 10,
+        "Per-model timeout should NOT extend global cutoff. Took {elapsed:?}"
+    );
+    assert_eq!(
+        resp.cutoff_seconds, 3,
+        "Global cutoff should remain at 3s, not extended by per-model timeout"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 0B: Stall timeout override on ProviderRequest
+// ---------------------------------------------------------------------------
+
+#[test]
+fn stall_timeout_for_reasoning_unchanged() {
+    use squall::dispatch::http::stall_timeout_for;
+    use std::time::Duration;
+    assert_eq!(stall_timeout_for(Some("high")), Duration::from_secs(300));
+    assert_eq!(stall_timeout_for(Some("medium")), Duration::from_secs(300));
+    assert_eq!(stall_timeout_for(None), Duration::from_secs(60));
+    assert_eq!(stall_timeout_for(Some("low")), Duration::from_secs(60));
 }

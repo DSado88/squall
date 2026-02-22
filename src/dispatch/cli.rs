@@ -11,12 +11,7 @@ pub const MAX_OUTPUT_BYTES: usize = 2 * 1024 * 1024; // 2MB
 
 pub struct CliDispatch;
 
-impl Default for CliDispatch {
-    fn default() -> Self {
-        Self
-    }
-}
-
+#[allow(clippy::new_without_default)]
 impl CliDispatch {
     pub fn new() -> Self {
         Self
@@ -218,6 +213,7 @@ impl CliDispatch {
             text,
             model: req.model.clone(),
             provider: provider.to_string(),
+            partial: false,
         })
     }
 }

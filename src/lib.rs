@@ -2,6 +2,7 @@ pub mod config;
 pub mod context;
 pub mod dispatch;
 pub mod error;
+pub mod memory;
 pub mod parsers;
 pub mod response;
 pub mod review;

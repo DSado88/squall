@@ -1,6 +1,6 @@
 //! Phase 2 tests: CLI dispatch, parsers, BackendConfig, and subprocess safety.
 
-use squall::dispatch::registry::{BackendConfig, ModelEntry};
+use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry};
 use squall::error::SquallError;
 use squall::parsers::gemini::GeminiParser;
 use squall::parsers::codex::CodexParser;
@@ -110,8 +110,7 @@ fn backend_config_cli_stores_executable_and_args() {
         },
     };
 
-    assert!(entry.is_cli());
-    assert!(!entry.is_http());
+    assert!(matches!(entry.backend, BackendConfig::Cli { .. }));
     assert_eq!(entry.backend_name(), "cli");
 
     // Debug should show executable and args, no api_key field
@@ -129,6 +128,7 @@ fn backend_config_http_redacts_api_key_in_debug() {
         backend: BackendConfig::Http {
             base_url: "https://example.com".to_string(),
             api_key: "sk-secret-key".to_string(),
+            api_format: ApiFormat::OpenAi,
         },
     };
 

@@ -15,6 +15,11 @@ pub struct ChatRequest {
     pub system_prompt: Option<String>,
     /// Sampling temperature: 0 = deterministic (best for analysis), 1 = creative
     pub temperature: Option<f64>,
+    /// Maximum tokens to generate (caps output length)
+    pub max_tokens: Option<u64>,
+    /// Reasoning effort for thinking models: "none" (fast), "low", "medium", "high" (deep).
+    /// Non-reasoning models ignore this. Automatically extends the deadline for "medium"/"high".
+    pub reasoning_effort: Option<String>,
 }
 
 pub const DEFAULT_MODEL: &str = "grok-4-1-fast-reasoning";

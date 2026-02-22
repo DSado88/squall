@@ -1,6 +1,113 @@
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use schemars::JsonSchema;
+use serde::Deserialize;
+use tokio::sync::Mutex;
 
 use crate::error::SquallError;
+
+/// Git repository context: branch and commit SHA.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct GitContext {
+    /// Short commit SHA (7 chars).
+    pub commit_sha: Option<String>,
+    /// Current branch name (None if detached HEAD).
+    pub branch: Option<String>,
+}
+
+/// Cache for git context to avoid repeated subprocess calls.
+/// TTL of 5 seconds — commit/branch don't change during a single MCP tool execution.
+/// Keyed by canonical working directory path to avoid cross-repo cache pollution.
+pub struct GitContextCache {
+    inner: Mutex<HashMap<PathBuf, (Instant, GitContext)>>,
+}
+
+impl Default for GitContextCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GitContextCache {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Get cached git context, or detect fresh if expired/empty.
+    pub async fn get_or_detect(&self, working_directory: &Path) -> Option<GitContext> {
+        // Canonicalize to normalize symlinks and relative paths for cache key.
+        let canonical = tokio::fs::canonicalize(working_directory).await.ok()?;
+
+        let guard = self.inner.lock().await;
+        if let Some((cached_at, ctx)) = guard.get(&canonical)
+            && cached_at.elapsed() < Duration::from_secs(5)
+        {
+            return Some(ctx.clone());
+        }
+        // Drop guard before subprocess to avoid holding lock during I/O.
+        drop(guard);
+
+        let ctx = detect_git_context(working_directory).await?;
+
+        let mut guard = self.inner.lock().await;
+        guard.insert(canonical, (Instant::now(), ctx.clone()));
+        Some(ctx)
+    }
+}
+
+/// Detect git context (branch + short SHA) from a working directory.
+/// Returns None if not a git repo or git is not available.
+async fn detect_git_context(working_directory: &Path) -> Option<GitContext> {
+    let sha = tokio::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(working_directory)
+        .output()
+        .await
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let branch = tokio::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(working_directory)
+        .output()
+        .await
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    // If neither succeeded, we're not in a git repo
+    if sha.is_none() && branch.is_none() {
+        return None;
+    }
+
+    Some(GitContext {
+        commit_sha: sha,
+        branch,
+    })
+}
+
+/// Derive a default scope string from git context.
+/// - If branch is available: "branch:{name}"
+/// - If only commit: "commit:{sha}"
+/// - If no git context: "codebase"
+pub fn default_scope_from_git(ctx: Option<&GitContext>) -> String {
+    match ctx {
+        Some(gc) if gc.branch.as_ref().is_some_and(|s| !s.is_empty()) => {
+            format!("branch:{}", gc.branch.as_ref().unwrap())
+        }
+        Some(gc) if gc.commit_sha.as_ref().is_some_and(|s| !s.is_empty()) => {
+            format!("commit:{}", gc.commit_sha.as_ref().unwrap())
+        }
+        _ => "codebase".to_string(),
+    }
+}
 
 /// Maximum bytes of file content to inject into HTTP model prompts.
 pub const MAX_FILE_CONTEXT_BYTES: usize = 512 * 1024;

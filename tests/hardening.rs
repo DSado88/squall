@@ -106,6 +106,10 @@ async fn semaphore_acquire_respects_deadline() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
     };
 
     // The query should fail (nonexistent binary), but it should fail FAST,
@@ -235,6 +239,10 @@ async fn cli_oversized_output_completes_without_deadlock() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
     };
 
     let start = Instant::now();
@@ -279,6 +287,10 @@ async fn cli_oversized_stderr_completes_without_deadlock() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
     };
 
     let start = Instant::now();
@@ -334,6 +346,10 @@ async fn cli_cap_kills_process_group_not_just_leader() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
     };
 
     let start = Instant::now();
@@ -376,13 +392,13 @@ async fn cli_cap_kills_process_group_not_just_leader() {
 #[tokio::test]
 async fn http_oversized_response_gives_clear_error() {
     use squall::dispatch::http::HttpDispatch;
+    use squall::dispatch::registry::ApiFormat;
     use squall::dispatch::ProviderRequest;
     use std::time::{Duration, Instant};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    // Mock HTTP server: sends > MAX_RESPONSE_BYTES without Content-Length,
-    // bypassing the pre-read size check and hitting stream_body_capped.
+    // Mock SSE server: sends streaming chunks that total > MAX_RESPONSE_BYTES (2MB).
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
 
@@ -391,15 +407,21 @@ async fn http_oversized_response_gives_clear_error() {
             let mut buf = vec![0u8; 8192];
             let _ = socket.read(&mut buf).await;
 
-            // No Content-Length → client reads until connection close
             let _ = socket
-                .write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n")
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\n\
+                      Content-Type: text/event-stream\r\n\
+                      Connection: close\r\n\r\n",
+                )
                 .await;
 
-            // Send 3MB (exceeds 2MB MAX_RESPONSE_BYTES)
-            let chunk = vec![b'x'; 64 * 1024];
+            // Send SSE chunks totaling > 2MB. Each chunk is ~64KB of content.
+            let big_content: String = "x".repeat(64 * 1024);
             for _ in 0..48 {
-                if socket.write_all(&chunk).await.is_err() {
+                let event = format!(
+                    "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{big_content}\"}}}}]}}\n\n"
+                );
+                if socket.write_all(event.as_bytes()).await.is_err() {
                     break;
                 }
             }
@@ -414,6 +436,10 @@ async fn http_oversized_response_gives_clear_error() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
     };
 
     let result = dispatch
@@ -422,6 +448,7 @@ async fn http_oversized_response_gives_clear_error() {
             "test",
             &format!("http://127.0.0.1:{port}/v1/chat/completions"),
             "fake-key",
+            &ApiFormat::OpenAi,
         )
         .await;
 
@@ -430,13 +457,9 @@ async fn http_oversized_response_gives_clear_error() {
     let err = result.unwrap_err();
     let debug = format!("{err:?}");
 
-    // Should be Upstream "response too large", NOT SchemaParse.
-    // BUG: stream_body_capped truncates to exactly MAX_RESPONSE_BYTES,
-    // so bytes.len() > MAX_RESPONSE_BYTES is always false (dead code).
-    // The truncated body fails JSON parsing → confusing SchemaParse error.
     assert!(
         debug.contains("too large"),
-        "Oversized HTTP response should produce 'too large' error, got: {debug}"
+        "Oversized SSE streaming response should produce 'too large' error, got: {debug}"
     );
 }
 
@@ -470,6 +493,10 @@ async fn cli_large_prompt_does_not_deadlock() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
     };
 
     let start = Instant::now();
@@ -518,6 +545,10 @@ async fn cli_prompt_delivered_via_stdin() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
     };
 
     // `cat` reads stdin and echoes to stdout. Empty args = read from stdin.
@@ -539,6 +570,7 @@ async fn cli_prompt_delivered_via_stdin() {
 #[tokio::test]
 async fn http_chunk_error_not_silently_swallowed() {
     use squall::dispatch::http::HttpDispatch;
+    use squall::dispatch::registry::ApiFormat;
     use squall::dispatch::ProviderRequest;
     use std::time::{Duration, Instant};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -571,6 +603,10 @@ async fn http_chunk_error_not_silently_swallowed() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
     };
 
     let result = dispatch
@@ -579,6 +615,7 @@ async fn http_chunk_error_not_silently_swallowed() {
             "test",
             &format!("http://127.0.0.1:{port}/v1/chat/completions"),
             "fake-key",
+            &ApiFormat::OpenAi,
         )
         .await;
 
@@ -920,6 +957,10 @@ async fn cli_cross_stream_cap_kills_process() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
     };
 
     let start = Instant::now();
@@ -1053,6 +1094,10 @@ async fn cli_overflow_by_one_byte_is_rejected() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
     };
 
     // Output exactly MAX_OUTPUT_BYTES + 1. Process exits cleanly (status 0).
@@ -1110,6 +1155,10 @@ async fn cli_stderr_overflow_is_rejected() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
     };
 
     // Small stdout (valid exit), huge stderr (N+1 bytes).
@@ -1148,13 +1197,13 @@ async fn cli_stderr_overflow_is_rejected() {
 fn suggest_models_substring_match() {
     use std::collections::HashMap;
     use squall::config::Config;
-    use squall::dispatch::registry::{BackendConfig, ModelEntry, Registry};
+    use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
 
     let mut models = HashMap::new();
     models.insert("grok-4-1-fast-reasoning".to_string(), ModelEntry {
         model_id: "grok-4-1-fast-reasoning".to_string(),
         provider: "xai".to_string(),
-        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string() },
+        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string(), api_format: ApiFormat::OpenAi },
     });
     models.insert("gemini".to_string(), ModelEntry {
         model_id: "gemini".to_string(),
@@ -1178,13 +1227,13 @@ fn suggest_models_substring_match() {
 fn suggest_models_reverse_match() {
     use std::collections::HashMap;
     use squall::config::Config;
-    use squall::dispatch::registry::{BackendConfig, ModelEntry, Registry};
+    use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
 
     let mut models = HashMap::new();
     models.insert("grok-4-1-fast-reasoning".to_string(), ModelEntry {
         model_id: "grok-4-1-fast-reasoning".to_string(),
         provider: "xai".to_string(),
-        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string() },
+        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string(), api_format: ApiFormat::OpenAi },
     });
     let registry = Registry::from_config(Config { models });
 
@@ -1200,13 +1249,13 @@ fn suggest_models_reverse_match() {
 fn suggest_models_no_match() {
     use std::collections::HashMap;
     use squall::config::Config;
-    use squall::dispatch::registry::{BackendConfig, ModelEntry, Registry};
+    use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
 
     let mut models = HashMap::new();
     models.insert("grok-4-1-fast-reasoning".to_string(), ModelEntry {
         model_id: "grok-4-1-fast-reasoning".to_string(),
         provider: "xai".to_string(),
-        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string() },
+        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string(), api_format: ApiFormat::OpenAi },
     });
     let registry = Registry::from_config(Config { models });
 
@@ -1221,13 +1270,13 @@ fn suggest_models_no_match() {
 fn suggest_models_empty_query() {
     use std::collections::HashMap;
     use squall::config::Config;
-    use squall::dispatch::registry::{BackendConfig, ModelEntry, Registry};
+    use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
 
     let mut models = HashMap::new();
     models.insert("grok-4-1-fast-reasoning".to_string(), ModelEntry {
         model_id: "grok-4-1-fast-reasoning".to_string(),
         provider: "xai".to_string(),
-        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string() },
+        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string(), api_format: ApiFormat::OpenAi },
     });
     let registry = Registry::from_config(Config { models });
 
@@ -1247,7 +1296,7 @@ fn suggest_models_empty_query() {
 #[test]
 fn suggest_models_sorted_and_capped() {
     use std::collections::HashMap;
-    use squall::dispatch::registry::{BackendConfig, ModelEntry, Registry};
+    use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
     use squall::config::Config;
 
     // Create a registry with 10 models all containing "test"
@@ -1262,6 +1311,7 @@ fn suggest_models_sorted_and_capped() {
                 backend: BackendConfig::Http {
                     base_url: "http://test".to_string(),
                     api_key: "key".to_string(),
+                    api_format: ApiFormat::OpenAi,
                 },
             },
         );
@@ -1340,6 +1390,10 @@ async fn cli_exact_limit_output_not_killed() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
     };
 
     // Use head to output exactly MAX_OUTPUT_BYTES of 'y\n' data.
@@ -1379,7 +1433,7 @@ async fn cli_exact_limit_output_not_killed() {
 async fn review_none_branch_model_selection_is_sorted() {
     use std::collections::HashMap;
     use squall::config::Config;
-    use squall::dispatch::registry::{BackendConfig, ModelEntry, Registry};
+    use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
     use squall::review::ReviewExecutor;
     use squall::tools::review::ReviewRequest;
     use std::sync::Arc;
@@ -1397,6 +1451,7 @@ async fn review_none_branch_model_selection_is_sorted() {
                 backend: BackendConfig::Http {
                     base_url: "http://127.0.0.1:1/v1/chat".to_string(),
                     api_key: "key".to_string(),
+                    api_format: ApiFormat::OpenAi,
                 },
             },
         );
@@ -1415,6 +1470,10 @@ async fn review_none_branch_model_selection_is_sorted() {
         working_directory: None,
         diff: None,
         per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;

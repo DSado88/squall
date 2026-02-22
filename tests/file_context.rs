@@ -328,6 +328,8 @@ fn chat_request_has_file_context_fields() {
         working_directory: Some("/tmp".to_string()),
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
 }
 
@@ -341,6 +343,8 @@ fn clink_request_has_file_context_fields() {
         working_directory: Some("/tmp".to_string()),
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
 }
 
@@ -359,6 +363,10 @@ fn provider_request_has_working_directory() {
         working_directory: Some("/tmp".to_string()),
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
     };
 }
 

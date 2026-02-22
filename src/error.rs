@@ -11,6 +11,9 @@ pub enum SquallError {
     #[error("timeout after {0}ms")]
     Timeout(u64),
 
+    #[error("cancelled after {0}ms")]
+    Cancelled(u64),
+
     #[error("rate limited by {provider}")]
     RateLimited { provider: String },
 
@@ -98,6 +101,7 @@ impl SquallError {
                 }
             }
             Self::Timeout(ms) => format!("request timed out after {ms}ms"),
+            Self::Cancelled(ms) => format!("cancelled after {ms}ms"),
             Self::RateLimited { provider } => {
                 format!("rate limited by {provider} — try again shortly")
             }
@@ -131,7 +135,7 @@ impl SquallError {
             Self::PollFailed { provider, .. } => {
                 format!("failed to check research status for {provider}")
             }
-            Self::Other(_) => "an error occurred".to_string(),
+            Self::Other(msg) => msg.clone(),
         }
     }
 }

@@ -278,8 +278,8 @@ fn async_poll_model_entry_backend_name() {
     };
     assert_eq!(entry.backend_name(), "async_poll");
     assert!(entry.is_async_poll());
-    assert!(!entry.is_http());
-    assert!(!entry.is_cli());
+    assert!(!matches!(entry.backend, BackendConfig::Http { .. }));
+    assert!(!matches!(entry.backend, BackendConfig::Cli { .. }));
 }
 
 #[test]

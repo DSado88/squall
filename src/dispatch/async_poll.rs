@@ -252,12 +252,7 @@ pub struct AsyncPollDispatch {
     client: Client,
 }
 
-impl Default for AsyncPollDispatch {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
+#[allow(clippy::new_without_default)]
 impl AsyncPollDispatch {
     pub fn new() -> Self {
         let client = Client::builder()
@@ -538,6 +533,7 @@ impl AsyncPollDispatch {
                         text: response_text,
                         model: req.model.clone(),
                         provider: provider.to_string(),
+                        partial: false,
                     });
                 }
                 PollStatus::Failed(msg) => {

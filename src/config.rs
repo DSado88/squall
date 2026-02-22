@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 
-use crate::dispatch::registry::{AsyncPollProviderType, BackendConfig, ModelEntry};
+use crate::dispatch::registry::{ApiFormat, AsyncPollProviderType, BackendConfig, ModelEntry};
 
 pub struct Config {
     pub models: HashMap<String, ModelEntry>,
@@ -25,6 +25,7 @@ impl Config {
                     backend: BackendConfig::Http {
                         base_url: "https://api.x.ai/v1/chat/completions".to_string(),
                         api_key: key,
+                        api_format: ApiFormat::OpenAi,
                     },
                 },
             );
@@ -43,6 +44,7 @@ impl Config {
                     backend: BackendConfig::Http {
                         base_url: base_url.clone(),
                         api_key: key.clone(),
+                        api_format: ApiFormat::OpenAi,
                     },
                 },
             );
@@ -55,12 +57,78 @@ impl Config {
                     backend: BackendConfig::Http {
                         base_url,
                         api_key: key,
+                        api_format: ApiFormat::OpenAi,
                     },
                 },
             );
         } else {
             tracing::warn!("OPENROUTER_API_KEY not set — openrouter models unavailable");
         }
+
+        // DeepSeek R1: reasoning model, OpenAI-compatible API
+        if let Ok(key) = env::var("DEEPSEEK_API_KEY") {
+            models.insert(
+                "deepseek-r1".to_string(),
+                ModelEntry {
+                    model_id: "deepseek-reasoner".to_string(),
+                    provider: "deepseek".to_string(),
+                    backend: BackendConfig::Http {
+                        base_url: "https://api.deepseek.com/chat/completions".to_string(),
+                        api_key: key,
+                        api_format: ApiFormat::OpenAi,
+                    },
+                },
+            );
+        }
+
+        // GPT-5: shares OPENAI_API_KEY with deep research models
+        if let Ok(key) = env::var("OPENAI_API_KEY") {
+            models.insert(
+                "gpt-5".to_string(),
+                ModelEntry {
+                    model_id: "gpt-5".to_string(),
+                    provider: "openai".to_string(),
+                    backend: BackendConfig::Http {
+                        base_url: "https://api.openai.com/v1/chat/completions".to_string(),
+                        api_key: key,
+                        api_format: ApiFormat::OpenAi,
+                    },
+                },
+            );
+        }
+
+        // Mistral Large
+        if let Ok(key) = env::var("MISTRAL_API_KEY") {
+            models.insert(
+                "mistral-large".to_string(),
+                ModelEntry {
+                    model_id: "mistral-large-latest".to_string(),
+                    provider: "mistral".to_string(),
+                    backend: BackendConfig::Http {
+                        base_url: "https://api.mistral.ai/v1/chat/completions".to_string(),
+                        api_key: key,
+                        api_format: ApiFormat::OpenAi,
+                    },
+                },
+            );
+        }
+
+        // Qwen 3.5 via Together AI
+        if let Ok(key) = env::var("TOGETHER_API_KEY") {
+            models.insert(
+                "qwen-3.5".to_string(),
+                ModelEntry {
+                    model_id: "Qwen/Qwen3.5-72B".to_string(),
+                    provider: "together".to_string(),
+                    backend: BackendConfig::Http {
+                        base_url: "https://api.together.xyz/v1/chat/completions".to_string(),
+                        api_key: key,
+                        api_format: ApiFormat::OpenAi,
+                    },
+                },
+            );
+        }
+
 
         // --- CLI models ---
         // Gemini CLI: uses Google OAuth (free 1000 req/day), no API key needed

@@ -30,6 +30,16 @@ pub enum AsyncPollProviderType {
     GeminiInteractions,
 }
 
+/// API format for HTTP backends.
+#[derive(Clone, Debug, Default)]
+pub enum ApiFormat {
+    /// OpenAI-compatible chat completions (default for most providers).
+    #[default]
+    OpenAi,
+    /// Anthropic Messages API (different headers, SSE format).
+    Anthropic,
+}
+
 /// Backend-specific configuration. Prevents invalid states
 /// (e.g., a CLI entry with an HTTP URL or vice versa).
 #[derive(Clone)]
@@ -37,6 +47,7 @@ pub enum BackendConfig {
     Http {
         base_url: String,
         api_key: String,
+        api_format: ApiFormat,
     },
     Cli {
         executable: String,
@@ -56,16 +67,6 @@ pub struct ModelEntry {
 }
 
 impl ModelEntry {
-    /// Returns true if this entry uses HTTP dispatch.
-    pub fn is_http(&self) -> bool {
-        matches!(self.backend, BackendConfig::Http { .. })
-    }
-
-    /// Returns true if this entry uses CLI dispatch.
-    pub fn is_cli(&self) -> bool {
-        matches!(self.backend, BackendConfig::Cli { .. })
-    }
-
     /// Returns true if this entry uses async-poll dispatch.
     pub fn is_async_poll(&self) -> bool {
         matches!(self.backend, BackendConfig::AsyncPoll { .. })
@@ -88,9 +89,14 @@ impl std::fmt::Debug for ModelEntry {
             .field("provider", &self.provider);
 
         match &self.backend {
-            BackendConfig::Http { base_url, .. } => {
+            BackendConfig::Http {
+                base_url,
+                api_format,
+                ..
+            } => {
                 s.field("backend", &"http")
                     .field("base_url", base_url)
+                    .field("api_format", api_format)
                     .field("api_key", &"[REDACTED]");
             }
             BackendConfig::Cli {
@@ -149,8 +155,8 @@ impl Registry {
         self.models.get(model)
     }
 
-    pub fn list_models(&self) -> Vec<&ModelEntry> {
-        self.models.values().collect()
+    pub fn list_models(&self) -> Vec<(&String, &ModelEntry)> {
+        self.models.iter().collect()
     }
 
     /// Suggest similar model names for a failed lookup (substring match).
@@ -216,10 +222,14 @@ impl Registry {
             })?;
 
         match &entry.backend {
-            BackendConfig::Http { base_url, api_key } => {
+            BackendConfig::Http {
+                base_url,
+                api_key,
+                api_format,
+            } => {
                 let _permit = Self::acquire_with_deadline(&self.http_semaphore, req.deadline).await?;
                 self.http
-                    .query_model(req, &entry.provider, base_url, api_key)
+                    .query_model(req, &entry.provider, base_url, api_key, api_format)
                     .await
             }
             BackendConfig::Cli {

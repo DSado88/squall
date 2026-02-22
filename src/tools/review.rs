@@ -16,6 +16,11 @@ pub struct ReviewRequest {
     pub system_prompt: Option<String>,
     /// Sampling temperature: 0 = deterministic, 1 = creative
     pub temperature: Option<f64>,
+    /// Maximum tokens to generate per model (caps output length)
+    pub max_tokens: Option<u64>,
+    /// Reasoning effort for thinking models: "none" (fast), "low", "medium", "high" (deep).
+    /// Non-reasoning models ignore this. Automatically extends the deadline for "medium"/"high".
+    pub reasoning_effort: Option<String>,
     /// Relative file paths to include as context
     pub file_paths: Option<Vec<String>>,
     /// Working directory for resolving file_paths
@@ -26,13 +31,50 @@ pub struct ReviewRequest {
     /// Models not in this map use the shared system_prompt.
     #[schemars(description = "Per-model system prompt overrides. Key = model name, value = system prompt. Models not in this map use the shared system_prompt.")]
     pub per_model_system_prompts: Option<HashMap<String, String>>,
+    /// Per-model timeout overrides in seconds. Key = model name, value = timeout.
+    /// Each model's task deadline is min(per_model_timeout, global cutoff).
+    /// Values clamped to MAX_TIMEOUT_SECS (600s).
+    pub per_model_timeout_secs: Option<HashMap<String, u64>>,
+    /// Deep review mode: timeout=600s, reasoning_effort="high", max_tokens=16384.
+    /// Sugar for slow, thorough review runs. Individual fields override deep defaults.
+    pub deep: Option<bool>,
 }
 
 impl ReviewRequest {
     pub const DEFAULT_TIMEOUT_SECS: u64 = 180;
+    pub const DEEP_TIMEOUT_SECS: u64 = 600;
+    pub const DEEP_MAX_TOKENS: u64 = 16384;
 
     pub fn timeout_secs(&self) -> u64 {
         self.timeout_secs.unwrap_or(Self::DEFAULT_TIMEOUT_SECS)
+    }
+
+    /// Effective timeout accounting for deep mode.
+    /// Deep mode raises the minimum to 600s unless explicitly overridden.
+    pub fn effective_timeout_secs(&self) -> u64 {
+        if self.deep == Some(true) {
+            self.timeout_secs.unwrap_or(Self::DEEP_TIMEOUT_SECS).max(Self::DEEP_TIMEOUT_SECS)
+        } else {
+            self.timeout_secs()
+        }
+    }
+
+    /// Effective reasoning effort: deep mode defaults to "high".
+    pub fn effective_reasoning_effort(&self) -> Option<String> {
+        if self.deep == Some(true) && self.reasoning_effort.is_none() {
+            Some("high".to_string())
+        } else {
+            self.reasoning_effort.clone()
+        }
+    }
+
+    /// Effective max tokens: deep mode defaults to 16384.
+    pub fn effective_max_tokens(&self) -> Option<u64> {
+        if self.deep == Some(true) && self.max_tokens.is_none() {
+            Some(Self::DEEP_MAX_TOKENS)
+        } else {
+            self.max_tokens
+        }
     }
 }
 
@@ -49,6 +91,13 @@ pub struct ReviewModelResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub latency_ms: u64,
+    /// True if the response was truncated (cancellation, deadline, or stall).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub partial: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Status of an individual model in a review.

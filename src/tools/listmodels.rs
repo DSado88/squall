@@ -9,10 +9,10 @@ pub struct ModelInfo {
     pub backend: String,
 }
 
-impl From<&ModelEntry> for ModelInfo {
-    fn from(entry: &ModelEntry) -> Self {
+impl From<(&String, &ModelEntry)> for ModelInfo {
+    fn from((key, entry): (&String, &ModelEntry)) -> Self {
         Self {
-            name: entry.model_id.clone(),
+            name: key.clone(),
             provider: entry.provider.clone(),
             backend: entry.backend_name().to_string(),
         }

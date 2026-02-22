@@ -7,7 +7,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use rmcp::ServerHandler;
 
 use squall::config::Config;
-use squall::dispatch::registry::{BackendConfig, ModelEntry};
+use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry};
 use squall::error::SquallError;
 use squall::response::{PalMetadata, PalToolResponse};
 use squall::server::SquallServer;
@@ -95,6 +95,7 @@ fn p0_3_model_entry_debug_redacts_api_key() {
         backend: BackendConfig::Http {
             base_url: "https://example.com/v1".to_string(),
             api_key: "sk-super-secret-key-12345".to_string(),
+            api_format: ApiFormat::OpenAi,
         },
     };
     let debug_output = format!("{:?}", entry);
@@ -201,6 +202,8 @@ fn p1_8_empty_model_string_uses_default() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
     assert_eq!(
         req.model_or_default(),
@@ -218,6 +221,8 @@ fn p1_8_whitespace_model_string_uses_default() {
         working_directory: None,
         system_prompt: None,
         temperature: None,
+        max_tokens: None,
+        reasoning_effort: None,
     };
     assert_eq!(
         req.model_or_default(),
@@ -232,14 +237,25 @@ fn p1_8_whitespace_model_string_uses_default() {
 
 #[test]
 fn p0_4_error_user_message_does_not_contain_url() {
-    // Simulate a reqwest-style error message that contains a URL
-    let err = SquallError::Other(
-        "error sending request for url (https://api.x.ai/v1/chat/completions): connection refused".to_string()
-    );
+    // Upstream variant sanitizes: only shows provider name, not raw error body.
+    let err = SquallError::Upstream {
+        provider: "xai".to_string(),
+        message: "500: internal server error at https://api.x.ai/v1/chat".to_string(),
+        status: Some(500),
+    };
     let msg = err.user_message();
     assert!(
         !msg.contains("api.x.ai"),
-        "User-facing error message should not contain internal URLs. Got: {msg}"
+        "Upstream user_message should not contain internal URLs. Got: {msg}"
+    );
+
+    // Other variant passes through its message — safe because it's only used
+    // for spawn failures, pipe errors, cap exceeded, semaphore closed.
+    assert_eq!(
+        SquallError::Other("failed to spawn gemini: No such file or directory".to_string())
+            .user_message(),
+        "failed to spawn gemini: No such file or directory",
+        "Other variant should pass through its diagnostic message"
     );
 }
 

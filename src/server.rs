@@ -9,20 +9,24 @@ use rmcp::model::{
 use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler};
 
 use crate::config::Config;
-use crate::context;
+use crate::context::{self, GitContextCache};
 use crate::dispatch::registry::Registry;
 use crate::dispatch::ProviderRequest;
+use crate::memory::MemoryStore;
 use crate::response::{PalMetadata, PalToolResponse};
 use crate::review::ReviewExecutor;
 use crate::tools::chat::ChatRequest;
 use crate::tools::clink::ClinkRequest;
 use crate::tools::listmodels::{ListModelsResponse, ModelInfo};
+use crate::tools::memory::{FlushRequest, MemorizeRequest, MemoryRequest};
 use crate::tools::review::ReviewRequest;
 
 
 #[derive(Clone)]
 pub struct SquallServer {
     registry: Arc<Registry>,
+    memory: Arc<MemoryStore>,
+    git_cache: Arc<GitContextCache>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -30,8 +34,12 @@ pub struct SquallServer {
 impl SquallServer {
     pub fn new(config: Config) -> Self {
         let registry = Arc::new(Registry::from_config(config));
+        let memory = Arc::new(MemoryStore::new());
+        let git_cache = Arc::new(GitContextCache::new());
         Self {
             registry,
+            memory,
+            git_cache,
             tool_router: Self::tool_router(),
         }
     }
@@ -77,19 +85,24 @@ impl SquallServer {
             }
         }
 
+        let deadline_secs = if self.registry.get(&model).is_some_and(|e| e.is_async_poll())
+            || reasoning_needs_extended_deadline(req.reasoning_effort.as_deref())
+        {
+            600 // async-poll or reasoning models get 10 min (MCP ceiling)
+        } else {
+            300 // HTTP gets 5 min
+        };
         let provider_req = ProviderRequest {
             prompt,
             model: model.clone(),
-            deadline: Instant::now() + Duration::from_secs(
-                if self.registry.get(&model).is_some_and(|e| e.is_async_poll()) {
-                    600 // async-poll deep research gets 10 min (MCP ceiling)
-                } else {
-                    300 // HTTP gets 5 min
-                }
-            ),
+            deadline: Instant::now() + Duration::from_secs(deadline_secs),
             working_directory: None,
             system_prompt: req.system_prompt,
             temperature: req.temperature,
+            max_tokens: req.max_tokens,
+            reasoning_effort: req.reasoning_effort,
+            cancellation_token: None,
+            stall_timeout: None,
         };
 
         let response = match self.registry.query(&provider_req).await {
@@ -206,6 +219,10 @@ impl SquallServer {
             working_directory,
             system_prompt: req.system_prompt,
             temperature: req.temperature,
+            max_tokens: req.max_tokens,
+            reasoning_effort: req.reasoning_effort,
+            cancellation_token: None,
+            stall_timeout: None,
         };
 
         let response = match self.registry.query(&provider_req).await {
@@ -306,8 +323,16 @@ impl SquallServer {
         }
 
         let executor = ReviewExecutor::new(self.registry.clone());
+        let prompt_len = prompt.len();
         let mut review_response = executor.execute(&req, prompt, working_directory).await;
         review_response.files_skipped = files_skipped;
+
+        // Log model metrics to memory (non-blocking, fire-and-forget)
+        let memory = self.memory.clone();
+        let results_for_memory = review_response.results.clone();
+        tokio::spawn(async move {
+            memory.log_model_metrics(&results_for_memory, prompt_len).await;
+        });
 
         // Serialize the full review response as the MCP content
         let json = serde_json::to_string(&review_response)
@@ -326,6 +351,132 @@ impl SquallServer {
         Ok(response.into_call_tool_result())
     }
 
+    #[tool(
+        name = "memorize",
+        description = "Save a learning to Squall's memory. Use after reviewing results to record patterns, model blind spots, or effective prompt tactics. Categories: 'pattern' (recurring findings) or 'tactic' (prompt effectiveness)."
+    )]
+    async fn memorize(
+        &self,
+        Parameters(req): Parameters<MemorizeRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let start = Instant::now();
+
+        // Resolve scope: explicit > auto-detected from git > default "codebase"
+        let auto_scope;
+        let scope = if req.scope.is_some() {
+            req.scope.as_deref()
+        } else if let Some(ref wd) = req.working_directory {
+            // Validate working directory before using it for git detection.
+            let validated = context::validate_working_directory(wd).await.map_err(|e| {
+                McpError::invalid_params(format!("invalid working_directory: {e}"), None)
+            })?;
+            let git_ctx = self.git_cache.get_or_detect(&validated).await;
+            auto_scope = context::default_scope_from_git(git_ctx.as_ref());
+            Some(auto_scope.as_str())
+        } else {
+            None
+        };
+
+        match self
+            .memory
+            .memorize(
+                &req.category,
+                &req.content,
+                req.model.as_deref(),
+                req.tags.as_deref(),
+                scope,
+                req.metadata.as_ref(),
+            )
+            .await
+        {
+            Ok(path) => {
+                let response = PalToolResponse::success(
+                    format!("Saved to {path}"),
+                    PalMetadata {
+                        tool_name: "memorize".to_string(),
+                        model_used: "none".to_string(),
+                        provider_used: "none".to_string(),
+                        duration_seconds: start.elapsed().as_secs_f64(),
+                    },
+                );
+                Ok(response.into_call_tool_result())
+            }
+            Err(msg) => Err(McpError::invalid_params(msg, None)),
+        }
+    }
+
+    #[tool(
+        name = "memory",
+        description = "Read Squall's memory: model performance stats, recurring patterns, and prompt tactics. Use before a review to inform model selection and system_prompt choices.",
+        annotations(read_only_hint = true)
+    )]
+    async fn memory(
+        &self,
+        Parameters(req): Parameters<MemoryRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let start = Instant::now();
+
+        match self
+            .memory
+            .read_memory(
+                req.category.as_deref(),
+                req.model.as_deref(),
+                req.max_chars(),
+                req.scope.as_deref(),
+            )
+            .await
+        {
+            Ok(content) => {
+                let response = PalToolResponse::success(
+                    content,
+                    PalMetadata {
+                        tool_name: "memory".to_string(),
+                        model_used: "none".to_string(),
+                        provider_used: "none".to_string(),
+                        duration_seconds: start.elapsed().as_secs_f64(),
+                    },
+                );
+                Ok(response.into_call_tool_result())
+            }
+            Err(msg) => Err(McpError::internal_error(msg, None)),
+        }
+    }
+
+    #[tool(
+        name = "flush",
+        description = "Flush working memory after PR merge. Graduates high-evidence patterns (>=3 occurrences) from branch scope to codebase scope. Archives low-evidence branch patterns. Prunes model events older than 30 days."
+    )]
+    async fn flush(
+        &self,
+        Parameters(req): Parameters<FlushRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let start = Instant::now();
+
+        if req.branch.trim().is_empty() {
+            return Err(McpError::invalid_params("branch must not be empty", None));
+        }
+
+        match self.memory.flush_branch(&req.branch).await {
+            Ok(report) => {
+                let response = PalToolResponse::success(
+                    report,
+                    PalMetadata {
+                        tool_name: "flush".to_string(),
+                        model_used: "none".to_string(),
+                        provider_used: "none".to_string(),
+                        duration_seconds: start.elapsed().as_secs_f64(),
+                    },
+                );
+                Ok(response.into_call_tool_result())
+            }
+            Err(msg) => Err(McpError::internal_error(msg, None)),
+        }
+    }
+}
+
+/// Returns true if reasoning_effort warrants an extended deadline.
+fn reasoning_needs_extended_deadline(effort: Option<&str>) -> bool {
+    matches!(effort, Some("medium" | "high" | "xhigh"))
 }
 
 #[tool_handler]
@@ -343,8 +494,13 @@ impl ServerHandler for SquallServer {
                  - `listmodels`: List available models. Call this first to get exact model names.\n\
                  - `chat`: Single HTTP model query.\n\
                  - `clink`: Single CLI model query.\n\
-                 - `review`: Fan-out to multiple models in one call. Preferred over multiple chat/clink calls.\n\n\
-                 When querying multiple models, ALWAYS use `review` instead of separate chat/clink calls."
+                 - `review`: Fan-out to multiple models in one call. Preferred over multiple chat/clink calls.\n\
+                 - `memorize`: Save a learning (pattern or tactic) to Squall's memory.\n\
+                 - `memory`: Read Squall's memory (model stats, patterns, tactics).\n\
+                 - `flush`: Clean up memory after PR merge. Graduates branch patterns to codebase scope.\n\n\
+                 When querying multiple models, ALWAYS use `review` instead of separate chat/clink calls.\n\
+                 After reviews, use `memorize` to save insights. Before reviews, use `memory` to check past learnings.\n\
+                 Before review, call `memory` with category \"recommend\" for model selection guidance."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
