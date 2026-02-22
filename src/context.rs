@@ -126,6 +126,11 @@ pub fn default_scope_from_git(ctx: Option<&GitContext>) -> String {
 /// Maximum bytes of file content to inject into HTTP model prompts.
 pub const MAX_FILE_CONTEXT_BYTES: usize = 512 * 1024;
 
+/// Minimum bytes reserved for diff context in review requests.
+/// When both file_paths and diff are provided, file context is capped at
+/// `MAX_FILE_CONTEXT_BYTES - MIN_DIFF_BUDGET` so the diff always gets space.
+pub const MIN_DIFF_BUDGET: usize = 128 * 1024;
+
 /// Maximum number of file paths allowed per request (prevents DoS).
 pub const MAX_FILE_PATHS: usize = 100;
 

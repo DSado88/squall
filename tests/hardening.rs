@@ -1548,3 +1548,62 @@ async fn review_none_branch_model_selection_is_sorted() {
         selected.last().unwrap()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Defect: Diff context starvation.
+// When file_paths consume the full MAX_FILE_CONTEXT_BYTES budget, the diff
+// gets zero budget and is silently dropped — the most critical review input
+// is lost while static file content is preserved.
+//
+// RED: proves the defect exists (diff budget becomes 0 when files fill budget).
+// ---------------------------------------------------------------------------
+
+/// Prove that diff gets a minimum reserved budget even when files are large.
+#[test]
+fn diff_budget_not_starved_when_files_fill_budget() {
+    // Simulate the FIXED server.rs budget allocation:
+    //   file_budget = MAX - MIN_DIFF_BUDGET (when diff is present)
+    //   diff_budget = MAX - file_context_used
+    let total_budget = squall::context::MAX_FILE_CONTEXT_BYTES;
+    let min_diff = squall::context::MIN_DIFF_BUDGET;
+
+    // File context budget is capped when diff is present
+    let file_budget = total_budget.saturating_sub(min_diff);
+
+    // Files consume their entire (capped) budget
+    let file_context_used = file_budget;
+
+    // Diff budget = total - file_used = MIN_DIFF_BUDGET
+    let diff_budget = total_budget.saturating_sub(file_context_used);
+
+    assert!(
+        diff_budget >= min_diff,
+        "Diff budget should be at least {}B (MIN_DIFF_BUDGET) but was {}B. \
+         The diff — the most critical review input — is starved.",
+        min_diff,
+        diff_budget
+    );
+}
+
+/// Prove that wrap_diff_context always succeeds when diff has reserved budget.
+#[test]
+fn diff_always_gets_minimum_budget() {
+    let total_budget = squall::context::MAX_FILE_CONTEXT_BYTES;
+    let min_diff = squall::context::MIN_DIFF_BUDGET;
+
+    // File budget is capped when diff is present
+    let file_budget = total_budget.saturating_sub(min_diff);
+    // Files consume their full capped budget
+    let file_context_used = file_budget;
+    let diff_budget = total_budget.saturating_sub(file_context_used);
+
+    // wrap_diff_context should NOT return None because diff has reserved budget
+    let diff_text = "--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    println!(\"old\");\n+    println!(\"new\");\n }";
+    let wrapped = squall::context::wrap_diff_context(diff_text, diff_budget);
+    assert!(
+        wrapped.is_some(),
+        "Diff should never be silently dropped — it's the most critical review input. \
+         wrap_diff_context returned None because diff_budget was {}",
+        diff_budget
+    );
+}

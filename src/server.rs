@@ -275,6 +275,13 @@ impl SquallServer {
         // Use canonical path from validate_working_directory() to prevent TOCTOU.
         let mut prompt = req.prompt.clone();
         let mut files_skipped = None;
+        // When both file_paths and diff are provided, reserve MIN_DIFF_BUDGET
+        // for the diff so it's never starved by large file context.
+        let file_budget = if req.diff.is_some() {
+            context::MAX_FILE_CONTEXT_BYTES.saturating_sub(context::MIN_DIFF_BUDGET)
+        } else {
+            context::MAX_FILE_CONTEXT_BYTES
+        };
         let working_directory = if let Some(ref file_paths) = req.file_paths {
             let wd = req.working_directory.as_deref().ok_or_else(|| {
                 McpError::invalid_params(
@@ -289,7 +296,7 @@ impl SquallServer {
             let file_result = context::resolve_file_context(
                 file_paths,
                 &base_dir,
-                context::MAX_FILE_CONTEXT_BYTES,
+                file_budget,
                 fmt,
             )
             .await
