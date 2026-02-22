@@ -1,3 +1,4 @@
 /target
 .squall/reviews/
 .DS_Store
+.env

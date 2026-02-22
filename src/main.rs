@@ -14,6 +14,9 @@ async fn main() -> anyhow::Result<()> {
         .with_ansi(false)
         .init();
 
+    // Load .env file if present (silently ignored if missing)
+    dotenvy::dotenv().ok();
+
     tracing::info!("squall starting");
 
     let config = Config::from_env();

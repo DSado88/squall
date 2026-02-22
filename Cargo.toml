@@ -18,6 +18,7 @@ libc = "0.2"
 eventsource-stream = "0.2"
 tokio-util = "0.7"
 futures-util = "0.3"
+dotenvy = "0.15"
 
 [dev-dependencies]
 tokio-test = "0.4"
