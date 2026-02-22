@@ -241,7 +241,7 @@ impl HttpDispatch {
             let body_timeout = req
                 .deadline
                 .checked_duration_since(Instant::now())
-                .unwrap_or(Duration::from_secs(5))
+                .unwrap_or(Duration::ZERO)
                 .min(Duration::from_secs(5));
             let error_body = tokio::time::timeout(
                 body_timeout,
@@ -269,7 +269,7 @@ impl HttpDispatch {
             let body_timeout = req
                 .deadline
                 .checked_duration_since(Instant::now())
-                .unwrap_or(Duration::from_secs(5))
+                .unwrap_or(Duration::ZERO)
                 .min(Duration::from_secs(5)); // at most 5s, never exceed deadline
             let error_body = tokio::time::timeout(
                 body_timeout,

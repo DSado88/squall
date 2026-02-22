@@ -23,7 +23,7 @@ pub const MAX_TACTICS_BYTES: usize = 10 * 1024;
 pub const MAX_MEMORIZE_CONTENT_LEN: usize = 500;
 
 /// Valid categories for the memorize tool.
-pub const VALID_CATEGORIES: &[&str] = &["pattern", "tactic"];
+pub const VALID_CATEGORIES: &[&str] = &["pattern", "tactic", "recommend"];
 
 /// Evidence threshold for [confirmed] status.
 pub const CONFIRMED_THRESHOLD: usize = 5;
@@ -366,13 +366,14 @@ impl MemoryStore {
                 atomic_write(&path, &output).await.map_err(|e| e.to_string())?;
                 Ok(format!("{display_dir}/patterns.md"))
             }
-            "tactic" => {
+            "tactic" | "recommend" => {
                 let path = self.tactics_path();
                 let existing = read_to_string_lossy(&path)
                     .await
                     .map_err(|e| format!("failed to read tactics.md: {e}"))?;
 
                 let new_line = if let Some(m) = model.filter(|m| !m.is_empty()) {
+                    let m = m.replace(['\n', '\r'], " ");
                     format!("- [{m}] {content}")
                 } else {
                     format!("- {content}")
@@ -1303,6 +1304,7 @@ mod tests {
     fn valid_categories() {
         assert!(VALID_CATEGORIES.contains(&"pattern"));
         assert!(VALID_CATEGORIES.contains(&"tactic"));
+        assert!(VALID_CATEGORIES.contains(&"recommend"));
         assert!(!VALID_CATEGORIES.contains(&"model_note"));
     }
 

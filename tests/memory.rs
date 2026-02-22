@@ -87,7 +87,7 @@ fn constants_match_architecture() {
     assert_eq!(MAX_MEMORIZE_CONTENT_LEN, 500);
     assert!(VALID_CATEGORIES.contains(&"pattern"));
     assert!(VALID_CATEGORIES.contains(&"tactic"));
-    assert_eq!(VALID_CATEGORIES.len(), 2);
+    assert_eq!(VALID_CATEGORIES.len(), 3);
 }
 
 // ===========================================================================
@@ -1800,4 +1800,73 @@ async fn defect_dedup_merge_must_preserve_prior_model_and_tags() {
     );
 
     let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
+}
+
+// ===========================================================================
+// Deep review defects (2026-02-22 round 6)
+// ===========================================================================
+
+/// Codex finding #1: `memorize` with category "recommend" must succeed.
+/// Server instructions tell callers to use this category, but VALID_CATEGORIES
+/// previously rejected it — causing callers to get "invalid category" errors.
+#[test]
+fn memorize_recommend_category_accepted() {
+    let (dir, orig, _guard) = setup_test_env("recommend-cat");
+    run_async(async {
+        let store = MemoryStore::new();
+        let result = store
+            .memorize("recommend", "grok best for fast triage", Some("grok"), None, None, None)
+            .await;
+
+        assert!(result.is_ok(), "recommend category should be accepted: {:?}", result.err());
+        // Recommend is routed to tactics.md
+        let tactics = tokio::fs::read_to_string(memory_dir(&dir).join("tactics.md"))
+            .await
+            .unwrap();
+        assert!(
+            tactics.contains("grok best for fast triage"),
+            "Recommend content should be in tactics.md. Got:\n{tactics}"
+        );
+    });
+    teardown(&dir, &orig);
+}
+
+/// Codex finding #2: model field in tactic entries must be sanitized.
+/// A model name with newlines could inject arbitrary markdown lines into tactics.md.
+#[test]
+fn memorize_tactic_model_newline_sanitized() {
+    let (dir, orig, _guard) = setup_test_env("tactic-model-nl");
+    run_async(async {
+        let store = MemoryStore::new();
+        let result = store
+            .memorize(
+                "tactic",
+                "Use chain-of-thought",
+                Some("evil\n## Injected Section\n- payload"),
+                None,
+                None,
+                None,
+            )
+            .await;
+
+        assert!(result.is_ok(), "should succeed: {:?}", result.err());
+        let tactics = tokio::fs::read_to_string(memory_dir(&dir).join("tactics.md"))
+            .await
+            .unwrap();
+        // Newlines in model name should be replaced with spaces,
+        // preventing markdown structure injection (headings, list items on own lines)
+        assert!(
+            !tactics.contains("\n## "),
+            "Newline+heading injection must be prevented. Got:\n{tactics}"
+        );
+        assert!(
+            !tactics.contains("\n- payload"),
+            "Newline+list injection must be prevented. Got:\n{tactics}"
+        );
+        assert!(
+            tactics.contains("[evil"),
+            "Sanitized model name should still appear. Got:\n{tactics}"
+        );
+    });
+    teardown(&dir, &orig);
 }
