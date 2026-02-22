@@ -14,8 +14,28 @@ async fn main() -> anyhow::Result<()> {
         .with_ansi(false)
         .init();
 
-    // Load .env file if present (silently ignored if missing)
-    dotenvy::dotenv().ok();
+    // Load .env from the binary's directory (MCP servers may start with any CWD).
+    // Falls back to dotenvy's default CWD search if the binary path can't be resolved.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let env_path = dir.join(".env");
+            if env_path.exists() {
+                dotenvy::from_path(&env_path).ok();
+            } else {
+                // Try the cargo project root (development builds: target/release/../..)
+                let project_root = dir.join("../../.env");
+                if project_root.exists() {
+                    dotenvy::from_path(&project_root).ok();
+                } else {
+                    dotenvy::dotenv().ok();
+                }
+            }
+        } else {
+            dotenvy::dotenv().ok();
+        }
+    } else {
+        dotenvy::dotenv().ok();
+    }
 
     tracing::info!("squall starting");
 

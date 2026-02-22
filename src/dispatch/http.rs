@@ -237,9 +237,28 @@ impl HttpDispatch {
         if status == reqwest::StatusCode::UNAUTHORIZED
             || status == reqwest::StatusCode::FORBIDDEN
         {
+            // Read the error body to capture the actual API error message
+            let body_timeout = req
+                .deadline
+                .checked_duration_since(Instant::now())
+                .unwrap_or(Duration::from_secs(5))
+                .min(Duration::from_secs(5));
+            let error_body = tokio::time::timeout(
+                body_timeout,
+                Self::stream_body_capped(&mut response, MAX_RESPONSE_BYTES),
+            )
+            .await
+            .unwrap_or(Ok(Vec::new()))
+            .unwrap_or_default();
+            let text = String::from_utf8_lossy(&error_body);
+            let truncated: String = text.chars().take(500).collect();
             return Err(SquallError::AuthFailed {
                 provider: provider.to_string(),
-                message: format!("{status}"),
+                message: if truncated.is_empty() {
+                    format!("{status}")
+                } else {
+                    format!("{status}: {truncated}")
+                },
             });
         }
 

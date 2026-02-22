@@ -8,6 +8,7 @@ use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 /// Internal request type — both HTTP and CLI backends accept this.
+#[derive(Clone)]
 pub struct ProviderRequest {
     pub prompt: String,
     pub model: String,

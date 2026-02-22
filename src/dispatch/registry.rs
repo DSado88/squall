@@ -235,6 +235,14 @@ impl Registry {
                 }
             })?;
 
+        // Substitute the provider's model_id for the Squall model name.
+        // e.g. "kimi-k2.5" → "moonshotai/Kimi-K2.5" for the API request body.
+        let resolved = ProviderRequest {
+            model: entry.model_id.clone(),
+            ..(*req).clone()
+        };
+        let req = &resolved;
+
         match &entry.backend {
             BackendConfig::Http {
                 base_url,

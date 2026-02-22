@@ -81,26 +81,9 @@ impl Config {
             );
         }
 
-        // GPT-5: shares OPENAI_API_KEY with deep research models
-        if let Ok(key) = env::var("OPENAI_API_KEY") {
-            models.insert(
-                "gpt-5".to_string(),
-                ModelEntry {
-                    model_id: "gpt-5".to_string(),
-                    provider: "openai".to_string(),
-                    backend: BackendConfig::Http {
-                        base_url: "https://api.openai.com/v1/chat/completions".to_string(),
-                        api_key: key,
-                        api_format: ApiFormat::OpenAi,
-                    },
-                    description: "OpenAI GPT-5, general-purpose with strong code understanding".to_string(),
-                    strengths: vec!["broad code understanding".to_string(), "good at refactoring suggestions".to_string()],
-                    weaknesses: vec!["can be overly cautious".to_string()],
-                    speed_tier: "medium".to_string(),
-                    precision_tier: "high".to_string(),
-                },
-            );
-        }
+        // GPT-5 removed: it's a reasoning model that burns tokens on internal thinking,
+        // producing empty streaming responses. Use codex CLI for OpenAI chat models instead.
+        // OPENAI_API_KEY is used only for deep research (o3/o4-mini async-poll) below.
 
         // Mistral Large
         if let Ok(key) = env::var("MISTRAL_API_KEY") {

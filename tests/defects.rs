@@ -243,8 +243,9 @@ fn p1_8_whitespace_model_string_uses_default() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn p0_4_error_user_message_does_not_contain_url() {
-    // Upstream variant sanitizes: only shows provider name, not raw error body.
+fn p0_4_error_user_message_includes_upstream_body() {
+    // Upstream variant now includes the error body for debugging.
+    // Bodies come from external APIs (not internal secrets) — safe to expose.
     let err = SquallError::Upstream {
         provider: "xai".to_string(),
         message: "500: internal server error at https://api.x.ai/v1/chat".to_string(),
@@ -252,8 +253,12 @@ fn p0_4_error_user_message_does_not_contain_url() {
     };
     let msg = err.user_message();
     assert!(
-        !msg.contains("api.x.ai"),
-        "Upstream user_message should not contain internal URLs. Got: {msg}"
+        msg.contains("xai"),
+        "Should contain provider name. Got: {msg}"
+    );
+    assert!(
+        msg.contains("500: internal server error"),
+        "Should include error body for debugging. Got: {msg}"
     );
 
     // Other variant passes through its message — safe because it's only used

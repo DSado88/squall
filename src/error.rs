@@ -105,11 +105,13 @@ impl SquallError {
             Self::RateLimited { provider } => {
                 format!("rate limited by {provider} — try again shortly")
             }
-            Self::Upstream { provider, .. } => {
-                format!("upstream error from {provider}")
+            Self::Upstream {
+                provider, message, ..
+            } => {
+                format!("upstream error from {provider}: {message}")
             }
-            Self::AuthFailed { provider, .. } => {
-                format!("authentication failed for {provider}")
+            Self::AuthFailed { provider, message } => {
+                format!("authentication failed for {provider}: {message}")
             }
             Self::SchemaParse(_) => {
                 "failed to parse provider response".to_string()
