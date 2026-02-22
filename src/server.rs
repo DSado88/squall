@@ -73,10 +73,12 @@ impl SquallServer {
             let base_dir = context::validate_working_directory(wd)
                 .await
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+            let fmt = req.context_format.unwrap_or_default();
             let file_result = context::resolve_file_context(
                 file_paths,
                 &base_dir,
                 context::MAX_FILE_CONTEXT_BYTES,
+                fmt,
             )
             .await
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
@@ -283,10 +285,12 @@ impl SquallServer {
             let base_dir = context::validate_working_directory(wd)
                 .await
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+            let fmt = req.context_format.unwrap_or_default();
             let file_result = context::resolve_file_context(
                 file_paths,
                 &base_dir,
                 context::MAX_FILE_CONTEXT_BYTES,
+                fmt,
             )
             .await
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
@@ -491,16 +495,34 @@ impl ServerHandler for SquallServer {
             instructions: Some(
                 "Squall: parallel AI model dispatch via HTTP and CLI.\n\n\
                  Tools:\n\
-                 - `listmodels`: List available models. Call this first to get exact model names.\n\
-                 - `chat`: Single HTTP model query.\n\
-                 - `clink`: Single CLI model query.\n\
-                 - `review`: Fan-out to multiple models in one call. Preferred over multiple chat/clink calls.\n\
-                 - `memorize`: Save a learning (pattern or tactic) to Squall's memory.\n\
-                 - `memory`: Read Squall's memory (model stats, patterns, tactics).\n\
-                 - `flush`: Clean up memory after PR merge. Graduates branch patterns to codebase scope.\n\n\
-                 When querying multiple models, ALWAYS use `review` instead of separate chat/clink calls.\n\
-                 After reviews, use `memorize` to save insights. Before reviews, use `memory` to check past learnings.\n\
-                 Before review, call `memory` with category \"recommend\" for model selection guidance."
+                 - `listmodels`: List available models with provider, backend, and capability info.\n\
+                 - `chat`: Single HTTP model query (OpenAI-compatible providers).\n\
+                 - `clink`: Single CLI model query (gemini, codex — runs as subprocess).\n\
+                 - `review`: Fan out a prompt to multiple models in parallel. ALWAYS prefer this over multiple chat/clink calls.\n\
+                 - `memorize`: Save a learning (pattern, tactic, or model recommendation) to persistent memory.\n\
+                 - `memory`: Read persistent memory (model stats, patterns, tactics, recommendations).\n\
+                 - `flush`: Clean up branch-scoped memory after PR merge.\n\n\
+                 Model Selection:\n\
+                 1. Call `memory` with category \"recommend\" for past model recommendations.\n\
+                 2. Call `listmodels` to see exact model names and capabilities.\n\
+                 3. Pick an ensemble based on the task (e.g. fast models for drafts, reasoning models for analysis).\n\n\
+                 Review Workflow:\n\
+                 1. Select models (see Model Selection above).\n\
+                 2. Set `per_model_system_prompts` to give each model a different review lens \
+                 (e.g. security, architecture, correctness). Check `memory` category \"tactic\" for proven lenses.\n\
+                 3. Call `review`. For security audits, complex architecture, or high-stakes changes, set `deep: true` \
+                 (raises timeout to 600s, reasoning_effort to \"high\", max_tokens to 16384).\n\
+                 4. The response includes a `results_file` path. This file persists on disk and survives context compaction — \
+                 if you lose review details after a long conversation, read the results_file to recover them.\n\
+                 5. ALWAYS call `memorize` after synthesizing review results to record patterns and model blind spots.\n\n\
+                 File Context:\n\
+                 - Pass `file_paths` + `working_directory` to include source files in the prompt.\n\
+                 - For `review`, you can also pass `diff` with unified diff text (e.g. git diff output).\n\n\
+                 Memory Workflow:\n\
+                 - Before reviews: `memory` category \"recommend\" + \"pattern\" to check past learnings.\n\
+                 - After reviews: `memorize` with category \"pattern\" for recurring findings, \"tactic\" for prompt strategies, \
+                 \"recommend\" for model recommendations.\n\
+                 - After PR merge: `flush` with the branch name to graduate patterns to codebase scope."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),

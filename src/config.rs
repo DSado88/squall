@@ -27,6 +27,11 @@ impl Config {
                         api_key: key,
                         api_format: ApiFormat::OpenAi,
                     },
+                    description: "xAI's fast reasoning model, good for quick code review".to_string(),
+                    strengths: vec!["fast responses".to_string(), "broad knowledge".to_string()],
+                    weaknesses: vec!["XML escaping false positives".to_string(), "edition 2024 false positives".to_string()],
+                    speed_tier: "fast".to_string(),
+                    precision_tier: "medium".to_string(),
                 },
             );
         } else {
@@ -46,6 +51,11 @@ impl Config {
                         api_key: key.clone(),
                         api_format: ApiFormat::OpenAi,
                     },
+                    description: "Moonshot's Kimi K2.5, contrarian reviewer with edge case focus".to_string(),
+                    strengths: vec!["contrarian perspective".to_string(), "edge case detection".to_string()],
+                    weaknesses: vec!["frequent timeouts at 300s".to_string(), "inconsistent quality".to_string()],
+                    speed_tier: "slow".to_string(),
+                    precision_tier: "medium".to_string(),
                 },
             );
 
@@ -59,6 +69,11 @@ impl Config {
                         api_key: key,
                         api_format: ApiFormat::OpenAi,
                     },
+                    description: "Zhipu's GLM-5, strong architectural framing".to_string(),
+                    strengths: vec!["clear architectural analysis".to_string(), "structured output".to_string()],
+                    weaknesses: vec!["rarely finds real bugs".to_string(), "surface-level findings".to_string()],
+                    speed_tier: "medium".to_string(),
+                    precision_tier: "low".to_string(),
                 },
             );
         } else {
@@ -77,6 +92,11 @@ impl Config {
                         api_key: key,
                         api_format: ApiFormat::OpenAi,
                     },
+                    description: "DeepSeek R1 reasoning model, strong at logic-heavy analysis".to_string(),
+                    strengths: vec!["deep reasoning chains".to_string(), "logic analysis".to_string()],
+                    weaknesses: vec!["verbose output".to_string(), "slow on complex prompts".to_string()],
+                    speed_tier: "medium".to_string(),
+                    precision_tier: "medium".to_string(),
                 },
             );
         }
@@ -93,6 +113,11 @@ impl Config {
                         api_key: key,
                         api_format: ApiFormat::OpenAi,
                     },
+                    description: "OpenAI GPT-5, general-purpose with strong code understanding".to_string(),
+                    strengths: vec!["broad code understanding".to_string(), "good at refactoring suggestions".to_string()],
+                    weaknesses: vec!["can be overly cautious".to_string()],
+                    speed_tier: "medium".to_string(),
+                    precision_tier: "high".to_string(),
                 },
             );
         }
@@ -109,6 +134,11 @@ impl Config {
                         api_key: key,
                         api_format: ApiFormat::OpenAi,
                     },
+                    description: "Mistral Large, efficient European model with code expertise".to_string(),
+                    strengths: vec!["efficient token usage".to_string(), "multilingual code review".to_string()],
+                    weaknesses: vec!["less depth on niche Rust patterns".to_string()],
+                    speed_tier: "fast".to_string(),
+                    precision_tier: "medium".to_string(),
                 },
             );
         }
@@ -125,6 +155,11 @@ impl Config {
                         api_key: key,
                         api_format: ApiFormat::OpenAi,
                     },
+                    description: "Alibaba's Qwen 3.5 72B, strong multilingual code model".to_string(),
+                    strengths: vec!["multilingual understanding".to_string(), "good at pattern matching".to_string()],
+                    weaknesses: vec!["sometimes misses context".to_string()],
+                    speed_tier: "medium".to_string(),
+                    precision_tier: "medium".to_string(),
                 },
             );
         }
@@ -147,6 +182,11 @@ impl Config {
                             "json".to_string(),
                         ],
                     },
+                    description: "Google Gemini CLI, best at systems-level bug detection".to_string(),
+                    strengths: vec!["systems-level bugs".to_string(), "finds all real bugs".to_string()],
+                    weaknesses: vec!["slower than HTTP models".to_string()],
+                    speed_tier: "medium".to_string(),
+                    precision_tier: "high".to_string(),
                 },
             );
         } else {
@@ -167,6 +207,11 @@ impl Config {
                             "--json".to_string(),
                         ],
                     },
+                    description: "OpenAI Codex CLI, highest precision with zero false positives".to_string(),
+                    strengths: vec!["highest precision".to_string(), "zero false positives".to_string(), "exact line references".to_string()],
+                    weaknesses: vec!["variable speed (50-300s)".to_string()],
+                    speed_tier: "slow".to_string(),
+                    precision_tier: "high".to_string(),
                 },
             );
         } else {
@@ -186,6 +231,11 @@ impl Config {
                         provider_type: AsyncPollProviderType::OpenAiResponses,
                         api_key: key.clone(),
                     },
+                    description: "OpenAI o3 deep research, long-running web research".to_string(),
+                    strengths: vec!["deep web research".to_string(), "comprehensive analysis".to_string()],
+                    weaknesses: vec!["very slow (minutes)".to_string(), "expensive".to_string()],
+                    speed_tier: "very_slow".to_string(),
+                    precision_tier: "high".to_string(),
                 },
             );
             models.insert(
@@ -197,6 +247,11 @@ impl Config {
                         provider_type: AsyncPollProviderType::OpenAiResponses,
                         api_key: key,
                     },
+                    description: "OpenAI o4-mini deep research, faster variant of deep research".to_string(),
+                    strengths: vec!["faster than o3-deep-research".to_string(), "good cost-quality tradeoff".to_string()],
+                    weaknesses: vec!["still slow (minutes)".to_string(), "less thorough than o3".to_string()],
+                    speed_tier: "very_slow".to_string(),
+                    precision_tier: "medium".to_string(),
                 },
             );
         } else {
@@ -214,6 +269,11 @@ impl Config {
                         provider_type: AsyncPollProviderType::GeminiInteractions,
                         api_key: key,
                     },
+                    description: "Google Gemini deep research, long-running web research via Interactions API".to_string(),
+                    strengths: vec!["comprehensive research".to_string(), "Google search integration".to_string()],
+                    weaknesses: vec!["very slow (minutes to hour)".to_string(), "may need background job registry".to_string()],
+                    speed_tier: "very_slow".to_string(),
+                    precision_tier: "high".to_string(),
                 },
             );
         } else {

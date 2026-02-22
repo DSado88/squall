@@ -275,6 +275,11 @@ fn async_poll_model_entry_backend_name() {
             provider_type: AsyncPollProviderType::OpenAiResponses,
             api_key: "sk-test".to_string(),
         },
+        description: String::new(),
+        strengths: vec![],
+        weaknesses: vec![],
+        speed_tier: "fast".to_string(),
+        precision_tier: "medium".to_string(),
     };
     assert_eq!(entry.backend_name(), "async_poll");
     assert!(entry.is_async_poll());
@@ -291,6 +296,11 @@ fn async_poll_model_entry_debug_redacts_key() {
             provider_type: AsyncPollProviderType::OpenAiResponses,
             api_key: "sk-super-secret-key".to_string(),
         },
+        description: String::new(),
+        strengths: vec![],
+        weaknesses: vec![],
+        speed_tier: "fast".to_string(),
+        precision_tier: "medium".to_string(),
     };
     let debug = format!("{entry:?}");
     assert!(debug.contains("[REDACTED]"), "API key should be redacted in Debug output");

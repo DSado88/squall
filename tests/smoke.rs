@@ -54,6 +54,11 @@ fn model_entry_backend_types() {
             api_key: "test-key".to_string(),
             api_format: ApiFormat::OpenAi,
         },
+        description: String::new(),
+        strengths: vec![],
+        weaknesses: vec![],
+        speed_tier: "fast".to_string(),
+        precision_tier: "medium".to_string(),
     };
 
     assert!(matches!(http_entry.backend, BackendConfig::Http { .. }));
@@ -66,6 +71,11 @@ fn model_entry_backend_types() {
             executable: "gemini".to_string(),
             args_template: vec!["-o".to_string(), "json".to_string()],
         },
+        description: String::new(),
+        strengths: vec![],
+        weaknesses: vec![],
+        speed_tier: "fast".to_string(),
+        precision_tier: "medium".to_string(),
     };
 
     assert!(matches!(cli_entry.backend, BackendConfig::Cli { .. }));
@@ -85,6 +95,7 @@ fn chat_request_default_model() {
         temperature: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
     assert_eq!(req.model_or_default(), "grok-4-1-fast-reasoning");
 
@@ -97,6 +108,55 @@ fn chat_request_default_model() {
         temperature: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
     assert_eq!(req.model_or_default(), "moonshotai/kimi-k2.5");
+}
+
+// ---------------------------------------------------------------------------
+// listmodels returns enriched capability fields
+// ---------------------------------------------------------------------------
+
+#[test]
+fn listmodels_returns_capability_fields() {
+    use squall::config::Config;
+    use squall::dispatch::registry::Registry;
+    use squall::tools::listmodels::ModelInfo;
+
+    let config = Config::from_env();
+    let registry = Registry::from_config(config);
+    let entries = registry.list_models();
+
+    // There should be at least one model registered (env-dependent, but
+    // grok/gemini/codex are always present when respective env vars are set).
+    // If no models are configured, the test is vacuously true.
+    for (key, entry) in &entries {
+        let info = ModelInfo::from((*key, *entry));
+
+        // description must not be empty for any registered model
+        assert!(
+            !info.description.is_empty(),
+            "Model '{}' has empty description",
+            info.name
+        );
+
+        // speed_tier and precision_tier must be non-empty
+        assert!(
+            !info.speed_tier.is_empty(),
+            "Model '{}' has empty speed_tier",
+            info.name
+        );
+        assert!(
+            !info.precision_tier.is_empty(),
+            "Model '{}' has empty precision_tier",
+            info.name
+        );
+
+        // strengths should have at least one entry
+        assert!(
+            !info.strengths.is_empty(),
+            "Model '{}' has empty strengths",
+            info.name
+        );
+    }
 }

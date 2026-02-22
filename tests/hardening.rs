@@ -2,6 +2,7 @@
 //! Each test proves a defect found by multi-model consensus review.
 //! Tests should FAIL before fixes and PASS after.
 
+use squall::context::ContextFormat;
 use squall::error::SquallError;
 
 // ---------------------------------------------------------------------------
@@ -93,6 +94,11 @@ async fn semaphore_acquire_respects_deadline() {
                 executable: "nonexistent-binary-12345".to_string(),
                 args_template: vec!["--".to_string()],
             },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
         },
     );
     let config = Config { models };
@@ -679,6 +685,7 @@ async fn xml_comment_injection_prevented() {
         &["small.txt".to_string(), evil_name.to_string()],
         &dir,
         100,
+        ContextFormat::Xml,
     )
     .await
     .unwrap()
@@ -889,6 +896,7 @@ async fn filename_containing_escapes_not_misclassified() {
         &[filename.to_string()],
         &dir,
         10_000,
+        ContextFormat::Xml,
     )
     .await;
 
@@ -920,6 +928,7 @@ async fn nonexistent_file_with_escapes_in_name_is_soft_error() {
         &["my_escapes_notes.txt".to_string(), "valid.txt".to_string()],
         &dir,
         10_000,
+        ContextFormat::Xml,
     )
     .await;
 
@@ -1204,11 +1213,21 @@ fn suggest_models_substring_match() {
         model_id: "grok-4-1-fast-reasoning".to_string(),
         provider: "xai".to_string(),
         backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string(), api_format: ApiFormat::OpenAi },
+        description: String::new(),
+        strengths: vec![],
+        weaknesses: vec![],
+        speed_tier: "fast".to_string(),
+        precision_tier: "medium".to_string(),
     });
     models.insert("gemini".to_string(), ModelEntry {
         model_id: "gemini".to_string(),
         provider: "gemini".to_string(),
         backend: BackendConfig::Cli { executable: "echo".to_string(), args_template: vec![] },
+        description: String::new(),
+        strengths: vec![],
+        weaknesses: vec![],
+        speed_tier: "fast".to_string(),
+        precision_tier: "medium".to_string(),
     });
     let registry = Registry::from_config(Config { models });
 
@@ -1234,6 +1253,11 @@ fn suggest_models_reverse_match() {
         model_id: "grok-4-1-fast-reasoning".to_string(),
         provider: "xai".to_string(),
         backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string(), api_format: ApiFormat::OpenAi },
+        description: String::new(),
+        strengths: vec![],
+        weaknesses: vec![],
+        speed_tier: "fast".to_string(),
+        precision_tier: "medium".to_string(),
     });
     let registry = Registry::from_config(Config { models });
 
@@ -1256,6 +1280,11 @@ fn suggest_models_no_match() {
         model_id: "grok-4-1-fast-reasoning".to_string(),
         provider: "xai".to_string(),
         backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string(), api_format: ApiFormat::OpenAi },
+        description: String::new(),
+        strengths: vec![],
+        weaknesses: vec![],
+        speed_tier: "fast".to_string(),
+        precision_tier: "medium".to_string(),
     });
     let registry = Registry::from_config(Config { models });
 
@@ -1277,6 +1306,11 @@ fn suggest_models_empty_query() {
         model_id: "grok-4-1-fast-reasoning".to_string(),
         provider: "xai".to_string(),
         backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string(), api_format: ApiFormat::OpenAi },
+        description: String::new(),
+        strengths: vec![],
+        weaknesses: vec![],
+        speed_tier: "fast".to_string(),
+        precision_tier: "medium".to_string(),
     });
     let registry = Registry::from_config(Config { models });
 
@@ -1313,6 +1347,11 @@ fn suggest_models_sorted_and_capped() {
                     api_key: "key".to_string(),
                     api_format: ApiFormat::OpenAi,
                 },
+                description: String::new(),
+                strengths: vec![],
+                weaknesses: vec![],
+                speed_tier: "fast".to_string(),
+                precision_tier: "medium".to_string(),
             },
         );
     }
@@ -1453,6 +1492,11 @@ async fn review_none_branch_model_selection_is_sorted() {
                     api_key: "key".to_string(),
                     api_format: ApiFormat::OpenAi,
                 },
+                description: String::new(),
+                strengths: vec![],
+                weaknesses: vec![],
+                speed_tier: "fast".to_string(),
+                precision_tier: "medium".to_string(),
             },
         );
     }
@@ -1474,6 +1518,7 @@ async fn review_none_branch_model_selection_is_sorted() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;

@@ -3,41 +3,50 @@ use std::collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::context::ContextFormat;
+
 /// Request to dispatch a prompt to multiple models with straggler cutoff.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReviewRequest {
-    /// The prompt to send to all models
+    /// The prompt to send to all models. File context and diff are prepended automatically.
     pub prompt: String,
-    /// Specific models to query (defaults to all configured)
+    /// Model names to query (from `listmodels`). Defaults to all configured models if omitted.
     pub models: Option<Vec<String>>,
-    /// Straggler cutoff in seconds (default: 180)
+    /// Straggler cutoff in seconds (default: 180). Models still running after this are cancelled.
     pub timeout_secs: Option<u64>,
-    /// System prompt for all models (e.g. "You are an expert code reviewer")
+    /// Shared system prompt for all models (e.g. "You are an expert code reviewer").
+    /// Overridden per-model by per_model_system_prompts.
     pub system_prompt: Option<String>,
-    /// Sampling temperature: 0 = deterministic, 1 = creative
+    /// Sampling temperature: 0.0 = deterministic (best for analysis/code), 1.0 = creative/diverse.
     pub temperature: Option<f64>,
-    /// Maximum tokens to generate per model (caps output length)
+    /// Maximum tokens to generate per model. Caps output length for each model's response.
     pub max_tokens: Option<u64>,
-    /// Reasoning effort for thinking models: "none" (fast), "low", "medium", "high" (deep).
-    /// Non-reasoning models ignore this. Automatically extends the deadline for "medium"/"high".
+    /// Reasoning effort for thinking models: "none" (fastest), "low", "medium", "high" (deepest).
+    /// Non-reasoning models ignore this. "medium"/"high" automatically extend the deadline to 600s.
     pub reasoning_effort: Option<String>,
-    /// Relative file paths to include as context
+    /// Relative file paths to include as context (read and inlined server-side). Requires working_directory.
     pub file_paths: Option<Vec<String>>,
-    /// Working directory for resolving file_paths
+    /// Absolute path to the project root for resolving file_paths.
     pub working_directory: Option<String>,
-    /// Unified diff text (e.g. git diff output) to include as review context
+    /// Unified diff text (e.g. `git diff` output) to include as review context. Shares budget with file_paths.
     pub diff: Option<String>,
-    /// Per-model system prompt overrides. Key = model name, value = system prompt.
-    /// Models not in this map use the shared system_prompt.
-    #[schemars(description = "Per-model system prompt overrides. Key = model name, value = system prompt. Models not in this map use the shared system_prompt.")]
+    /// Per-model system prompt overrides for different review lenses. Key = exact model name from
+    /// `listmodels`, value = system prompt. Models not in this map use the shared system_prompt.
+    /// Example lenses: security auditor, architecture reviewer, correctness checker.
+    /// Check `memory` category "tactic" for proven system prompts.
+    #[schemars(description = "Per-model system prompt overrides for different review lenses. Key = exact model name, value = system prompt. Models not listed fall back to the shared system_prompt. Use different lenses (security, architecture, correctness) for diverse coverage.")]
     pub per_model_system_prompts: Option<HashMap<String, String>>,
     /// Per-model timeout overrides in seconds. Key = model name, value = timeout.
     /// Each model's task deadline is min(per_model_timeout, global cutoff).
     /// Values clamped to MAX_TIMEOUT_SECS (600s).
     pub per_model_timeout_secs: Option<HashMap<String, u64>>,
-    /// Deep review mode: timeout=600s, reasoning_effort="high", max_tokens=16384.
-    /// Sugar for slow, thorough review runs. Individual fields override deep defaults.
+    /// Deep review mode: sets timeout=600s, reasoning_effort="high", max_tokens=16384.
+    /// Use for security audits, complex architecture reviews, or high-stakes changes.
+    /// Individual fields (timeout_secs, reasoning_effort, max_tokens) override deep defaults.
     pub deep: Option<bool>,
+    /// File context format: "xml" (default, full content) or "hashline" (line_num:hash|content,
+    /// compact for large files). Hashline lets models reference lines by number+hash.
+    pub context_format: Option<ContextFormat>,
 }
 
 impl ReviewRequest {

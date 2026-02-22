@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -7,6 +8,19 @@ use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use crate::error::SquallError;
+
+/// Format for file context injection into model prompts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ContextFormat {
+    /// Standard XML format: full file content wrapped in `<file>` tags.
+    #[default]
+    Xml,
+    /// Hashline format: each line tagged with `line_number:hash|content`.
+    /// The 2-char hex hash lets models reference specific lines compactly
+    /// (e.g., "line 42:a3 has a bug") while saving tokens on long files.
+    Hashline,
+}
 
 /// Git repository context: branch and commit SHA.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -136,6 +150,28 @@ fn escape_xml_comment(s: &str) -> String {
     s.replace("--", "&#45;&#45;")
 }
 
+/// Format file content in hashline format: `line_number:hash|content\n` per line.
+/// Hash is first 2 hex chars of a fast hash of the line content. This gives models
+/// a compact way to reference specific lines (e.g., "line 42:a3") while still being
+/// readable. XML escaping is applied to the content portion.
+pub fn format_hashline(content: &str) -> String {
+    let mut output = String::with_capacity(content.len() + content.lines().count() * 6);
+    for (i, line) in content.lines().enumerate() {
+        let hash = line_hash(line);
+        let escaped = escape_xml_content(line);
+        output.push_str(&format!("{}:{:02x}|{}\n", i + 1, hash, escaped));
+    }
+    output
+}
+
+/// Compute a 1-byte (0-255) hash of a line for hashline format.
+/// Uses DefaultHasher (SipHash) for consistency with the memory system.
+fn line_hash(line: &str) -> u8 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    line.hash(&mut hasher);
+    hasher.finish() as u8
+}
+
 /// Validate that a path is safe: relative, no `..` components.
 fn validate_path(path: &str) -> Result<(), SquallError> {
     let p = Path::new(path);
@@ -183,13 +219,18 @@ pub struct FileContextResult {
     pub errors: Vec<String>,
 }
 
-/// Read files and format as XML context. All paths must be relative to `base_dir`.
+/// Read files and format as context for model prompts. All paths must be relative to `base_dir`.
 /// Path traversal attempts reject the entire request.
 /// Non-existent or unreadable files are noted but non-fatal (unless ALL fail).
+///
+/// `format` controls how file content is rendered:
+/// - `Xml` (default): full content with XML escaping inside `<file>` tags
+/// - `Hashline`: each line as `line_num:hash|content` inside `<file>` tags
 pub async fn resolve_file_context(
     paths: &[String],
     base_dir: &Path,
     budget: usize,
+    format: ContextFormat,
 ) -> Result<FileContextResult, SquallError> {
     if paths.is_empty() {
         return Ok(FileContextResult {
@@ -263,11 +304,19 @@ pub async fn resolve_file_context(
             }
         };
 
-        let escaped = escape_xml_content(&content);
+        let formatted = match format {
+            ContextFormat::Xml => escape_xml_content(&content),
+            ContextFormat::Hashline => format_hashline(&content),
+        };
         let entry = format!(
-            "<file path=\"{}\">\n{}\n</file>\n",
+            "<file path=\"{}\">\n{}</file>\n",
             escape_xml_attr(rel_path),
-            escaped
+            // Hashline already ends with \n per line; Xml needs trailing \n
+            if format == ContextFormat::Xml {
+                format!("{formatted}\n")
+            } else {
+                formatted
+            }
         );
 
         // Post-read check: escaped content may be larger than raw (XML entities)

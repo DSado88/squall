@@ -108,6 +108,11 @@ fn backend_config_cli_stores_executable_and_args() {
             executable: "/usr/local/bin/gemini".to_string(),
             args_template: vec!["-o".to_string(), "json".to_string()],
         },
+        description: String::new(),
+        strengths: vec![],
+        weaknesses: vec![],
+        speed_tier: "fast".to_string(),
+        precision_tier: "medium".to_string(),
     };
 
     assert!(matches!(entry.backend, BackendConfig::Cli { .. }));
@@ -130,6 +135,11 @@ fn backend_config_http_redacts_api_key_in_debug() {
             api_key: "sk-secret-key".to_string(),
             api_format: ApiFormat::OpenAi,
         },
+        description: String::new(),
+        strengths: vec![],
+        weaknesses: vec![],
+        speed_tier: "fast".to_string(),
+        precision_tier: "medium".to_string(),
     };
 
     let debug = format!("{:?}", entry);

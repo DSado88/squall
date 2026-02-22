@@ -97,6 +97,11 @@ fn p0_3_model_entry_debug_redacts_api_key() {
             api_key: "sk-super-secret-key-12345".to_string(),
             api_format: ApiFormat::OpenAi,
         },
+        description: String::new(),
+        strengths: vec![],
+        weaknesses: vec![],
+        speed_tier: "fast".to_string(),
+        precision_tier: "medium".to_string(),
     };
     let debug_output = format!("{:?}", entry);
     assert!(
@@ -204,6 +209,7 @@ fn p1_8_empty_model_string_uses_default() {
         temperature: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
     assert_eq!(
         req.model_or_default(),
@@ -223,6 +229,7 @@ fn p1_8_whitespace_model_string_uses_default() {
         temperature: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
     assert_eq!(
         req.model_or_default(),

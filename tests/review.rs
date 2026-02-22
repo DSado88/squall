@@ -43,6 +43,7 @@ fn review_request_default_timeout() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
     assert_eq!(req.timeout_secs(), 180);
 }
@@ -63,6 +64,7 @@ fn review_request_custom_timeout() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
     assert_eq!(req.timeout_secs(), 60);
 }
@@ -207,6 +209,7 @@ async fn executor_unknown_models_go_to_not_started() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -232,6 +235,11 @@ async fn executor_none_models_uses_all_configured() {
                 api_key: "fake-key".to_string(),
                 api_format: ApiFormat::OpenAi,
             },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
         },
     );
     let config = Config { models };
@@ -252,6 +260,7 @@ async fn executor_none_models_uses_all_configured() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -281,6 +290,11 @@ async fn executor_cutoff_aborts_slow_models() {
                 api_key: "fake".to_string(),
                 api_format: ApiFormat::OpenAi,
             },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
         },
     );
     let config = Config { models };
@@ -301,6 +315,7 @@ async fn executor_cutoff_aborts_slow_models() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
 
     let start = Instant::now();
@@ -336,6 +351,11 @@ async fn executor_fast_models_complete_before_cutoff() {
                 api_key: "fake".to_string(),
                 api_format: ApiFormat::OpenAi,
             },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
         },
     );
     let config = Config { models };
@@ -356,6 +376,7 @@ async fn executor_fast_models_complete_before_cutoff() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
 
     let start = Instant::now();
@@ -389,6 +410,11 @@ async fn executor_mixed_fast_and_slow() {
                 api_key: "fake".to_string(),
                 api_format: ApiFormat::OpenAi,
             },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
         },
     );
     // Slow (black-hole address)
@@ -402,6 +428,11 @@ async fn executor_mixed_fast_and_slow() {
                 api_key: "fake".to_string(),
                 api_format: ApiFormat::OpenAi,
             },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
         },
     );
     let config = Config { models };
@@ -422,6 +453,7 @@ async fn executor_mixed_fast_and_slow() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
 
     let start = Instant::now();
@@ -465,6 +497,7 @@ async fn executor_persists_results_to_disk() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -575,6 +608,7 @@ async fn executor_clamps_huge_timeout() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
 
     // Should not panic — timeout is clamped internally
@@ -604,6 +638,11 @@ async fn executor_deduplicates_model_ids() {
                 api_key: "fake".to_string(),
                 api_format: ApiFormat::OpenAi,
             },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
         },
     );
     let config = Config { models };
@@ -624,6 +663,7 @@ async fn executor_deduplicates_model_ids() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -658,6 +698,11 @@ async fn executor_caps_all_configured_models() {
                     api_key: "fake".to_string(),
                     api_format: ApiFormat::OpenAi,
                 },
+                description: String::new(),
+                strengths: vec![],
+                weaknesses: vec![],
+                speed_tier: "fast".to_string(),
+                precision_tier: "medium".to_string(),
             },
         );
     }
@@ -680,6 +725,7 @@ async fn executor_caps_all_configured_models() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -722,6 +768,7 @@ async fn persist_filename_includes_pid() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -810,6 +857,11 @@ async fn executor_with_per_model_system_prompts() {
                 api_key: "fake".to_string(),
                 api_format: ApiFormat::OpenAi,
             },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
         },
     );
     let config = Config { models };
@@ -832,6 +884,7 @@ async fn executor_with_per_model_system_prompts() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -864,6 +917,7 @@ fn deep_mode_sets_600s_effective_timeout() {
         deep: Some(true),
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
     assert_eq!(
         req.effective_timeout_secs(),
@@ -898,6 +952,7 @@ fn deep_mode_does_not_override_explicit_values() {
         deep: Some(true),
         max_tokens: Some(4096),
         reasoning_effort: Some("medium".to_string()),
+        context_format: None,
     };
     // timeout_secs=300 < 600, so deep raises to 600
     assert_eq!(req.effective_timeout_secs(), 600);
@@ -923,6 +978,7 @@ fn deep_false_uses_normal_defaults() {
         deep: Some(false),
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
     assert_eq!(req.effective_timeout_secs(), 180);
     assert_eq!(req.effective_reasoning_effort(), None);
@@ -947,6 +1003,11 @@ async fn deep_mode_executor_uses_effective_timeout() {
                 api_key: "fake".to_string(),
                 api_format: ApiFormat::OpenAi,
             },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
         },
     );
     let config = Config { models };
@@ -967,6 +1028,7 @@ async fn deep_mode_executor_uses_effective_timeout() {
         deep: Some(true), // should raise to 600s
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
 
     let resp = executor.execute(&req, req.prompt.clone(), None).await;
@@ -998,6 +1060,11 @@ async fn per_model_timeout_does_not_extend_global_cutoff() {
                 api_key: "fake".to_string(),
                 api_format: ApiFormat::OpenAi,
             },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
         },
     );
     models.insert(
@@ -1010,6 +1077,11 @@ async fn per_model_timeout_does_not_extend_global_cutoff() {
                 api_key: "fake".to_string(),
                 api_format: ApiFormat::OpenAi,
             },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
         },
     );
     let config = Config { models };
@@ -1033,6 +1105,7 @@ async fn per_model_timeout_does_not_extend_global_cutoff() {
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
+        context_format: None,
     };
 
     let start = Instant::now();

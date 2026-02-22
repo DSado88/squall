@@ -1617,6 +1617,11 @@ fn defect_listmodels_must_return_map_key_not_model_id() {
                 api_key: "test".to_string(),
                 api_format: ApiFormat::OpenAi,
             },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
         },
     );
     let config = Config { models };

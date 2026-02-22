@@ -64,6 +64,16 @@ pub struct ModelEntry {
     pub model_id: String,
     pub provider: String,
     pub backend: BackendConfig,
+    /// One-line description of the model's purpose.
+    pub description: String,
+    /// What this model is best at (e.g., "systems-level bugs", "fast triage").
+    pub strengths: Vec<String>,
+    /// Known weaknesses or blind spots.
+    pub weaknesses: Vec<String>,
+    /// Speed tier: "fast", "medium", "slow", "very_slow".
+    pub speed_tier: String,
+    /// Precision tier: "high", "medium", "low".
+    pub precision_tier: String,
 }
 
 impl ModelEntry {
@@ -113,6 +123,10 @@ impl std::fmt::Debug for ModelEntry {
                     .field("api_key", &"[REDACTED]");
             }
         }
+
+        s.field("description", &self.description)
+            .field("speed_tier", &self.speed_tier)
+            .field("precision_tier", &self.precision_tier);
 
         s.finish()
     }
