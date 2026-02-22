@@ -28,7 +28,11 @@ pub fn stall_timeout_for(reasoning_effort: Option<&str>) -> Duration {
 }
 
 /// Default maximum time to wait for the first SSE event after headers arrive.
-const FIRST_BYTE_TIMEOUT: Duration = Duration::from_secs(30);
+/// 60s accommodates OpenRouter-routed models (Kimi, GLM) where the intermediary
+/// responds with headers immediately but the upstream model queues for 30-50s.
+/// SSE keepalive comments (`: keepalive`) are dropped by eventsource-stream,
+/// so they can't reset this timer — only real data events count.
+const FIRST_BYTE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Returns the first-byte timeout for a given reasoning effort level.
 /// Reasoning models with effort >= "medium" may think silently for minutes

@@ -582,10 +582,11 @@ async fn streaming_reasoning_model_survives_stall() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn first_byte_timeout_default_is_30s() {
-    assert_eq!(first_byte_timeout_for(None), Duration::from_secs(30));
-    assert_eq!(first_byte_timeout_for(Some("none")), Duration::from_secs(30));
-    assert_eq!(first_byte_timeout_for(Some("low")), Duration::from_secs(30));
+fn first_byte_timeout_default_is_60s() {
+    // 60s accommodates OpenRouter-routed models (Kimi, GLM) that queue >30s.
+    assert_eq!(first_byte_timeout_for(None), Duration::from_secs(60));
+    assert_eq!(first_byte_timeout_for(Some("none")), Duration::from_secs(60));
+    assert_eq!(first_byte_timeout_for(Some("low")), Duration::from_secs(60));
 }
 
 #[test]
