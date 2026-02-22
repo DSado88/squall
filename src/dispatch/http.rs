@@ -67,6 +67,8 @@ struct StreamDelta {
     content: Option<String>,
     /// xAI Grok sends reasoning in a separate field alongside content.
     reasoning_content: Option<String>,
+    /// Together AI models (Kimi, Qwen) send thinking tokens in this field.
+    reasoning: Option<String>,
 }
 
 /// SSE streaming event from Anthropic Messages API.
@@ -165,7 +167,15 @@ impl HttpDispatch {
                     body["temperature"] = serde_json::json!(temp);
                 }
                 if let Some(max) = req.max_tokens {
-                    body["max_tokens"] = serde_json::json!(max);
+                    // OpenAI newer models (GPT-5, o-series) require max_completion_tokens;
+                    // older models and other providers accept max_tokens.
+                    // max_completion_tokens is backward-compatible with providers that
+                    // treat it as an alias, so prefer it for OpenAI.
+                    if provider == "openai" {
+                        body["max_completion_tokens"] = serde_json::json!(max);
+                    } else {
+                        body["max_tokens"] = serde_json::json!(max);
+                    }
                 }
                 if let Some(ref effort) = req.reasoning_effort {
                     body["reasoning"] = serde_json::json!({"effort": effort});
@@ -481,6 +491,11 @@ fn parse_openai_event(data: &str) -> ParsedChunk {
         && !rc.is_empty()
     {
         text.push_str(rc);
+    }
+    if let Some(ref r) = choice.delta.reasoning
+        && !r.is_empty()
+    {
+        text.push_str(r);
     }
     if let Some(ref c) = choice.delta.content
         && !c.is_empty()

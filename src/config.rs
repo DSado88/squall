@@ -123,7 +123,7 @@ impl Config {
             );
         }
 
-        // Together AI models: Kimi, DeepSeek V3.2, Qwen 3.5 — US-hosted, single API key
+        // Together AI models: Kimi, DeepSeek V3.1, Qwen 3.5 — US-hosted, single API key
         if let Ok(key) = env::var("TOGETHER_API_KEY") {
             let together_url = "https://api.together.xyz/v1/chat/completions".to_string();
 
@@ -146,17 +146,17 @@ impl Config {
             );
 
             models.insert(
-                "deepseek-v3.2".to_string(),
+                "deepseek-v3.1".to_string(),
                 ModelEntry {
-                    model_id: "DeepSeek-AI/DeepSeek-V3-2-Exp".to_string(),
+                    model_id: "deepseek-ai/DeepSeek-V3.1".to_string(),
                     provider: "together".to_string(),
                     backend: BackendConfig::Http {
                         base_url: together_url.clone(),
                         api_key: key.clone(),
                         api_format: ApiFormat::OpenAi,
                     },
-                    description: "DeepSeek V3.2 via Together (US-hosted), top open-source coder".to_string(),
-                    strengths: vec!["90% LiveCodeBench".to_string(), "strong reasoning".to_string(), "finds real bugs".to_string()],
+                    description: "DeepSeek V3.1 via Together (US-hosted), strong open-source coder".to_string(),
+                    strengths: vec!["strong reasoning".to_string(), "finds real bugs".to_string()],
                     weaknesses: vec!["verbose output".to_string()],
                     speed_tier: "medium".to_string(),
                     precision_tier: "high".to_string(),
@@ -166,14 +166,14 @@ impl Config {
             models.insert(
                 "qwen-3.5".to_string(),
                 ModelEntry {
-                    model_id: "Qwen/Qwen3.5-72B".to_string(),
+                    model_id: "Qwen/Qwen3.5-397B-A17B".to_string(),
                     provider: "together".to_string(),
                     backend: BackendConfig::Http {
                         base_url: together_url,
                         api_key: key,
                         api_format: ApiFormat::OpenAi,
                     },
-                    description: "Alibaba's Qwen 3.5 72B via Together (US-hosted), strong multilingual code model".to_string(),
+                    description: "Alibaba's Qwen 3.5 397B MoE via Together (US-hosted), strong multilingual code model".to_string(),
                     strengths: vec!["multilingual understanding".to_string(), "good at pattern matching".to_string()],
                     weaknesses: vec!["sometimes misses context".to_string()],
                     speed_tier: "medium".to_string(),

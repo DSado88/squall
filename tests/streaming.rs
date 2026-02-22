@@ -850,6 +850,177 @@ async fn anthropic_request_uses_x_api_key_header() {
     server.abort();
 }
 
+// ---------------------------------------------------------------------------
+// Together AI reasoning field (Kimi, Qwen thinking tokens)
+// ---------------------------------------------------------------------------
+
+/// Helper: format an SSE data event with Together-style reasoning field.
+fn sse_together_reasoning_chunk(reasoning: &str) -> String {
+    format!(
+        "data: {{\"choices\":[{{\"delta\":{{\"content\":\"\",\"reasoning\":\"{reasoning}\"}}}}]}}\n\n"
+    )
+}
+
+#[tokio::test]
+async fn streaming_together_reasoning_field() {
+    let (listener, port) = mock_listener().await;
+
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0u8; 8192];
+        let _ = socket.read(&mut buf).await;
+
+        socket.write_all(SSE_HEADERS).await.unwrap();
+        // Together/Kimi sends thinking in "reasoning" field with empty "content"
+        socket.write_all(sse_together_reasoning_chunk("thinking...").as_bytes()).await.unwrap();
+        socket.write_all(sse_together_reasoning_chunk(" done").as_bytes()).await.unwrap();
+        // Then actual answer in content field
+        socket.write_all(sse_chunk("answer").as_bytes()).await.unwrap();
+        socket.write_all(SSE_DONE).await.unwrap();
+    });
+
+    let dispatch = HttpDispatch::new();
+    let req = make_req(30);
+
+    let result = dispatch
+        .query_model(&req, "together", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .await
+        .unwrap();
+
+    assert_eq!(result.text, "thinking... doneanswer");
+    assert!(!result.partial);
+
+    server.await.unwrap();
+}
+
+/// Together-style reasoning-only response (no content field populated).
+#[tokio::test]
+async fn streaming_together_reasoning_only() {
+    let (listener, port) = mock_listener().await;
+
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0u8; 8192];
+        let _ = socket.read(&mut buf).await;
+
+        socket.write_all(SSE_HEADERS).await.unwrap();
+        // Kimi K2.5 sends ALL text as reasoning, content always empty
+        socket.write_all(sse_together_reasoning_chunk("the answer is 42").as_bytes()).await.unwrap();
+        socket.write_all(SSE_DONE).await.unwrap();
+    });
+
+    let dispatch = HttpDispatch::new();
+    let req = make_req(30);
+
+    let result = dispatch
+        .query_model(&req, "together", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .await
+        .unwrap();
+
+    assert_eq!(result.text, "the answer is 42");
+    assert!(!result.partial);
+
+    server.await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// OpenAI max_completion_tokens parameter
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn openai_sends_max_completion_tokens() {
+    let (listener, port) = mock_listener().await;
+
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0u8; 16384];
+        let n = socket.read(&mut buf).await.unwrap();
+        let request = String::from_utf8_lossy(&buf[..n]);
+
+        let body_start = request.find("\r\n\r\n").unwrap() + 4;
+        let body = &request[body_start..];
+        assert!(
+            body.contains("\"max_completion_tokens\""),
+            "OpenAI should use max_completion_tokens, got: {body}"
+        );
+        assert!(
+            !body.contains("\"max_tokens\""),
+            "OpenAI should NOT use max_tokens, got: {body}"
+        );
+
+        socket.write_all(SSE_HEADERS).await.unwrap();
+        socket.write_all(sse_chunk("ok").as_bytes()).await.unwrap();
+        socket.write_all(SSE_DONE).await.unwrap();
+    });
+
+    let dispatch = HttpDispatch::new();
+    let req = ProviderRequest {
+        prompt: "test".to_string(),
+        model: "gpt-5".to_string(),
+        deadline: Instant::now() + Duration::from_secs(30),
+        working_directory: None,
+        system_prompt: None,
+        temperature: None,
+        max_tokens: Some(1024),
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
+    };
+
+    let _ = dispatch
+        .query_model(&req, "openai", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .await;
+
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn non_openai_sends_max_tokens() {
+    let (listener, port) = mock_listener().await;
+
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0u8; 16384];
+        let n = socket.read(&mut buf).await.unwrap();
+        let request = String::from_utf8_lossy(&buf[..n]);
+
+        let body_start = request.find("\r\n\r\n").unwrap() + 4;
+        let body = &request[body_start..];
+        assert!(
+            body.contains("\"max_tokens\""),
+            "Non-OpenAI should use max_tokens, got: {body}"
+        );
+        assert!(
+            !body.contains("\"max_completion_tokens\""),
+            "Non-OpenAI should NOT use max_completion_tokens, got: {body}"
+        );
+
+        socket.write_all(SSE_HEADERS).await.unwrap();
+        socket.write_all(sse_chunk("ok").as_bytes()).await.unwrap();
+        socket.write_all(SSE_DONE).await.unwrap();
+    });
+
+    let dispatch = HttpDispatch::new();
+    let req = ProviderRequest {
+        prompt: "test".to_string(),
+        model: "test-model".to_string(),
+        deadline: Instant::now() + Duration::from_secs(30),
+        working_directory: None,
+        system_prompt: None,
+        temperature: None,
+        max_tokens: Some(1024),
+        reasoning_effort: None,
+        cancellation_token: None,
+        stall_timeout: None,
+    };
+
+    let _ = dispatch
+        .query_model(&req, "together", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .await;
+
+    server.await.unwrap();
+}
+
 /// OpenAI parser should still work after refactor (regression test).
 #[tokio::test]
 async fn openai_parser_unchanged_after_refactor() {
