@@ -322,7 +322,7 @@ impl ReviewExecutor {
 
 /// Build a `ReviewModelResult` from a query outcome.
 /// Partial results (from cooperative cancellation) are still Success with `reason: "partial"`.
-fn collect_result(
+pub fn collect_result(
     query_result: Result<crate::dispatch::ProviderResult, SquallError>,
     model_id: String,
     provider: String,
@@ -330,7 +330,7 @@ fn collect_result(
 ) -> ReviewModelResult {
     match query_result {
         Ok(pr) => ReviewModelResult {
-            model: pr.model,
+            model: model_id,
             provider: pr.provider,
             status: ModelStatus::Success,
             response: Some(pr.text),

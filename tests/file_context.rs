@@ -134,7 +134,7 @@ async fn budget_skipped_populates_metadata() {
 async fn budget_constant_is_reasonable() {
     let budget = squall::context::MAX_FILE_CONTEXT_BYTES;
     assert!(budget >= 100_000, "Budget too small: {budget}");
-    assert!(budget <= 1_000_000, "Budget too large: {budget}");
+    assert!(budget <= 4 * 1024 * 1024, "Budget too large: {budget}");
 }
 
 // ---------------------------------------------------------------------------

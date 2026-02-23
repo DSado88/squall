@@ -9,6 +9,32 @@ use crate::parsers::OutputParser;
 
 pub const MAX_OUTPUT_BYTES: usize = 2 * 1024 * 1024; // 2MB
 
+/// Drop guard that kills the entire process group (not just the leader PID).
+///
+/// `kill_on_drop(true)` only sends SIGKILL to the child PID. When the child is
+/// a process group leader (via `process_group(0)`) and spawns grandchildren,
+/// dropping the `Child` handle only kills the leader — grandchildren survive as
+/// orphans. This guard sends SIGKILL to the negative PID (the process group).
+struct ProcessGroupGuard {
+    pid: Option<u32>,
+}
+
+impl ProcessGroupGuard {
+    fn new(pid: Option<u32>) -> Self {
+        Self { pid }
+    }
+}
+
+impl Drop for ProcessGroupGuard {
+    fn drop(&mut self) {
+        if let Some(pid) = self.pid {
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+        }
+    }
+}
+
 pub struct CliDispatch;
 
 #[allow(clippy::new_without_default)]
@@ -21,7 +47,7 @@ impl CliDispatch {
     ///
     /// Safety features:
     /// - No shell interpolation (uses Command::new + args, not shell)
-    /// - kill_on_drop(true) prevents zombie processes
+    /// - ProcessGroupGuard kills entire process group on drop (grandchildren too)
     /// - Timeout derived from ProviderRequest.deadline
     /// - Output capped at MAX_OUTPUT_BYTES
     /// - Piped stdin/stdout/stderr (no terminal leakage)
@@ -55,8 +81,7 @@ impl CliDispatch {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .process_group(0) // Kill entire process tree on timeout, not just top-level
-            .kill_on_drop(true);
+            .process_group(0); // Child becomes its own process group leader
 
         // Set working directory for CLI subprocess if provided
         if let Some(ref wd) = req.working_directory {
@@ -66,6 +91,12 @@ impl CliDispatch {
         let mut child = cmd.spawn().map_err(|e| SquallError::Other(
             format!("failed to spawn {executable}: {e}"),
         ))?;
+
+        // ProcessGroupGuard kills the entire process group on drop (including
+        // grandchildren). This replaces kill_on_drop(true) which only kills
+        // the leader PID, leaving grandchild processes as orphans when the
+        // tokio task is aborted by JoinSet::abort_all().
+        let _pg_guard = ProcessGroupGuard::new(child.id());
 
         // Write prompt to stdin concurrently with stdout/stderr reading.
         // CRITICAL: must NOT await write_all before spawning pipe readers.

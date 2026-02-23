@@ -123,8 +123,11 @@ pub fn default_scope_from_git(ctx: Option<&GitContext>) -> String {
     }
 }
 
-/// Maximum bytes of file content to inject into HTTP model prompts.
-pub const MAX_FILE_CONTEXT_BYTES: usize = 512 * 1024;
+/// Maximum bytes of file content to inject into model prompts.
+/// 2 MB ≈ 500K–700K tokens — well within frontier model context windows.
+/// Models with smaller windows will reject at the provider level, which is
+/// handled gracefully by the dispatch error path.
+pub const MAX_FILE_CONTEXT_BYTES: usize = 2 * 1024 * 1024;
 
 /// Minimum bytes reserved for diff context in review requests.
 /// When both file_paths and diff are provided, file context is capped at

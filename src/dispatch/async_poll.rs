@@ -7,6 +7,9 @@ use crate::dispatch::registry::AsyncPollProviderType;
 use crate::dispatch::{ProviderRequest, ProviderResult};
 use crate::error::SquallError;
 
+/// Max response body size for launch responses (64KB — just a JSON with an ID).
+const MAX_LAUNCH_RESPONSE_BYTES: usize = 64 * 1024;
+
 /// Max response body size for poll responses (4MB — research can be large).
 const MAX_POLL_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
@@ -339,10 +342,8 @@ impl AsyncPollDispatch {
             });
         }
 
-        let launch_body_bytes = launch_resp
-            .bytes()
-            .await
-            .map_err(SquallError::Request)?;
+        let launch_body_bytes =
+            read_body_capped(launch_resp, MAX_LAUNCH_RESPONSE_BYTES, provider).await?;
         let job_id = api.parse_launch_response(&launch_body_bytes)?;
 
         tracing::info!(
@@ -477,18 +478,8 @@ impl AsyncPollDispatch {
             // Reset failure counter on successful response
             consecutive_failures = 0;
 
-            let poll_body = poll_resp
-                .bytes()
-                .await
-                .map_err(SquallError::Request)?;
-
-            if poll_body.len() > MAX_POLL_RESPONSE_BYTES {
-                return Err(SquallError::Upstream {
-                    provider: provider.to_string(),
-                    message: format!("poll response too large: {} bytes", poll_body.len()),
-                    status: None,
-                });
-            }
+            let poll_body =
+                read_body_capped(poll_resp, MAX_POLL_RESPONSE_BYTES, provider).await?;
 
             match api.parse_poll_response(&poll_body)? {
                 PollStatus::InProgress => {
@@ -547,6 +538,38 @@ impl AsyncPollDispatch {
     }
 }
 
+/// Read a response body incrementally, stopping at `max_bytes`.
+/// Unlike `response.bytes().await` which buffers the entire body before returning,
+/// this reads chunk-by-chunk and aborts early if the cap is exceeded.
+async fn read_body_capped(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+    provider: &str,
+) -> Result<Vec<u8>, SquallError> {
+    let mut body = Vec::with_capacity(max_bytes.min(64 * 1024));
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                body.extend_from_slice(&chunk);
+                if body.len() > max_bytes {
+                    return Err(SquallError::Upstream {
+                        provider: provider.to_string(),
+                        message: format!(
+                            "response body too large: read {} bytes (cap {})",
+                            body.len(),
+                            max_bytes
+                        ),
+                        status: None,
+                    });
+                }
+            }
+            Ok(None) => break,
+            Err(e) => return Err(SquallError::Request(e)),
+        }
+    }
+    Ok(body)
+}
+
 /// Sanitize a model name for use in filenames. Only allows alphanumeric, `-`, `_`.
 pub fn sanitize_model_name(name: &str) -> String {
     name.chars()
@@ -561,7 +584,7 @@ pub fn sanitize_model_name(name: &str) -> String {
 }
 
 /// Persist deep research results to `.squall/research/{timestamp}_{seq}_{model}.json`.
-async fn persist_research_result(
+pub async fn persist_research_result(
     model: &str,
     provider: &str,
     text: &str,
@@ -575,9 +598,10 @@ async fn persist_research_result(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
+    let pid = std::process::id();
     let seq = PERSIST_COUNTER.fetch_add(1, Ordering::Relaxed);
     let safe_model = sanitize_model_name(model);
-    let filename = format!("{ts}_{seq}_{safe_model}.json");
+    let filename = format!("{ts}_{pid}_{seq}_{safe_model}.json");
     let path = dir.join(&filename);
 
     let payload = serde_json::json!({

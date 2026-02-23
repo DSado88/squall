@@ -516,11 +516,13 @@ impl MemoryStore {
         }
 
         let mut result = sections.join("\n\n---\n\n");
+        const TRUNCATION_SUFFIX: &str = "\n\n[truncated]";
         if result.len() > max_chars {
-            // Truncate at a valid char boundary to avoid panic on multi-byte UTF-8
-            let boundary = floor_char_boundary(&result, max_chars);
+            // Reserve space for the suffix so total output stays within max_chars
+            let target = max_chars.saturating_sub(TRUNCATION_SUFFIX.len());
+            let boundary = floor_char_boundary(&result, target);
             result.truncate(boundary);
-            result.push_str("\n\n[truncated]");
+            result.push_str(TRUNCATION_SUFFIX);
         }
 
         Ok(result)

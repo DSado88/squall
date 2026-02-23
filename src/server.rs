@@ -98,7 +98,7 @@ impl SquallServer {
             prompt,
             model: model.clone(),
             deadline: Instant::now() + Duration::from_secs(deadline_secs),
-            working_directory: None,
+            working_directory: req.working_directory,
             system_prompt: req.system_prompt,
             temperature: req.temperature,
             max_tokens: req.max_tokens,
