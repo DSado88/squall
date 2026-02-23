@@ -7,7 +7,7 @@ use std::time::Instant;
 use squall::config::Config;
 use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
 use squall::review::ReviewExecutor;
-use squall::tools::review::{ModelStatus, ReviewRequest, ReviewResponse};
+use squall::tools::review::{ModelStatus, ReviewRequest, ReviewResponse, ReviewSummary};
 
 // ---------------------------------------------------------------------------
 // Helper: resolve per-model system prompt (mirrors executor logic exactly)
@@ -44,6 +44,7 @@ fn review_request_default_timeout() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
     assert_eq!(req.timeout_secs(), 180);
 }
@@ -65,6 +66,7 @@ fn review_request_custom_timeout() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
     assert_eq!(req.timeout_secs(), 60);
 }
@@ -92,6 +94,8 @@ fn review_response_serializes_to_json() {
         results_file: Some(".squall/reviews/test.json".to_string()),
         persist_error: None,
         files_skipped: None,
+        warnings: vec![],
+        summary: ReviewSummary::default(),
     };
 
     let json = serde_json::to_string(&resp).unwrap();
@@ -120,6 +124,8 @@ fn review_response_omits_none_fields() {
         results_file: None,
         persist_error: None,
         files_skipped: None,
+        warnings: vec![],
+        summary: ReviewSummary::default(),
     };
 
     let json = serde_json::to_string(&resp).unwrap();
@@ -139,6 +145,8 @@ fn review_response_includes_persist_error_when_set() {
         results_file: None,
         persist_error: Some("permission denied".to_string()),
         files_skipped: None,
+        warnings: vec![],
+        summary: ReviewSummary::default(),
     };
     let json = serde_json::to_string(&resp).unwrap();
     assert!(json.contains("\"persist_error\":\"permission denied\""));
@@ -154,6 +162,8 @@ fn review_response_includes_files_skipped_when_set() {
         results_file: None,
         persist_error: None,
         files_skipped: Some(vec!["large_file.rs (50000B)".to_string()]),
+        warnings: vec![],
+        summary: ReviewSummary::default(),
     };
     let json = serde_json::to_string(&resp).unwrap();
     assert!(json.contains("\"files_skipped\""));
@@ -170,6 +180,8 @@ fn review_response_omits_files_skipped_when_none() {
         results_file: None,
         persist_error: None,
         files_skipped: None,
+        warnings: vec![],
+        summary: ReviewSummary::default(),
     };
     let json = serde_json::to_string(&resp).unwrap();
     assert!(!json.contains("files_skipped"), "None files_skipped should be omitted: {json}");
@@ -211,9 +223,10 @@ async fn executor_unknown_models_go_to_not_started() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
     assert!(resp.results.is_empty(), "No results for unknown models");
     assert_eq!(resp.not_started, vec!["nonexistent-model"]);
 }
@@ -262,9 +275,10 @@ async fn executor_none_models_uses_all_configured() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
     // Should have tried test-model (and failed since the URL is bogus)
     assert_eq!(resp.results.len(), 1);
     assert_eq!(resp.results[0].model, "test-model");
@@ -317,10 +331,11 @@ async fn executor_cutoff_aborts_slow_models() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
 
     let start = Instant::now();
-    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
     let elapsed = start.elapsed();
 
     // Should complete within ~2s cutoff + 3s cooperative grace + overhead, not hang forever
@@ -378,10 +393,11 @@ async fn executor_fast_models_complete_before_cutoff() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
 
     let start = Instant::now();
-    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
     let elapsed = start.elapsed();
 
     // Should complete quickly (connection refused), NOT wait 60s for cutoff
@@ -455,10 +471,11 @@ async fn executor_mixed_fast_and_slow() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
 
     let start = Instant::now();
-    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
     let elapsed = start.elapsed();
 
     // Should take ~2s cutoff + 3s cooperative grace + overhead
@@ -500,9 +517,10 @@ async fn executor_persists_results_to_disk() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
 
     // Should have a results_file path
     assert!(
@@ -613,10 +631,11 @@ async fn executor_clamps_huge_timeout() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
 
     // Should not panic — timeout is clamped internally
-    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
     assert_eq!(
         resp.cutoff_seconds,
         squall::review::MAX_TIMEOUT_SECS,
@@ -668,9 +687,10 @@ async fn executor_deduplicates_model_ids() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
 
     // Should produce exactly 1 result, not 2
     assert_eq!(
@@ -730,9 +750,10 @@ async fn executor_caps_all_configured_models() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
     let total = resp.results.len() + resp.not_started.len();
 
     // RED: None branch doesn't apply .take(MAX_MODELS), so all 25 models run
@@ -774,9 +795,10 @@ async fn persist_filename_includes_pid() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
     let path = resp.results_file.expect("should persist results");
     let pid = std::process::id().to_string();
 
@@ -890,9 +912,10 @@ async fn executor_with_per_model_system_prompts() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
     // Model will fail (fake endpoint), but executor should not panic
     assert_eq!(resp.results.len(), 1, "Should have one result");
     assert_eq!(resp.results[0].status, ModelStatus::Error, "Should error on fake endpoint");
@@ -923,6 +946,7 @@ fn deep_mode_sets_600s_effective_timeout() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
     assert_eq!(
         req.effective_timeout_secs(),
@@ -958,6 +982,7 @@ fn deep_mode_does_not_override_explicit_values() {
         max_tokens: Some(4096),
         reasoning_effort: Some("medium".to_string()),
         context_format: None,
+        investigation_context: None,
     };
     // timeout_secs=300 < 600, so deep raises to 600
     assert_eq!(req.effective_timeout_secs(), 600);
@@ -984,6 +1009,7 @@ fn deep_false_uses_normal_defaults() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
     assert_eq!(req.effective_timeout_secs(), 180);
     assert_eq!(req.effective_reasoning_effort(), None);
@@ -1034,9 +1060,10 @@ async fn deep_mode_executor_uses_effective_timeout() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
 
     // RED: Currently executor uses req.timeout_secs() which returns 180 (ignoring deep).
     // GREEN: executor should use req.effective_timeout_secs() → 600.
@@ -1111,10 +1138,11 @@ async fn per_model_timeout_does_not_extend_global_cutoff() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
 
     let start = Instant::now();
-    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
     let elapsed = start.elapsed();
 
     // CRITICAL: Global cutoff at 3s should NOT be extended by per-model 600s.
@@ -1142,3 +1170,624 @@ fn stall_timeout_for_reasoning_unchanged() {
     assert_eq!(stall_timeout_for(None), Duration::from_secs(60));
     assert_eq!(stall_timeout_for(Some("low")), Duration::from_secs(60));
 }
+
+// ===========================================================================
+// Quality Gates: warnings, summary, investigation_context
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 1. Unknown per_model_system_prompts keys surface as warnings
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn warnings_surface_unknown_per_model_system_prompt_keys() {
+    let mut models = HashMap::new();
+    models.insert(
+        "real-model".to_string(),
+        ModelEntry {
+            model_id: "real-model".to_string(),
+            provider: "test".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://127.0.0.1:1/v1/chat".to_string(),
+                api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
+            },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        },
+    );
+    let config = Config { models, ..Default::default() };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["real-model".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: Some(HashMap::from([
+            ("real-model".to_string(), "valid lens".to_string()),
+            ("typo-model".to_string(), "orphan lens".to_string()),
+        ])),
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        context_format: None,
+        investigation_context: None,
+    };
+
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
+    assert!(
+        resp.warnings.iter().any(|w| w.contains("per_model_system_prompts") && w.contains("typo-model")),
+        "Should warn about unknown per_model_system_prompts key. Warnings: {:?}",
+        resp.warnings,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 2. Unknown per_model_timeout_secs keys surface as warnings
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn warnings_surface_unknown_per_model_timeout_keys() {
+    let mut models = HashMap::new();
+    models.insert(
+        "real-model".to_string(),
+        ModelEntry {
+            model_id: "real-model".to_string(),
+            provider: "test".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://127.0.0.1:1/v1/chat".to_string(),
+                api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
+            },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        },
+    );
+    let config = Config { models, ..Default::default() };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["real-model".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+        per_model_timeout_secs: Some(HashMap::from([
+            ("real-model".to_string(), 60u64),
+            ("ghost-model".to_string(), 120u64),
+        ])),
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        context_format: None,
+        investigation_context: None,
+    };
+
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
+    assert!(
+        resp.warnings.iter().any(|w| w.contains("per_model_timeout_secs") && w.contains("ghost-model")),
+        "Should warn about unknown per_model_timeout_secs key. Warnings: {:?}",
+        resp.warnings,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 3. MAX_MODELS truncation surfaces as warning with dropped model names
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn warnings_surface_max_models_truncation() {
+    let config = Config {
+        models: HashMap::new(),
+        ..Default::default()
+    };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    // Request MAX_MODELS + 3 unique models (all unknown — that's fine, we're testing the warning)
+    let model_names: Vec<String> = (0..squall::review::MAX_MODELS + 3)
+        .map(|i| format!("model-{i:02}"))
+        .collect();
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(model_names),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        context_format: None,
+        investigation_context: None,
+    };
+
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
+    assert!(
+        resp.warnings.iter().any(|w| w.contains("Dropped")),
+        "Should warn about MAX_MODELS truncation. Warnings: {:?}",
+        resp.warnings,
+    );
+    // Verify the warning includes the dropped model names
+    assert!(
+        resp.warnings.iter().any(|w| w.contains("model-20")),
+        "Warning should include the dropped model names. Warnings: {:?}",
+        resp.warnings,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 4. Summary counts match actual results
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn summary_counts_match_results() {
+    // One real model (will fail — connection refused) + one unknown model (not_started)
+    let mut models = HashMap::new();
+    models.insert(
+        "fail-model".to_string(),
+        ModelEntry {
+            model_id: "fail-model".to_string(),
+            provider: "test".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://127.0.0.1:1/v1/chat".to_string(),
+                api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
+            },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        },
+    );
+    let config = Config { models, ..Default::default() };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["fail-model".to_string(), "ghost-model".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        context_format: None,
+        investigation_context: None,
+    };
+
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
+    let s = &resp.summary;
+
+    assert_eq!(s.models_requested, 2, "2 models requested (post-dedup)");
+    assert_eq!(s.models_not_started, 1, "ghost-model is unknown");
+    assert_eq!(s.models_failed, 1, "fail-model connection refused");
+    assert_eq!(s.models_succeeded, 0, "no models succeeded");
+    assert_eq!(s.models_cutoff, 0, "no cutoff");
+    assert_eq!(s.models_partial, 0, "no partial results");
+}
+
+// ---------------------------------------------------------------------------
+// 5. Summary buckets reconcile (invariant test)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn summary_buckets_reconcile() {
+    // Two real models (both will fail) + one unknown
+    let mut models = HashMap::new();
+    for name in &["model-a", "model-b"] {
+        models.insert(
+            name.to_string(),
+            ModelEntry {
+                model_id: name.to_string(),
+                provider: "test".to_string(),
+                backend: BackendConfig::Http {
+                    base_url: "http://127.0.0.1:1/v1/chat".to_string(),
+                    api_key: "fake".to_string(),
+                    api_format: ApiFormat::OpenAi,
+                },
+                description: String::new(),
+                strengths: vec![],
+                weaknesses: vec![],
+                speed_tier: "fast".to_string(),
+                precision_tier: "medium".to_string(),
+            },
+        );
+    }
+    let config = Config { models, ..Default::default() };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["model-a".to_string(), "model-b".to_string(), "unknown".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        context_format: None,
+        investigation_context: None,
+    };
+
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
+    let s = &resp.summary;
+
+    // Invariant: succeeded + failed + cutoff + partial + not_started == requested
+    // (requested is post-dedup count which includes not_started)
+    let total = s.models_succeeded + s.models_failed + s.models_cutoff + s.models_partial + s.models_not_started;
+    assert_eq!(
+        total, s.models_requested,
+        "Summary buckets must reconcile: {s:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 6. investigation_context persisted to disk
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn investigation_context_persisted() {
+    let config = Config {
+        models: HashMap::new(),
+        ..Default::default()
+    };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["nonexistent".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        context_format: None,
+        investigation_context: Some("Found potential race condition in auth flow".to_string()),
+    };
+
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
+    let path = resp.results_file.expect("should persist results");
+
+    let content = tokio::fs::read_to_string(&path).await.unwrap();
+    assert!(
+        content.contains("Found potential race condition in auth flow"),
+        "Persisted file should contain investigation_context. Content: {content}"
+    );
+
+    // Cleanup
+    let _ = tokio::fs::remove_file(&path).await;
+}
+
+// ---------------------------------------------------------------------------
+// 7. investigation_context clamped at 32KB with warning
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn investigation_context_clamped() {
+    let config = Config {
+        models: HashMap::new(),
+        ..Default::default()
+    };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    // Create a context larger than 32KB
+    let big_context = "x".repeat(40_000);
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["nonexistent".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        context_format: None,
+        investigation_context: Some(big_context),
+    };
+
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
+
+    // Should have a truncation warning
+    assert!(
+        resp.warnings.iter().any(|w| w.contains("investigation_context was truncated")),
+        "Should warn about clamped investigation_context. Warnings: {:?}",
+        resp.warnings,
+    );
+
+    // Persisted file should contain truncated context (32KB, not 40KB)
+    if let Some(ref path) = resp.results_file {
+        let content = tokio::fs::read_to_string(path).await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let ctx = parsed["investigation_context"].as_str().unwrap();
+        assert_eq!(ctx.len(), 32 * 1024, "Context should be clamped to 32KB");
+        let _ = tokio::fs::remove_file(path).await;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 7b. investigation_context clamped safely on multi-byte UTF-8 boundary
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn investigation_context_clamped_utf8_boundary() {
+    let config = Config {
+        models: HashMap::new(),
+        ..Default::default()
+    };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    // Build a string where the 32KB boundary falls inside a multi-byte char.
+    // U+1F600 (😀) is 4 bytes in UTF-8. Fill up to just before 32KB, then add emoji
+    // so the 4-byte char straddles the 32768 boundary.
+    let max = 32 * 1024; // 32768
+    let padding = "a".repeat(max - 2); // 32766 ASCII bytes
+    let big_context = format!("{padding}😀😀😀"); // 32766 + 12 = 32778 bytes, boundary at 32768 is inside first emoji
+
+    assert!(big_context.len() > max);
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["nonexistent".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        context_format: None,
+        investigation_context: Some(big_context),
+    };
+
+    // This should NOT panic (previously would on &ctx[..MAX])
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
+
+    assert!(
+        resp.warnings.iter().any(|w| w.contains("investigation_context was truncated")),
+        "Should warn about clamped investigation_context. Warnings: {:?}",
+        resp.warnings,
+    );
+
+    // Persisted file should contain valid UTF-8 context truncated at char boundary
+    if let Some(ref path) = resp.results_file {
+        let content = tokio::fs::read_to_string(path).await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let ctx = parsed["investigation_context"].as_str().unwrap();
+        // Should be truncated to the char boundary before 32768 (32766 in this case)
+        assert!(ctx.len() <= max, "Context should be <= 32KB, got {}", ctx.len());
+        assert!(ctx.len() >= max - 4, "Should truncate near the boundary, got {}", ctx.len());
+        let _ = tokio::fs::remove_file(path).await;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 8. Empty warnings omitted from serialized JSON
+// ---------------------------------------------------------------------------
+
+#[test]
+fn empty_warnings_omitted_in_json() {
+    let resp = ReviewResponse {
+        results: vec![],
+        not_started: vec![],
+        cutoff_seconds: 180,
+        elapsed_ms: 100,
+        results_file: None,
+        persist_error: None,
+        files_skipped: None,
+        warnings: vec![],
+        summary: ReviewSummary::default(),
+    };
+    let json = serde_json::to_string(&resp).unwrap();
+    assert!(
+        !json.contains("\"warnings\""),
+        "Empty warnings should be omitted from JSON: {json}"
+    );
+}
+
+// ===========================================================================
+// RED tests: bugs found by 5-model deep review
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// DR-1: Persisted JSON should contain files_skipped (currently always None)
+//
+// Bug: server.rs sets files_skipped AFTER execute() returns, but persist
+// happens INSIDE execute(). Persisted file never contains files_skipped.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn persisted_json_contains_files_skipped() {
+    // We can't easily test through server.rs, so verify the persisted file
+    // has files_skipped when the response has it. This tests that persist
+    // captures the field. Currently fails because persist runs before
+    // files_skipped is set.
+    let mut models = HashMap::new();
+    models.insert(
+        "fast".to_string(),
+        ModelEntry {
+            model_id: "fast".to_string(),
+            provider: "test".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://127.0.0.1:1/v1/chat".to_string(),
+                api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
+            },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        },
+    );
+    let config = Config { models, ..Default::default() };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["fast".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        context_format: None,
+        investigation_context: None,
+    };
+
+    let skipped = Some(vec!["big_file.rs (50000B)".to_string()]);
+    let resp = executor.execute(&req, req.prompt.clone(), None, skipped).await;
+
+    // Verify persisted file contains files_skipped (previously lost because
+    // server.rs set it AFTER execute, but persist ran INSIDE execute).
+    if let Some(ref path) = resp.results_file {
+        let content = tokio::fs::read_to_string(path).await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(
+            parsed.get("files_skipped").is_some()
+                && !parsed["files_skipped"].is_null(),
+            "Persisted JSON should contain files_skipped, but it's missing. \
+             This proves the bug: persist runs before server.rs sets files_skipped. \
+             Persisted: {}",
+            parsed.get("files_skipped").map(|v| v.to_string()).unwrap_or("ABSENT".into()),
+        );
+        let _ = tokio::fs::remove_file(path).await;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DR-2: Truncation warning should report actual byte count after char walkback
+//
+// Bug: Warning says "truncated to {MAX}" but actual size may be less due to
+// UTF-8 char boundary walkback. E.g., 32766 bytes retained but warning says 32768.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn truncation_warning_reports_actual_boundary() {
+    let config = Config {
+        models: HashMap::new(),
+        ..Default::default()
+    };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    // Force a walkback: 32766 ASCII bytes + 4-byte emoji = 32770 bytes.
+    // Truncation at 32768 falls inside the emoji, walks back to 32766.
+    let max = 32 * 1024; // 32768
+    let padding = "a".repeat(max - 2); // 32766
+    let big_context = format!("{padding}😀😀"); // 32766 + 8 = 32774
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["nonexistent".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: None,
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        context_format: None,
+        investigation_context: Some(big_context.clone()),
+    };
+
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
+
+    // The warning should mention the ACTUAL retained byte count (32766),
+    // not the MAX (32768).
+    let warning = resp.warnings.iter()
+        .find(|w| w.contains("investigation_context was truncated"))
+        .expect("Should have truncation warning");
+    assert!(
+        warning.contains("32766") || warning.contains(&format!("to {}", max - 2)),
+        "Warning should report actual truncation boundary (32766), not MAX (32768). \
+         Got: {warning}"
+    );
+
+    // Cleanup
+    if let Some(ref path) = resp.results_file {
+        let _ = tokio::fs::remove_file(path).await;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DR-3: ProcessGroupGuard should be disarmed after successful child.wait()
+//
+// Bug: After child exits and is reaped, PID is freed for reuse. Guard still
+// holds old PID and sends SIGKILL on drop, potentially killing wrong process.
+//
+// Proving the bug: spawn a short-lived child via CLI dispatch, wait for
+// success, then check that no SIGKILL is sent to the (now-freed) PID.
+// We prove this by spawning a process group, then checking if an unrelated
+// process with the same PID would survive. Since PID reuse is hard to
+// trigger deterministically, we verify the fix exists as a unit test
+// inside src/dispatch/cli.rs.
+// ---------------------------------------------------------------------------
+
+// (DR-3 unit test lives in src/dispatch/cli.rs — cannot test private guard from here)

@@ -15,7 +15,10 @@ pub const MAX_MODELS: usize = 20;
 use crate::dispatch::registry::Registry;
 use crate::dispatch::ProviderRequest;
 use crate::error::SquallError;
-use crate::tools::review::{ModelStatus, ReviewModelResult, ReviewRequest, ReviewResponse};
+use crate::tools::review::{
+    ModelStatus, ReviewModelResult, ReviewRequest, ReviewResponse, ReviewSummary,
+    MAX_INVESTIGATION_CONTEXT_BYTES,
+};
 
 /// Maximum allowed timeout to prevent Instant overflow from untrusted input.
 /// 600s matches Claude Code's MCP tool timeout ceiling.
@@ -42,6 +45,7 @@ impl ReviewExecutor {
         req: &ReviewRequest,
         prompt: String,
         working_directory: Option<String>,
+        files_skipped: Option<Vec<String>>,
     ) -> ReviewResponse {
         // Fix #3: Clamp timeout to prevent Instant overflow from untrusted input.
         // Use effective_timeout_secs() to account for deep mode (600s default).
@@ -50,15 +54,28 @@ impl ReviewExecutor {
         let cutoff = Duration::from_secs(effective_cutoff_secs);
         let start = Instant::now();
 
+        // Collect warnings for quality gates (augments tracing — both logged and surfaced to caller).
+        let mut warnings: Vec<String> = Vec::new();
+
         // Determine which models to query (deduplicate, cap at MAX_MODELS)
         let target_models: Vec<String> = if let Some(ref specific) = req.models {
             let mut seen = HashSet::new();
-            specific
+            let deduped: Vec<String> = specific
                 .iter()
                 .filter(|m| seen.insert((*m).clone()))
-                .take(MAX_MODELS)
                 .cloned()
-                .collect()
+                .collect();
+            if deduped.len() > MAX_MODELS {
+                let dropped: Vec<&str> = deduped[MAX_MODELS..].iter().map(|s| s.as_str()).collect();
+                let msg = format!(
+                    "Requested {} models but max is {MAX_MODELS}. Dropped: {:?}.",
+                    deduped.len(),
+                    dropped,
+                );
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+            }
+            deduped.into_iter().take(MAX_MODELS).collect()
         } else {
             let mut all: Vec<String> = self.registry
                 .list_models()
@@ -66,7 +83,17 @@ impl ReviewExecutor {
                 .map(|(key, _)| (*key).clone())
                 .collect();
             all.sort();
-            all.truncate(MAX_MODELS);
+            if all.len() > MAX_MODELS {
+                let dropped: Vec<&str> = all[MAX_MODELS..].iter().map(|s| s.as_str()).collect();
+                let msg = format!(
+                    "Registry has {} models but max is {MAX_MODELS}. Dropped: {:?}.",
+                    all.len(),
+                    dropped,
+                );
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+                all.truncate(MAX_MODELS);
+            }
             all
         };
 
@@ -102,10 +129,11 @@ impl ReviewExecutor {
             let target_set: HashSet<&String> = model_providers.iter().map(|(m, _)| m).collect();
             let unused: Vec<&String> = per_model.keys().filter(|k| !target_set.contains(k)).collect();
             if !unused.is_empty() {
-                tracing::warn!(
-                    unused_keys = ?unused,
-                    "per_model_system_prompts contains keys not in target models"
+                let msg = format!(
+                    "per_model_system_prompts contains unknown models: {unused:?}. Check listmodels for valid names."
                 );
+                tracing::warn!("{msg}");
+                warnings.push(msg);
             }
         }
 
@@ -114,10 +142,11 @@ impl ReviewExecutor {
             let target_set: HashSet<&String> = model_providers.iter().map(|(m, _)| m).collect();
             let unused: Vec<&String> = per_model.keys().filter(|k| !target_set.contains(k)).collect();
             if !unused.is_empty() {
-                tracing::warn!(
-                    unused_keys = ?unused,
-                    "per_model_timeout_secs contains keys not in target models"
+                let msg = format!(
+                    "per_model_timeout_secs contains unknown models: {unused:?}. Check listmodels for valid names."
                 );
+                tracing::warn!("{msg}");
+                warnings.push(msg);
             }
         }
 
@@ -298,25 +327,69 @@ impl ReviewExecutor {
             }
         }
 
-        // Persist to disk — failure must never lose in-memory results
-        let (results_file, persist_error) =
-            match persist_results(&results, &not_started, effective_cutoff_secs, elapsed_ms).await {
-                Ok(path) => (Some(path), None),
-                Err(e) => {
-                    tracing::warn!("failed to persist review results: {e}");
-                    (None, Some(e.to_string()))
-                }
-            };
+        // Build summary from collected results.
+        let summary = ReviewSummary {
+            models_requested: target_models.len(),
+            models_succeeded: results.iter().filter(|r| r.status == ModelStatus::Success && !r.partial).count(),
+            models_failed: results.iter().filter(|r| r.status == ModelStatus::Error && r.reason.as_deref() != Some("cutoff")).count(),
+            models_cutoff: results.iter().filter(|r| r.reason.as_deref() == Some("cutoff")).count(),
+            models_partial: results.iter().filter(|r| r.status == ModelStatus::Success && r.partial).count(),
+            models_not_started: not_started.len(),
+        };
 
-        ReviewResponse {
+        // Construct response first (results_file: None), then persist.
+        let mut response = ReviewResponse {
             results,
             not_started,
             cutoff_seconds: effective_cutoff_secs,
             elapsed_ms,
-            results_file,
-            persist_error,
-            files_skipped: None, // Set by server.rs after execute()
+            results_file: None,
+            persist_error: None,
+            files_skipped,
+            warnings,
+            summary,
+        };
+
+        // Clamp investigation_context for persistence (prevent oversized payloads).
+        // Truncate at a valid UTF-8 char boundary to avoid panicking on multi-byte characters.
+        let investigation_context = req.investigation_context.as_deref().map(|ctx| {
+            if ctx.len() > MAX_INVESTIGATION_CONTEXT_BYTES {
+                // Walk back from MAX to find a valid char boundary.
+                let mut boundary = MAX_INVESTIGATION_CONTEXT_BYTES;
+                while boundary > 0 && !ctx.is_char_boundary(boundary) {
+                    boundary -= 1;
+                }
+                &ctx[..boundary]
+            } else {
+                ctx
+            }
+        });
+
+        // Add warning if investigation_context was clamped (before persist so it's in the file).
+        // Report actual retained byte count (may be < MAX due to UTF-8 char boundary walkback).
+        if let Some(ref ctx) = req.investigation_context
+            && ctx.len() > MAX_INVESTIGATION_CONTEXT_BYTES
+        {
+            let actual_bytes = investigation_context.as_ref().map(|c| c.len()).unwrap_or(0);
+            let msg = format!(
+                "investigation_context was truncated from {} to {} bytes.",
+                ctx.len(),
+                actual_bytes,
+            );
+            tracing::warn!("{msg}");
+            response.warnings.push(msg);
         }
+
+        // Persist to disk — failure must never lose in-memory results
+        match persist_response(&response, investigation_context).await {
+            Ok(path) => response.results_file = Some(path),
+            Err(e) => {
+                tracing::warn!("failed to persist review results: {e}");
+                response.persist_error = Some(e.to_string());
+            }
+        }
+
+        response
     }
 }
 
@@ -390,14 +463,15 @@ fn error_reason(e: &SquallError) -> String {
     }
 }
 
-/// Write review results to `.squall/reviews/{timestamp}_{pid}_{seq}.json`.
+/// Write review response to `.squall/reviews/{timestamp}_{pid}_{seq}.json`.
 /// Uses epoch millis + PID + atomic counter for filename uniqueness across
 /// concurrent invocations and concurrent processes.
-async fn persist_results(
-    results: &[ReviewModelResult],
-    not_started: &[String],
-    cutoff_seconds: u64,
-    elapsed_ms: u64,
+///
+/// Persists the full ReviewResponse plus optional investigation_context
+/// (which lives on the request, not the response).
+async fn persist_response(
+    response: &ReviewResponse,
+    investigation_context: Option<&str>,
 ) -> Result<String, std::io::Error> {
     let reviews_dir = PathBuf::from(".squall/reviews");
     tokio::fs::create_dir_all(&reviews_dir).await?;
@@ -411,12 +485,12 @@ async fn persist_results(
     let filename = format!("{ts}_{pid}_{seq}.json");
     let path = reviews_dir.join(&filename);
 
-    let payload = serde_json::json!({
-        "results": results,
-        "not_started": not_started,
-        "cutoff_seconds": cutoff_seconds,
-        "elapsed_ms": elapsed_ms,
-    });
+    // Serialize the response, then merge in investigation_context if present.
+    let mut payload = serde_json::to_value(response)
+        .map_err(std::io::Error::other)?;
+    if let Some(ctx) = investigation_context {
+        payload["investigation_context"] = serde_json::Value::String(ctx.to_string());
+    }
 
     let json = serde_json::to_string_pretty(&payload)
         .map_err(std::io::Error::other)?;

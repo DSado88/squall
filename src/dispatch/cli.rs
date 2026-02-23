@@ -29,6 +29,13 @@ impl ProcessGroupGuard {
     fn new(pid: Option<u32>) -> Self {
         Self { pid }
     }
+
+    /// Clear the PID so drop() won't send SIGKILL.
+    /// Call after child.wait() reaps the zombie — the PID is freed for reuse
+    /// and killing it would hit an unrelated process group.
+    fn disarm(&mut self) {
+        self.pid = None;
+    }
 }
 
 impl Drop for ProcessGroupGuard {
@@ -136,7 +143,7 @@ impl CliDispatch {
         // grandchildren). This replaces kill_on_drop(true) which only kills
         // the leader PID, leaving grandchild processes as orphans when the
         // tokio task is aborted by JoinSet::abort_all().
-        let _pg_guard = ProcessGroupGuard::new(child.id());
+        let mut _pg_guard = ProcessGroupGuard::new(child.id());
 
         // Write prompt to stdin concurrently with stdout/stderr reading.
         // CRITICAL: must NOT await write_all before spawning pipe readers.
@@ -266,6 +273,10 @@ impl CliDispatch {
                     return Err(SquallError::Timeout(elapsed_ms));
                 }
             };
+
+        // Child has been waited — PID is freed for reuse. Disarm guard so
+        // drop() won't send SIGKILL to a potentially recycled PID.
+        _pg_guard.disarm();
 
         // Explicit overflow check: if either stream exceeded the cap (the +1 sentinel
         // byte was present), reject regardless of exit status. This handles the race
@@ -441,4 +452,23 @@ pub async fn persist_cli_output(
 
     tracing::debug!("persisted raw CLI output to {}", path.display());
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // DR-3: ProcessGroupGuard must have disarm() to prevent SIGKILL after wait.
+    //
+    // Bug: After child.wait() reaps the zombie, PID is freed. Guard still holds
+    // old PID. If PID is recycled, drop() sends SIGKILL to wrong process group.
+    // Fix: add disarm() method, call after successful wait.
+    #[test]
+    fn guard_disarm_prevents_kill_on_drop() {
+        let mut guard = ProcessGroupGuard::new(Some(99999));
+        guard.disarm(); // Should set pid to None
+        drop(guard); // Should NOT send SIGKILL
+        // If disarm() doesn't exist, this test won't compile.
+        // If disarm() doesn't clear pid, SIGKILL goes to process group 99999.
+    }
 }

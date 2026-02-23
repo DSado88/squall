@@ -1527,9 +1527,10 @@ async fn review_none_branch_model_selection_is_sorted() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
     // Collect all models that were attempted (results + not_started won't
     // include not_started here since all models exist in registry)
     let mut selected: Vec<String> = resp.results.iter().map(|r| r.model.clone()).collect();

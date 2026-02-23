@@ -47,7 +47,15 @@ pub struct ReviewRequest {
     /// File context format: "xml" (default, full content) or "hashline" (line_num:hash|content,
     /// compact for large files). Hashline lets models reference lines by number+hash.
     pub context_format: Option<ContextFormat>,
+    /// Pre-review investigation context (code structure notes, hypotheses, areas of concern).
+    /// Persist-only — NOT injected into model prompts. Models get context via per_model_system_prompts.
+    /// Clamped to 32KB to prevent oversized persistence payloads.
+    #[schemars(description = "Pre-review investigation notes for traceability. Persisted alongside results but not sent to models. Max 32KB.")]
+    pub investigation_context: Option<String>,
 }
+
+/// Maximum size for investigation_context in bytes (32KB).
+pub const MAX_INVESTIGATION_CONTEXT_BYTES: usize = 32 * 1024;
 
 impl ReviewRequest {
     pub const DEFAULT_TIMEOUT_SECS: u64 = 180;
@@ -117,6 +125,23 @@ pub enum ModelStatus {
     Error,
 }
 
+/// Counts of model outcomes for quick quality assessment.
+#[derive(Debug, Serialize, Default)]
+pub struct ReviewSummary {
+    /// Number of models attempted (post-dedup, post-MAX_MODELS truncation).
+    pub models_requested: usize,
+    /// Full successful responses (Success + not partial).
+    pub models_succeeded: usize,
+    /// Models that returned errors (excluding cutoff — timeout, auth, parse, etc.).
+    pub models_failed: usize,
+    /// Models that hit straggler cutoff with no response.
+    pub models_cutoff: usize,
+    /// Models that returned partial content (cooperative cancellation).
+    pub models_partial: usize,
+    /// Models not found in registry.
+    pub models_not_started: usize,
+}
+
 /// Full review response (serialized to JSON for MCP and disk).
 #[derive(Debug, Serialize)]
 pub struct ReviewResponse {
@@ -130,4 +155,9 @@ pub struct ReviewResponse {
     pub persist_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files_skipped: Option<Vec<String>>,
+    /// Actionable warnings about the review execution (unknown keys, truncation, etc.).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+    /// Quick summary of model outcomes.
+    pub summary: ReviewSummary,
 }

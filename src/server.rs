@@ -335,8 +335,7 @@ impl SquallServer {
 
         let executor = ReviewExecutor::new(self.registry.clone());
         let prompt_len = prompt.len();
-        let mut review_response = executor.execute(&req, prompt, working_directory).await;
-        review_response.files_skipped = files_skipped;
+        let review_response = executor.execute(&req, prompt, working_directory, files_skipped).await;
 
         // Log model metrics to memory (non-blocking, fire-and-forget)
         let memory = self.memory.clone();
