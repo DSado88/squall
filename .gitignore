@@ -1,4 +1,7 @@
 /target
 .squall/reviews/
+.squall/memory/
+.squall/research/
+.squall/config.toml
 .DS_Store
 .env

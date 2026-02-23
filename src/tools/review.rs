@@ -67,10 +67,10 @@ impl ReviewRequest {
     }
 
     /// Effective timeout accounting for deep mode.
-    /// Deep mode raises the minimum to 600s unless explicitly overridden.
+    /// Deep mode defaults to 600s, but explicit timeout_secs overrides this.
     pub fn effective_timeout_secs(&self) -> u64 {
         if self.deep == Some(true) {
-            self.timeout_secs.unwrap_or(Self::DEEP_TIMEOUT_SECS).max(Self::DEEP_TIMEOUT_SECS)
+            self.timeout_secs.unwrap_or(Self::DEEP_TIMEOUT_SECS)
         } else {
             self.timeout_secs()
         }

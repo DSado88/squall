@@ -1,21 +1,15 @@
 ---
 name: squall-deep-review
-description: "Deep code review with structured investigation. Use when asked to 'deep review', 'squall deep review', 'thorough review', or 'investigate and review'. Enforces investigation-first workflow before multi-model dispatch. (project)"
+description: "Superseded by squall-unified-review. Preserved for reference and backward compatibility. (project)"
 one_liner: "Structure beats parallelism — investigate first, then dispatch."
-activation_triggers:
-  - "deep review"
-  - "squall deep review"
-  - "thorough review"
-  - "investigate and review"
-  - "structured review"
-  - When user wants high-quality review of critical code
-  - When user wants investigation before multi-model dispatch
 related_skills:
-  - "[squall-review](../squall-review/SKILL.md) (standard multi-model review without investigation)"
+  - "[squall-unified-review](../squall-unified-review/SKILL.md) (use this instead)"
   - "[squall-research](../squall-research/SKILL.md) (research swarms, not code review)"
 ---
 
 # Squall Deep Review
+
+> **Note:** This skill is superseded by [squall-unified-review](../squall-unified-review/SKILL.md), which auto-detects when deep review is needed and includes the full investigation workflow. Use the unified skill for new reviews. This file is preserved for backward compatibility and reference.
 
 > **TL;DR - QUICK REFERENCE**
 >

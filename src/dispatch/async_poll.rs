@@ -226,10 +226,13 @@ impl AsyncPollApi for GeminiInteractionsApi {
                 Ok(PollStatus::Completed(text))
             }
             Some(status @ ("failed" | "cancelled")) => {
+                // Error may be a string or an object with a "message" field.
                 let msg = v["error"]
                     .as_str()
-                    .unwrap_or(status);
-                Ok(PollStatus::Failed(msg.to_string()))
+                    .map(|s| s.to_string())
+                    .or_else(|| v["error"]["message"].as_str().map(|s| s.to_string()))
+                    .unwrap_or_else(|| status.to_string());
+                Ok(PollStatus::Failed(msg))
             }
             Some(other) => Ok(PollStatus::Failed(format!("unknown status: {other}"))),
             None => Err(SquallError::SchemaParse(
@@ -550,13 +553,26 @@ async fn read_body_capped(
     loop {
         match response.chunk().await {
             Ok(Some(chunk)) => {
-                body.extend_from_slice(&chunk);
-                if body.len() > max_bytes {
+                let remaining = max_bytes.saturating_sub(body.len());
+                if remaining == 0 {
+                    return Err(SquallError::Upstream {
+                        provider: provider.to_string(),
+                        message: format!(
+                            "response body too large (cap {max_bytes})"
+                        ),
+                        status: None,
+                    });
+                }
+                // Only extend up to the remaining capacity — never allocate
+                // more than max_bytes total, even if the chunk is huge.
+                let to_copy = chunk.len().min(remaining);
+                body.extend_from_slice(&chunk[..to_copy]);
+                if chunk.len() > remaining {
                     return Err(SquallError::Upstream {
                         provider: provider.to_string(),
                         message: format!(
                             "response body too large: read {} bytes (cap {})",
-                            body.len(),
+                            body.len() + (chunk.len() - to_copy),
                             max_bytes
                         ),
                         status: None,
@@ -615,9 +631,13 @@ pub async fn persist_research_result(
     let json = serde_json::to_string_pretty(&payload)
         .map_err(std::io::Error::other)?;
 
-    // Atomic write: temp file + rename prevents partial reads
+    // Atomic write: temp file + rename prevents partial reads.
+    // Clean up temp file on ANY failure (write or rename).
     let tmp_path = path.with_extension("tmp");
-    tokio::fs::write(&tmp_path, json.as_bytes()).await?;
+    if let Err(e) = tokio::fs::write(&tmp_path, json.as_bytes()).await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(e);
+    }
     if let Err(e) = tokio::fs::rename(&tmp_path, &path).await {
         let _ = tokio::fs::remove_file(&tmp_path).await;
         return Err(e);

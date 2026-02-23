@@ -573,15 +573,9 @@ impl MemoryStore {
             }
         }
 
-        // Write updated patterns
-        if graduated > 0 || archived > 0 {
-            let output = format!("# Recurring Patterns\n\n{}", kept.join("\n"));
-            atomic_write(&patterns_path, &output)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
-
-        // Append archived entries to archive.md
+        // Write archive FIRST — if this fails, patterns.md is untouched and
+        // no data is lost. Previously, patterns were rewritten first, so an
+        // archive write failure would lose the archived entries permanently.
         if !archive_entries.is_empty() {
             let archive_path = self.archive_path();
             let mut archive = read_to_string_lossy(&archive_path)
@@ -595,6 +589,14 @@ impl MemoryStore {
                 archive.push('\n');
             }
             atomic_write(&archive_path, &archive)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+
+        // Write updated patterns (safe now — archived entries are persisted).
+        if graduated > 0 || archived > 0 {
+            let output = format!("# Recurring Patterns\n\n{}", kept.join("\n"));
+            atomic_write(&patterns_path, &output)
                 .await
                 .map_err(|e| e.to_string())?;
         }
@@ -892,10 +894,18 @@ fn generate_recommendations(models_content: &str) -> String {
         })
         .collect();
 
-    // Sort by confidence * success_rate descending, then by latency ascending
+    // Sort by Bayesian-smoothed score: confidence * smoothed_success_rate.
+    // Bayesian smoothing: (successes + prior_successes) / (count + prior_count)
+    // This prevents a model with 1/1 from outranking one with 95/100.
+    const PRIOR_COUNT: f64 = 5.0;
+    const PRIOR_RATE: f64 = 0.5;
     recs.sort_by(|a, b| {
-        let score_a = a.1.confidence * a.1.success_rate;
-        let score_b = b.1.confidence * b.1.success_rate;
+        let smoothed_a = (a.1.success_rate * a.1.count as f64 + PRIOR_RATE * PRIOR_COUNT)
+            / (a.1.count as f64 + PRIOR_COUNT);
+        let smoothed_b = (b.1.success_rate * b.1.count as f64 + PRIOR_RATE * PRIOR_COUNT)
+            / (b.1.count as f64 + PRIOR_COUNT);
+        let score_a = a.1.confidence * smoothed_a;
+        let score_b = b.1.confidence * smoothed_b;
         score_b
             .partial_cmp(&score_a)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -1060,14 +1070,17 @@ fn extract_entry_hash(entry: &str) -> Option<&str> {
 }
 
 /// Extract the evidence count from a pattern entry heading like `## [...] content [x3]`.
+/// Returns the parsed count, or 1 if no `[xN]` marker is present.
+/// Returns 0 if a `[x...]` marker is present but contains an invalid number (e.g. `[xNaN]`).
 fn extract_evidence_count(entry: &str) -> usize {
     let first_line = entry.lines().next().unwrap_or("");
-    if let Some(bracket_start) = first_line.rfind("[x")
-        && let Some(end) = first_line[bracket_start + 2..].find(']')
-        && let Ok(n) = first_line[bracket_start + 2..][..end].parse::<usize>()
-    {
-        return n;
+    if let Some(bracket_start) = first_line.rfind("[x") {
+        if let Some(end) = first_line[bracket_start + 2..].find(']') {
+            let num_str = &first_line[bracket_start + 2..][..end];
+            return num_str.parse::<usize>().unwrap_or(0);
+        }
     }
+    // No [xN] marker at all → genuinely first occurrence.
     1
 }
 
@@ -1219,6 +1232,28 @@ This directory contains Squall's learning from past interactions.
 - `patterns.md` \u{2014} Human/AI-curated recurring findings
 - `tactics.md` \u{2014} What works for each model
 ";
+
+// --- Public wrappers for integration testing (phase4_defects) ---
+
+/// Public wrapper for `content_hash` (testing cross-version stability).
+pub fn content_hash_pub(content: &str, scope: Option<&str>) -> String {
+    content_hash(content, scope)
+}
+
+/// Public wrapper for `generate_recommendations` (testing sample-count weighting).
+pub fn generate_recommendations_pub(models_content: &str) -> String {
+    generate_recommendations(models_content)
+}
+
+/// Public wrapper for `iso_date` (needed by tests to build model events).
+pub fn iso_date_pub() -> String {
+    iso_date()
+}
+
+/// Public wrapper for `extract_evidence_count` (testing NaN handling).
+pub fn extract_evidence_count_pub(entry: &str) -> usize {
+    extract_evidence_count(entry)
+}
 
 #[cfg(test)]
 mod tests {

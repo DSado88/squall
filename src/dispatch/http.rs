@@ -77,6 +77,8 @@ struct AnthropicEvent {
     #[serde(rename = "type")]
     event_type: String,
     delta: Option<AnthropicDelta>,
+    /// Error payload for "error" events.
+    error: Option<AnthropicError>,
 }
 
 #[derive(Deserialize)]
@@ -84,16 +86,57 @@ struct AnthropicDelta {
     #[serde(rename = "type")]
     delta_type: Option<String>,
     text: Option<String>,
+    /// Extended thinking content (thinking_delta events).
+    thinking: Option<String>,
+}
+
+/// Anthropic error payload (nested in error events).
+#[derive(Deserialize)]
+struct AnthropicError {
+    message: Option<String>,
 }
 
 /// Result of parsing a single SSE event.
-enum ParsedChunk {
+pub enum ParsedChunk {
     /// Text content to accumulate.
     Text(String),
     /// Stream is complete.
     Done,
     /// Non-content event (keepalive, metadata) — skip.
     Skip,
+    /// Stream error (Anthropic error event).
+    Error(String),
+}
+
+impl std::fmt::Debug for ParsedChunk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Text(t) => write!(f, "Text({t:?})"),
+            Self::Done => write!(f, "Done"),
+            Self::Skip => write!(f, "Skip"),
+            Self::Error(e) => write!(f, "Error({e:?})"),
+        }
+    }
+}
+
+impl ParsedChunk {
+    /// Returns true if this is a Text variant.
+    pub fn is_text(&self) -> bool {
+        matches!(self, Self::Text(_))
+    }
+
+    /// Returns true if this is an Error variant.
+    pub fn is_error(&self) -> bool {
+        matches!(self, Self::Error(_))
+    }
+
+    /// Extract text content, if Text variant.
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Self::Text(t) => Some(t),
+            _ => None,
+        }
+    }
 }
 
 #[allow(clippy::new_without_default)]
@@ -418,6 +461,29 @@ impl HttpDispatch {
                                 }
                                 accumulated.push_str(&text);
                             }
+                            ParsedChunk::Error(msg) => {
+                                // Anthropic (and potentially other APIs) surface mid-stream
+                                // errors as SSE events. Return partial data if we have any,
+                                // otherwise propagate as an upstream error.
+                                if accumulated.is_empty() {
+                                    return Err(SquallError::Upstream {
+                                        provider: provider.to_string(),
+                                        message: msg,
+                                        status: None,
+                                    });
+                                }
+                                tracing::warn!(
+                                    provider,
+                                    bytes = accumulated.len(),
+                                    "SSE stream error event after partial data: {msg}"
+                                );
+                                return Ok(ProviderResult {
+                                    text: accumulated,
+                                    partial: true,
+                                    model: req.model.clone(),
+                                    provider: provider.to_string(),
+                                });
+                            }
                             ParsedChunk::Skip => {
                                 // Any SSE data event (even non-text) proves the server
                                 // is alive: switch from first-byte to stall timer, and
@@ -534,6 +600,11 @@ fn parse_openai_event(data: &str) -> ParsedChunk {
     }
 }
 
+/// Public wrapper for testing. Parses an Anthropic Messages API SSE event.
+pub fn parse_anthropic_event_pub(data: &str) -> ParsedChunk {
+    parse_anthropic_event(data)
+}
+
 /// Parse an Anthropic Messages API SSE event.
 fn parse_anthropic_event(data: &str) -> ParsedChunk {
     let Ok(event) = serde_json::from_str::<AnthropicEvent>(data) else {
@@ -542,16 +613,33 @@ fn parse_anthropic_event(data: &str) -> ParsedChunk {
 
     match event.event_type.as_str() {
         "message_stop" => ParsedChunk::Done,
+        "error" => {
+            let msg = event
+                .error
+                .and_then(|e| e.message)
+                .unwrap_or_else(|| "unknown error".to_string());
+            ParsedChunk::Error(msg)
+        }
         "content_block_delta" => {
-            if let Some(delta) = &event.delta
-                && delta.delta_type.as_deref() == Some("text_delta")
-                && let Some(text) = &delta.text
-                && !text.is_empty()
-            {
-                ParsedChunk::Text(text.clone())
-            } else {
-                ParsedChunk::Skip
+            if let Some(delta) = &event.delta {
+                // Handle text_delta (regular content)
+                if delta.delta_type.as_deref() == Some("text_delta") {
+                    if let Some(text) = &delta.text {
+                        if !text.is_empty() {
+                            return ParsedChunk::Text(text.clone());
+                        }
+                    }
+                }
+                // Handle thinking_delta (extended thinking)
+                if delta.delta_type.as_deref() == Some("thinking_delta") {
+                    if let Some(thinking) = &delta.thinking {
+                        if !thinking.is_empty() {
+                            return ParsedChunk::Text(thinking.clone());
+                        }
+                    }
+                }
             }
+            ParsedChunk::Skip
         }
         _ => ParsedChunk::Skip,
     }

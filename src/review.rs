@@ -510,9 +510,13 @@ async fn persist_response(
     let json = serde_json::to_string_pretty(&payload)
         .map_err(std::io::Error::other)?;
 
-    // Atomic write: temp file + rename prevents partial reads
+    // Atomic write: temp file + rename prevents partial reads.
+    // Clean up temp file on ANY failure (write or rename).
     let tmp_path = path.with_extension("tmp");
-    tokio::fs::write(&tmp_path, json.as_bytes()).await?;
+    if let Err(e) = tokio::fs::write(&tmp_path, json.as_bytes()).await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(e);
+    }
     if let Err(e) = tokio::fs::rename(&tmp_path, &path).await {
         let _ = tokio::fs::remove_file(&tmp_path).await;
         return Err(e);

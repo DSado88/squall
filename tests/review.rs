@@ -989,8 +989,8 @@ fn deep_mode_does_not_override_explicit_values() {
         context_format: None,
         investigation_context: None,
     };
-    // timeout_secs=300 < 600, so deep raises to 600
-    assert_eq!(req.effective_timeout_secs(), 600);
+    // Explicit timeout_secs overrides deep default (fix: was clamped to 600).
+    assert_eq!(req.effective_timeout_secs(), 300);
     // explicit reasoning_effort should be kept
     assert_eq!(req.effective_reasoning_effort().as_deref(), Some("medium"));
     // explicit max_tokens should be kept

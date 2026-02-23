@@ -1,22 +1,16 @@
 ---
 name: squall-review
-description: "Multi-model code review via Squall. Use when asked to 'review code', 'squall review', 'code review', 'check this code', or 'review this diff'. Dispatches to AI models with per-model expertise lenses. (project)"
+description: "Superseded by squall-unified-review. Preserved for reference and backward compatibility. (project)"
 one_liner: "The right models for the right code — Squall picks the ensemble, skills encode the wisdom."
-activation_triggers:
-  - "squall review"
-  - "review code"
-  - "code review"
-  - "check this code"
-  - "review this diff"
-  - "squall-review"
-  - When user wants multi-model code review
-  - When user wants AI review of a diff or PR
 related_skills:
+  - "[squall-unified-review](../squall-unified-review/SKILL.md) (use this instead)"
   - "[squall-research](../squall-research/SKILL.md) (for research, not code review)"
   - "[squall-deep-research](../squall-deep-research/SKILL.md) (for deep research questions)"
 ---
 
 # Squall Review
+
+> **Note:** This skill is superseded by [squall-unified-review](../squall-unified-review/SKILL.md), which adds auto-depth detection and Opus agent support. Use the unified skill for new reviews. This file is preserved for backward compatibility and reference.
 
 > **TL;DR - QUICK REFERENCE**
 >

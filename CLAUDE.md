@@ -103,6 +103,7 @@ Keep going until insight exhaustion. The meta-stack is infinite.
 
 | User says... | Read this skill FIRST |
 |--------------|----------------------|
+| "review", "code review", "squall review", "deep review", "quick review" | `squall-unified-review` |
 | "self improve", "META-COGNITION" | `self-improvement-loop` |
 | "investigate", "debug", "find root cause" | `issue-investigator` |
 | "go deep", "ULTRATHINK", "vision quest" | `vision-quest` |
