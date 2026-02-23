@@ -1624,7 +1624,7 @@ fn defect_listmodels_must_return_map_key_not_model_id() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models };
+    let config = Config { models, ..Default::default() };
     let registry = Registry::from_config(config);
 
     // listmodels returns entries — the name shown to users must be the lookup key

@@ -111,6 +111,7 @@ fn query_parallel_not_in_tool_list() {
 
     let config = Config {
         models: HashMap::new(),
+        ..Default::default()
     };
     let server = SquallServer::new(config);
     let info = server.get_info();
@@ -179,6 +180,7 @@ fn registry_has_cli_concurrency_limit() {
     // Default should be a reasonable cap (e.g., 4 concurrent CLI processes).
     let config = Config {
         models: HashMap::new(),
+        ..Default::default()
     };
     let registry = Registry::from_config(config);
     let permits = registry.cli_semaphore_permits();

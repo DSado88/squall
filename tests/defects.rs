@@ -25,7 +25,7 @@ use squall::tools::chat::ChatRequest;
 
 #[test]
 fn p0_1_server_name_is_squall() {
-    let config = Config { models: HashMap::new() };
+    let config = Config { models: HashMap::new(), ..Default::default() };
     let server = SquallServer::new(config);
     let info = server.get_info();
     assert_eq!(
@@ -37,7 +37,7 @@ fn p0_1_server_name_is_squall() {
 
 #[test]
 fn p0_1_server_version_matches_cargo() {
-    let config = Config { models: HashMap::new() };
+    let config = Config { models: HashMap::new(), ..Default::default() };
     let server = SquallServer::new(config);
     let info = server.get_info();
     assert_eq!(

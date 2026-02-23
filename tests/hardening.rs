@@ -101,7 +101,7 @@ async fn semaphore_acquire_respects_deadline() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models };
+    let config = Config { models, ..Default::default() };
     let registry = Registry::from_config(config);
 
     // Request with a tight deadline — should not block forever on semaphore
@@ -213,6 +213,7 @@ fn registry_has_http_concurrency_limit() {
 
     let config = Config {
         models: HashMap::new(),
+        ..Default::default()
     };
     let registry = Registry::from_config(config);
     let permits = registry.http_semaphore_permits();
@@ -1229,7 +1230,7 @@ fn suggest_models_substring_match() {
         speed_tier: "fast".to_string(),
         precision_tier: "medium".to_string(),
     });
-    let registry = Registry::from_config(Config { models });
+    let registry = Registry::from_config(Config { models, ..Default::default() });
 
     let suggestions = registry.suggest_models("grok");
     assert!(
@@ -1259,7 +1260,7 @@ fn suggest_models_reverse_match() {
         speed_tier: "fast".to_string(),
         precision_tier: "medium".to_string(),
     });
-    let registry = Registry::from_config(Config { models });
+    let registry = Registry::from_config(Config { models, ..Default::default() });
 
     // Query longer than model name — reverse contains should match
     let suggestions = registry.suggest_models("grok-4-1-fast-reasoning-turbo");
@@ -1286,7 +1287,7 @@ fn suggest_models_no_match() {
         speed_tier: "fast".to_string(),
         precision_tier: "medium".to_string(),
     });
-    let registry = Registry::from_config(Config { models });
+    let registry = Registry::from_config(Config { models, ..Default::default() });
 
     let suggestions = registry.suggest_models("zzz-nonexistent-model");
     assert!(
@@ -1312,7 +1313,7 @@ fn suggest_models_empty_query() {
         speed_tier: "fast".to_string(),
         precision_tier: "medium".to_string(),
     });
-    let registry = Registry::from_config(Config { models });
+    let registry = Registry::from_config(Config { models, ..Default::default() });
 
     let suggestions = registry.suggest_models("");
     assert!(
@@ -1355,7 +1356,7 @@ fn suggest_models_sorted_and_capped() {
             },
         );
     }
-    let config = Config { models };
+    let config = Config { models, ..Default::default() };
     let registry = Registry::from_config(config);
 
     let suggestions = registry.suggest_models("test");
@@ -1500,7 +1501,7 @@ async fn review_none_branch_model_selection_is_sorted() {
             },
         );
     }
-    let config = Config { models };
+    let config = Config { models, ..Default::default() };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 

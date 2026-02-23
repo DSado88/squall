@@ -39,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("squall starting");
 
-    let config = Config::from_env();
+    let config = Config::load();
     let server = SquallServer::new(config);
 
     let service = server

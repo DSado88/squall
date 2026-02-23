@@ -191,6 +191,7 @@ fn model_status_serializes_as_snake_case() {
 async fn executor_unknown_models_go_to_not_started() {
     let config = Config {
         models: HashMap::new(),
+        ..Default::default()
     };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
@@ -242,7 +243,7 @@ async fn executor_none_models_uses_all_configured() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models };
+    let config = Config { models, ..Default::default() };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -297,7 +298,7 @@ async fn executor_cutoff_aborts_slow_models() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models };
+    let config = Config { models, ..Default::default() };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -358,7 +359,7 @@ async fn executor_fast_models_complete_before_cutoff() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models };
+    let config = Config { models, ..Default::default() };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -435,7 +436,7 @@ async fn executor_mixed_fast_and_slow() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models };
+    let config = Config { models, ..Default::default() };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -479,6 +480,7 @@ async fn executor_mixed_fast_and_slow() {
 async fn executor_persists_results_to_disk() {
     let config = Config {
         models: HashMap::new(),
+        ..Default::default()
     };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
@@ -567,6 +569,7 @@ fn server_has_review_tool() {
 
     let config = Config {
         models: HashMap::new(),
+        ..Default::default()
     };
     let server = SquallServer::new(config);
     let info = server.get_info();
@@ -590,6 +593,7 @@ async fn executor_clamps_huge_timeout() {
     // u64::MAX would overflow Instant arithmetic without clamping
     let config = Config {
         models: HashMap::new(),
+        ..Default::default()
     };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
@@ -645,7 +649,7 @@ async fn executor_deduplicates_model_ids() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models };
+    let config = Config { models, ..Default::default() };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -706,7 +710,7 @@ async fn executor_caps_all_configured_models() {
             },
         );
     }
-    let config = Config { models };
+    let config = Config { models, ..Default::default() };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -750,6 +754,7 @@ async fn executor_caps_all_configured_models() {
 async fn persist_filename_includes_pid() {
     let config = Config {
         models: HashMap::new(),
+        ..Default::default()
     };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
@@ -864,7 +869,7 @@ async fn executor_with_per_model_system_prompts() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models };
+    let config = Config { models, ..Default::default() };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -1010,7 +1015,7 @@ async fn deep_mode_executor_uses_effective_timeout() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models };
+    let config = Config { models, ..Default::default() };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -1084,7 +1089,7 @@ async fn per_model_timeout_does_not_extend_global_cutoff() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models };
+    let config = Config { models, ..Default::default() };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
