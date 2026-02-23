@@ -464,12 +464,14 @@ async fn http_oversized_response_gives_clear_error() {
 
     server.abort();
 
-    let err = result.unwrap_err();
-    let debug = format!("{err:?}");
-
+    // Overflow now returns partial result (preserving accumulated text) instead
+    // of discarding everything with a hard error.
+    let result = result.expect("SSE overflow should return Ok(partial), not Err");
+    assert!(result.partial, "Overflow result should be marked partial");
     assert!(
-        debug.contains("too large"),
-        "Oversized SSE streaming response should produce 'too large' error, got: {debug}"
+        result.text.len() >= 64 * 1024,
+        "Should preserve accumulated text. Got {} bytes",
+        result.text.len()
     );
 }
 
@@ -1530,7 +1532,7 @@ async fn review_none_branch_model_selection_is_sorted() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), None, None, None).await;
     // Collect all models that were attempted (results + not_started won't
     // include not_started here since all models exist in registry)
     let mut selected: Vec<String> = resp.results.iter().map(|r| r.model.clone()).collect();

@@ -6,7 +6,7 @@ use serde::Deserialize;
 /// Request to save a learning to Squall's memory.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MemorizeRequest {
-    /// Category: "pattern" (recurring finding) or "tactic" (prompt effectiveness learning)
+    /// Category: "pattern" (recurring finding), "tactic" (prompt effectiveness learning), or "recommend" (model recommendation)
     pub category: String,
     /// The insight to remember (max 500 characters)
     pub content: String,
@@ -27,7 +27,7 @@ pub struct MemorizeRequest {
 /// Request to read Squall's memory.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MemoryRequest {
-    /// Which memory to read: "all" (default), "models", "patterns", "tactics"
+    /// Which memory to read: "all" (default), "models", "patterns", "tactics", "recommend"
     pub category: Option<String>,
     /// Filter by model name (optional, applies to tactics)
     pub model: Option<String>,

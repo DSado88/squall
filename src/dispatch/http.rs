@@ -402,13 +402,18 @@ impl HttpDispatch {
                                 received_first = true;
                                 last_chunk_at = tokio::time::Instant::now();
                                 if accumulated.len() + text.len() > MAX_RESPONSE_BYTES {
-                                    return Err(SquallError::Upstream {
+                                    // Return accumulated text as partial instead of
+                                    // discarding it — consistent with stream error path.
+                                    tracing::warn!(
+                                        provider,
+                                        bytes = accumulated.len(),
+                                        "SSE response exceeded {MAX_RESPONSE_BYTES}B, returning partial"
+                                    );
+                                    return Ok(ProviderResult {
+                                        text: accumulated,
+                                        partial: true,
+                                        model: req.model.clone(),
                                         provider: provider.to_string(),
-                                        message: format!(
-                                            "streaming response too large: >{}B",
-                                            MAX_RESPONSE_BYTES
-                                        ),
-                                        status: None,
                                     });
                                 }
                                 accumulated.push_str(&text);

@@ -75,6 +75,8 @@ all completed within minutes.
 
 ### Step 1: Decompose the Topic
 
+Before decomposing, call `memory` category "patterns" to check if prior research exists on related topics. This prevents re-researching known ground and helps identify which angles are genuinely novel.
+
 Break the research topic into 3-5 **independent** vectors. Each vector should be:
 - Researchable on its own (no dependency on another vector's findings)
 - Distinct enough that two agents won't return the same results
@@ -127,6 +129,7 @@ Your workflow:
 2. Use WebSearch to find papers, docs, blog posts, implementations
 3. Use ToolSearch with query "squall" to load Squall MCP tools
 3a. Call `listmodels` to verify exact current model names
+3b. Call Squall `memory` category "tactics" to get proven system prompts for the review models
 4. Use the Squall `review` tool to get multi-model perspectives:
    - models: ["grok-4-1-fast-reasoning", "moonshotai/kimi-k2.5", "z-ai/glm-5"]
    - system_prompt: "You are a research advisor specializing in <VECTOR TOPIC>.
@@ -153,6 +156,7 @@ Once all agents report back:
 2. Identify themes that span multiple vectors
 3. Note contradictions between agents/models
 4. Produce a unified summary for the user
+5. Call `memorize` with category "pattern" for key research findings worth remembering across sessions
 
 ### Step 6: Cleanup
 
@@ -218,6 +222,8 @@ for code review than research advising).
 | Use Gemini/Codex for research review | Use Grok/Kimi/GLM (faster, better for advising) |
 | Put all findings in messages only | Write to disk; messages don't survive compaction |
 | Use this for narrow single-angle questions | Use `/deep-research` for single-vector depth |
+| Skip memory check before decomposing topic | Call `memory` category "patterns" — prior research may exist on related topics |
+| Finish synthesis without memorizing findings | Call `memorize` for reusable patterns discovered during research |
 
 ## Examples
 

@@ -33,7 +33,7 @@ pub struct ReviewRequest {
     /// Per-model system prompt overrides for different review lenses. Key = exact model name from
     /// `listmodels`, value = system prompt. Models not in this map use the shared system_prompt.
     /// Example lenses: security auditor, architecture reviewer, correctness checker.
-    /// Check `memory` category "tactic" for proven system prompts.
+    /// Check `memory` category "tactics" for proven system prompts.
     #[schemars(description = "Per-model system prompt overrides for different review lenses. Key = exact model name, value = system prompt. Models not listed fall back to the shared system_prompt. Use different lenses (security, architecture, correctness) for diverse coverage.")]
     pub per_model_system_prompts: Option<HashMap<String, String>>,
     /// Per-model timeout overrides in seconds. Key = model name, value = timeout.
@@ -155,6 +155,9 @@ pub struct ReviewResponse {
     pub persist_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files_skipped: Option<Vec<String>>,
+    /// File read errors (non-existent files, permission errors). Non-fatal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_errors: Option<Vec<String>>,
     /// Actionable warnings about the review execution (unknown keys, truncation, etc.).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,

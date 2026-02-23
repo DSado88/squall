@@ -37,26 +37,27 @@ Multi-model code review using Squall's `review` tool. Each model gets a tailored
 
 ## Workflow
 
-1. **Call `listmodels`** via Squall MCP to get exact current model names
-2. **Select the ensemble** based on review intent (see Model Selection below)
-3. **Build per-model system prompts** with expertise lenses (see Lenses below)
-4. **Prepare the prompt** — include the diff/code and review instructions
-5. **Call `review`** with models, prompt, per_model_system_prompts, file_paths, working_directory
-6. **Read the results file** from `.squall/reviews/` and synthesize findings (see Synthesis Phase below)
+1. **Consult memory** — call `memory` with category "recommend" for model recommendations, then "tactics" for proven per-model lenses, then "patterns" for known issues in the codebase
+2. **Call `listmodels`** via Squall MCP to get exact current model names
+3. **Select the ensemble** based on review intent (see Model Selection below)
+4. **Build per-model system prompts** with expertise lenses (see Lenses below)
+5. **Prepare the prompt** — include the diff/code and review instructions
+6. **Call `review`** with models, prompt, per_model_system_prompts, file_paths, working_directory
+7. **Read the results file** from `.squall/reviews/` and synthesize findings (see Synthesis Phase below)
 
 ```
-┌────────────┐    ┌────────────┐    ┌────────────┐    ┌────────────┐
-│ listmodels │───>│   Select   │───>│   Build    │───>│   Call     │
-│            │    │  ensemble  │    │  lenses +  │    │  review    │
-│            │    │            │    │  prompt    │    │            │
-└────────────┘    └────────────┘    └────────────┘    └─────┬──────┘
-                                                            │
-                                                            v
-                                                    ┌────────────┐
-                                                    │ Read result│
-                                                    │ file and   │
-                                                    │ synthesize │
-                                                    └────────────┘
+┌────────────┐    ┌────────────┐    ┌────────────┐    ┌────────────┐    ┌────────────┐
+│  Consult   │───>│ listmodels │───>│   Select   │───>│   Build    │───>│   Call     │
+│  memory    │    │            │    │  ensemble  │    │  lenses +  │    │  review    │
+│            │    │            │    │            │    │  prompt    │    │            │
+└────────────┘    └────────────┘    └────────────┘    └────────────┘    └─────┬──────┘
+                                                                              │
+                                                                              v
+                                                      ┌────────────┐  ┌────────────┐
+                                                      │ Memorize   │<─│ Read result│
+                                                      │ learnings  │  │ file and   │
+                                                      │            │  │ synthesize │
+                                                      └────────────┘  └────────────┘
 ```
 
 ## Synthesis Phase
@@ -96,6 +97,16 @@ After `review` returns, read the persisted results file and synthesize findings.
 
 For **quick triage** (single model, Grok only), synthesis is unnecessary — just relay the findings directly. Synthesis adds value when 2+ models are involved.
 
+### After Synthesis: Memorize Learnings
+
+After completing synthesis, save reusable insights to Squall's memory:
+
+1. **Patterns**: If a finding recurs across reviews or matches a known pattern, call `memorize` with category "pattern"
+2. **Tactics**: If a particular lens/prompt produced notably good or bad results, call `memorize` with category "tactic" with the model name
+3. **Recommendations**: If a model consistently excels or fails at a task type, call `memorize` with category "recommend"
+
+This closes the learning loop — future reviews benefit from today's findings.
+
 ## Model Selection
 
 Choose the ensemble based on what kind of review is needed:
@@ -109,6 +120,8 @@ Choose the ensemble based on what kind of review is needed:
 | **Full consensus** | All 5 models | ~180s | High-stakes changes, critical infrastructure |
 
 **Always call `listmodels` first** — model names above are examples and may have changed.
+
+**Check memory before hardcoding lenses** — call `memory` category "tactics" for proven system prompts. The Per-Model Lenses table below is a starting point; tactics.md has field-tested refinements that supersede these defaults.
 
 ## Per-Model Lenses
 
@@ -186,6 +199,7 @@ review({
 | Try to parse/merge results yourself | Read the results file, synthesize findings in natural language |
 | Set very short timeouts for thorough reviews | Codex and Kimi can take 300s — use 180s minimum for full consensus |
 | Ignore the `results_file` path in the response | Always read the persisted file — it survives compaction |
+| Skip checking memory before selecting models/lenses | Call `memory` category "recommend" + "tactics" + "patterns" first — proven lenses beat defaults |
 
 ## Examples
 

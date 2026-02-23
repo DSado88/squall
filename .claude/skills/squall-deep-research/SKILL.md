@@ -36,21 +36,24 @@ NOT a multi-agent swarm — for parallel team research, use `/squall-research` i
 
 ## Workflow
 
-1. **Frame the research question** — Convert the user's request into a specific, searchable research prompt
-2. **Dispatch via Squall `clink`** — Send to Codex (primary) and optionally Gemini (secondary)
-3. **Persist results** — Write to `.squall/research/<topic>.md`
-4. **Synthesize** — Summarize key findings for the user with source attribution
+1. **Check memory** — call `memory` category "patterns" to see if prior research exists on this topic. Call `memory` category "tactics" for prompt engineering insights that improve Codex/Gemini research quality.
+2. **Frame the research question** — Convert the user's request into a specific, searchable research prompt
+3. **Dispatch via Squall `clink`** — Send to Codex (primary) and optionally Gemini (secondary)
+4. **Persist results** — Write to `.squall/research/<topic>.md`
+5. **Synthesize and memorize** — Summarize key findings for the user with source attribution. Call `memorize` with category "pattern" for insights worth remembering across sessions.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  DEEP RESEARCH WORKFLOW                                     │
 │                                                             │
-│  Question ──► Craft prompt ──► clink(codex) ──► Persist     │
-│                       │                            │        │
-│                       └──► clink(gemini) ──────────┘        │
-│                            (optional)         ▼             │
-│                                       .squall/research/     │
-│                                       <topic>.md            │
+│  Check  ──► Frame  ──► Craft  ──► clink(codex) ──► Persist │
+│  memory     question    prompt        │                │    │
+│                           └──► clink(gemini) ──────────┘    │
+│                                (optional)       ▼           │
+│                                          .squall/research/  │
+│                                          <topic>.md         │
+│                                                ▼            │
+│                                         Memorize findings   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -164,6 +167,16 @@ File: .squall/research/<topic-slug>.md
 <full Codex response>
 ```
 
+Then memorize reusable insights:
+
+```
+Tool: memorize
+Arguments:
+  category: "pattern"
+  content: "<key finding worth remembering across sessions>"
+  tags: ["research", "<topic-tag>"]
+```
+
 ## Reference Tables
 
 | Scenario | Model(s) | Timeout | Notes |
@@ -189,6 +202,8 @@ File: .squall/research/<topic-slug>.md
 | Leave results only in context | Always persist to `.squall/research/<topic>.md` |
 | Use this for parallel multi-vector research | Use `/squall-research` for swarm-based investigation |
 | Frame as a code generation task | Frame as a research question — "search", "find", "compare" |
+| Start research without checking memory | Call `memory` first — prior research or patterns may already exist |
+| Finish without memorizing findings | Call `memorize` for insights worth preserving across sessions |
 
 ## Examples
 

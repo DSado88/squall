@@ -1067,3 +1067,85 @@ async fn openai_parser_unchanged_after_refactor() {
 
     server.abort();
 }
+
+// ===========================================================================
+// RED tests: bugs found by meta deep review (deep review of deep review)
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// DR2-3: HTTP SSE overflow discards partial results
+//
+// Bug: src/dispatch/http.rs:404-413 — when accumulated text exceeds
+// MAX_RESPONSE_BYTES (2MB), returns hard Err(Upstream) discarding ALL
+// accumulated text. But stream errors (lines 425-443) preserve partial
+// results via Ok(ProviderResult { partial: true }). Inconsistent behavior:
+// overflow should return the accumulated text as partial, not discard it.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn sse_overflow_returns_partial_not_error() {
+    use squall::dispatch::http::MAX_RESPONSE_BYTES;
+
+    let (listener, port) = mock_listener().await;
+
+    // Send chunks that exceed MAX_RESPONSE_BYTES.
+    // First send a large chunk (~1.5MB) that fits, then a chunk that overflows.
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0u8; 8192];
+        let _ = socket.read(&mut buf).await;
+
+        socket.write_all(SSE_HEADERS).await.unwrap();
+
+        // Send a large chunk (~1.5MB) — fits within 2MB limit
+        let big_text = "A".repeat(1_500_000);
+        socket
+            .write_all(sse_chunk(&big_text).as_bytes())
+            .await
+            .unwrap();
+
+        // Send another chunk (~1MB) — this pushes total over 2MB
+        let overflow_text = "B".repeat(1_000_000);
+        socket
+            .write_all(sse_chunk(&overflow_text).as_bytes())
+            .await
+            .unwrap();
+
+        socket.write_all(SSE_DONE).await.unwrap();
+    });
+
+    let dispatch = HttpDispatch::new();
+    let req = make_req(30);
+
+    let result = dispatch
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
+        .await;
+
+    // BUG: Currently returns Err(Upstream) discarding 1.5MB of accumulated text.
+    // Should return Ok with partial=true and the accumulated text preserved.
+    assert!(
+        result.is_ok(),
+        "SSE overflow should return Ok(partial), not Err. Got: {:?}",
+        result.err()
+    );
+
+    let result = result.unwrap();
+    assert!(result.partial, "Overflow result should be marked partial");
+    assert!(
+        result.text.len() >= 1_000_000,
+        "Should preserve accumulated text (>1MB). Got {} bytes",
+        result.text.len()
+    );
+    assert!(
+        result.text.len() <= MAX_RESPONSE_BYTES,
+        "Should not exceed MAX_RESPONSE_BYTES"
+    );
+
+    server.abort();
+}

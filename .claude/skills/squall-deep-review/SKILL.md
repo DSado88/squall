@@ -40,13 +40,14 @@ Deep code review using Squall's `review` tool with a mandatory investigation pha
 ```
 Phase 1: INVESTIGATE          Phase 2: DISPATCH           Phase 3: SYNTHESIZE
 ┌──────────────────┐         ┌──────────────────┐        ┌──────────────────┐
-│ Read target files │         │ Call listmodels   │        │ Read results_file│
-│ Map control flow  │────────>│ Build lenses from │───────>│ Group by         │
-│ Form hypotheses   │         │   hypotheses      │        │   agreement      │
-│ Write notes       │         │ Call review with   │        │ Cross-reference  │
-│                   │         │   deep: true      │        │   hypotheses     │
-│ NO model calls    │         │ Check warnings +  │        │ Report quality   │
-│                   │         │   summary         │        │   issues         │
+│ Check memory for │         │ Consult memory    │        │ Read results_file│
+│   known patterns │         │   for recs+tactics│        │ Group by         │
+│ Read target files│────────>│ Call listmodels   │───────>│   agreement      │
+│ Map control flow │         │ Build lenses from │        │ Cross-reference  │
+│ Form hypotheses  │         │   hypotheses +    │        │   hypotheses     │
+│ Write notes      │         │   memory tactics  │        │ Report quality   │
+│                  │         │ Call review with   │        │ Memorize findings│
+│ NO model calls   │         │   deep: true      │        │                  │
 └──────────────────┘         └──────────────────┘        └──────────────────┘
 ```
 
@@ -54,11 +55,12 @@ Phase 1: INVESTIGATE          Phase 2: DISPATCH           Phase 3: SYNTHESIZE
 
 **This phase is mandatory.** Do NOT skip to dispatch.
 
-1. **Read the target files** — use the Read tool, not model calls
-2. **Map the control flow** — trace the critical paths, identify state transitions
-3. **Identify complexity hotspots** — nested conditions, error handling gaps, concurrency patterns
-4. **Form hypotheses** — "I suspect X because Y" — specific, testable claims
-5. **Write investigation notes** — these become `investigation_context` and inform lenses
+1. **Check memory for known patterns** — call `memory` category "patterns" to see if this code area has known issues from prior reviews. This informs your hypotheses.
+2. **Read the target files** — use the Read tool, not model calls
+3. **Map the control flow** — trace the critical paths, identify state transitions
+4. **Identify complexity hotspots** — nested conditions, error handling gaps, concurrency patterns
+5. **Form hypotheses** — "I suspect X because Y" — specific, testable claims
+6. **Write investigation notes** — these become `investigation_context` and inform lenses
 
 ### What Good Investigation Notes Look Like
 
@@ -83,9 +85,10 @@ BAD: (skipping investigation entirely and jumping to dispatch)
 
 ## Phase 2: Dispatch
 
-1. **Call `listmodels`** to get current model names
-2. **Select ensemble** — for deep review, use 3-5 models (see squall-review skill for model selection guide)
-3. **Build per-model lenses from hypotheses** — each model gets a system prompt informed by your investigation:
+1. **Consult memory** — call `memory` category "recommend" for data-driven model recommendations, and "tactics" for proven per-model lenses.
+2. **Call `listmodels`** to get current model names
+3. **Select ensemble** — use memory recommendations and listmodels output. For deep review, use 3-5 models.
+4. **Build per-model lenses from hypotheses** — each model gets a system prompt informed by your investigation:
 
 ```
 # Example: lenses tailored to investigation findings
@@ -101,13 +104,14 @@ per_model_system_prompts: {
 }
 ```
 
-4. **Call `review`** with:
+5. **Refine lenses with memory** — call `memory` category "tactics" and incorporate proven prompts. Merge your hypothesis-informed lenses with field-tested tactics from memory.
+6. **Call `review`** with:
    - `deep: true` (sets timeout=600s, reasoning_effort=high, max_tokens=16384)
    - `investigation_context`: your notes from Phase 1 (persist-only, NOT sent to models)
    - `per_model_system_prompts`: lenses tailored to your hypotheses
    - `file_paths` + `working_directory`
 
-5. **Check quality gates** in the response:
+7. **Check quality gates** in the response:
    - `warnings` — any unknown model keys? Truncation?
    - `summary.models_succeeded` — how many models actually returned results?
    - If `models_succeeded == 0`, investigation is wasted — diagnose before retrying
@@ -127,6 +131,10 @@ per_model_system_prompts: {
    - Partial results — models were cut off, findings may be incomplete
    - Failed models — missing coverage in that model's specialty area
 5. **If `models_succeeded == 0`** — report total failure, don't attempt empty synthesis
+6. **Memorize findings** — after synthesis:
+   - `memorize` category "pattern" for any confirmed bugs or recurring issues (include model attribution)
+   - `memorize` category "tactic" for lens effectiveness observations (which lens + model combo worked best)
+   - `memorize` category "recommend" for model performance notes (which models found real bugs vs false positives)
 
 ### Output Format
 
@@ -168,6 +176,9 @@ per_model_system_prompts: {
 | Attempt synthesis when models_succeeded == 0 | Diagnose the failure first (check warnings, API keys, model names) |
 | Send investigation_context expecting models to see it | It's persist-only — use per_model_system_prompts for model context |
 | Use this for every review | Reserve for critical code — standard review is faster for routine work |
+| Skip memory check during investigation phase | Call `memory` category "patterns" first — known issues inform better hypotheses |
+| Use only hardcoded lenses in dispatch | Merge hypothesis lenses with `memory` category "tactics" for proven prompts |
+| Finish synthesis without memorizing | Call `memorize` for patterns, tactics, and recommendations after every deep review |
 
 ## Related Skills
 

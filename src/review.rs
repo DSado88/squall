@@ -46,6 +46,7 @@ impl ReviewExecutor {
         prompt: String,
         working_directory: Option<String>,
         files_skipped: Option<Vec<String>>,
+        files_errors: Option<Vec<String>>,
     ) -> ReviewResponse {
         // Fix #3: Clamp timeout to prevent Instant overflow from untrusted input.
         // Use effective_timeout_secs() to account for deep mode (600s default).
@@ -144,6 +145,19 @@ impl ReviewExecutor {
             if !unused.is_empty() {
                 let msg = format!(
                     "per_model_timeout_secs contains unknown models: {unused:?}. Check listmodels for valid names."
+                );
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+            }
+            // Warn on zero-value timeouts — Duration::from_secs(0) causes immediate
+            // deadline expiry, which is never the caller's intent.
+            let zeros: Vec<&String> = per_model.iter()
+                .filter(|&(_, v)| *v == 0)
+                .map(|(k, _)| k)
+                .collect();
+            if !zeros.is_empty() {
+                let msg = format!(
+                    "per_model_timeout_secs has 0 for {zeros:?} — this causes immediate timeout. Use at least 1."
                 );
                 tracing::warn!("{msg}");
                 warnings.push(msg);
@@ -346,6 +360,7 @@ impl ReviewExecutor {
             results_file: None,
             persist_error: None,
             files_skipped,
+            files_errors,
             warnings,
             summary,
         };

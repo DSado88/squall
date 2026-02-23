@@ -275,6 +275,7 @@ impl SquallServer {
         // Use canonical path from validate_working_directory() to prevent TOCTOU.
         let mut prompt = req.prompt.clone();
         let mut files_skipped = None;
+        let mut files_errors = None;
         // When both file_paths and diff are provided, reserve MIN_DIFF_BUDGET
         // for the diff so it's never starved by large file context.
         let file_budget = if req.diff.is_some() {
@@ -310,6 +311,9 @@ impl SquallServer {
                         .collect(),
                 );
             }
+            if !file_result.errors.is_empty() {
+                files_errors = Some(file_result.errors);
+            }
             if let Some(ctx) = file_result.context {
                 prompt = format!("{ctx}\n{prompt}");
             }
@@ -335,7 +339,7 @@ impl SquallServer {
 
         let executor = ReviewExecutor::new(self.registry.clone());
         let prompt_len = prompt.len();
-        let review_response = executor.execute(&req, prompt, working_directory, files_skipped).await;
+        let review_response = executor.execute(&req, prompt, working_directory, files_skipped, files_errors).await;
 
         // Log model metrics to memory (non-blocking, fire-and-forget)
         let memory = self.memory.clone();
@@ -363,7 +367,7 @@ impl SquallServer {
 
     #[tool(
         name = "memorize",
-        description = "Save a learning to Squall's memory. Use after reviewing results to record patterns, model blind spots, or effective prompt tactics. Categories: 'pattern' (recurring findings) or 'tactic' (prompt effectiveness)."
+        description = "Save a learning to Squall's memory. Use after reviewing results to record patterns, model blind spots, or effective prompt tactics. Categories: 'pattern' (recurring findings), 'tactic' (prompt effectiveness), or 'recommend' (model recommendations)."
     )]
     async fn memorize(
         &self,
@@ -515,17 +519,25 @@ impl ServerHandler for SquallServer {
                  Review Workflow:\n\
                  1. Select models (see Model Selection above).\n\
                  2. Set `per_model_system_prompts` to give each model a different review lens \
-                 (e.g. security, architecture, correctness). Check `memory` category \"tactic\" for proven lenses.\n\
+                 (e.g. security, architecture, correctness). Check `memory` category \"tactics\" for proven lenses.\n\
                  3. Call `review`. For security audits, complex architecture, or high-stakes changes, set `deep: true` \
                  (raises timeout to 600s, reasoning_effort to \"high\", max_tokens to 16384).\n\
                  4. The response includes a `results_file` path. This file persists on disk and survives context compaction — \
                  if you lose review details after a long conversation, read the results_file to recover them.\n\
+                 - If context compaction destroys the review response, the `results_file` path survives — \
+                 read the file to recover full results.\n\
                  5. ALWAYS call `memorize` after synthesizing review results to record patterns and model blind spots.\n\n\
                  File Context:\n\
                  - Pass `file_paths` + `working_directory` to include source files in the prompt.\n\
                  - For `review`, you can also pass `diff` with unified diff text (e.g. git diff output).\n\n\
+                 Research Workflow:\n\
+                 - For web-sourced research: `clink` with model \"codex\", timeout 600.\n\
+                 - For multi-vector research: `review` with 3-5 models as research advisors.\n\
+                 - ALWAYS persist results to `.squall/research/<topic>.md`.\n\
+                 - After research: `memorize` category \"pattern\" for reusable findings.\n\n\
                  Memory Workflow:\n\
-                 - Before reviews: `memory` category \"recommend\" + \"pattern\" to check past learnings.\n\
+                 - BEFORE reviews (mandatory): `memory` category \"recommend\" + \"patterns\" + \"tactics\" \
+                 to check past learnings. This is the most important step — without it, memory accumulates data nobody uses.\n\
                  - After reviews: `memorize` with category \"pattern\" for recurring findings, \"tactic\" for prompt strategies, \
                  \"recommend\" for model recommendations.\n\
                  - After PR merge: `flush` with the branch name to graduate patterns to codebase scope."
