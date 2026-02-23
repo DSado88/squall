@@ -2,6 +2,7 @@
 //! Each test proves a defect found by multi-model consensus review.
 //! Tests should FAIL before fixes and PASS after.
 
+use squall::config::PersistRawOutput;
 use squall::context::ContextFormat;
 use squall::error::SquallError;
 
@@ -257,7 +258,7 @@ async fn cli_oversized_output_completes_without_deadlock() {
     // `yes` outputs infinite "y\n" — guaranteed to exceed MAX_OUTPUT_BYTES.
     // Parser will fail (not JSON), but we're testing timing, not parsing.
     let _result = dispatch
-        .query_model(&req, "test", "yes", &[], &GeminiParser)
+        .query_model(&req, "test", "yes", &[], &GeminiParser, PersistRawOutput::Never)
         .await;
 
     let elapsed = start.elapsed();
@@ -317,6 +318,7 @@ async fn cli_oversized_stderr_completes_without_deadlock() {
                 "dd if=/dev/zero bs=1024 count=4096 >&2 2>/dev/null; sleep 3600".to_string(),
             ],
             &GeminiParser,
+            PersistRawOutput::Never,
         )
         .await;
 
@@ -376,6 +378,7 @@ async fn cli_cap_kills_process_group_not_just_leader() {
                 "dd if=/dev/zero bs=1024 count=4096 2>/dev/null & sleep 3600".to_string(),
             ],
             &GeminiParser,
+            PersistRawOutput::Never,
         )
         .await;
 
@@ -512,7 +515,7 @@ async fn cli_large_prompt_does_not_deadlock() {
     // which happens BEFORE the internal timeout wrapper — it hangs forever.
     let result = tokio::time::timeout(
         Duration::from_secs(8),
-        dispatch.query_model(&req, "test", "cat", &[], &GeminiParser),
+        dispatch.query_model(&req, "test", "cat", &[], &GeminiParser, PersistRawOutput::Never),
     )
     .await;
     let elapsed = start.elapsed();
@@ -562,7 +565,7 @@ async fn cli_prompt_delivered_via_stdin() {
     // RED: stdin is /dev/null → cat outputs nothing → GeminiParser fails
     // GREEN: stdin piped with prompt → cat echoes it → GeminiParser succeeds
     let result = dispatch
-        .query_model(&req, "test", "cat", &[], &GeminiParser)
+        .query_model(&req, "test", "cat", &[], &GeminiParser, PersistRawOutput::Never)
         .await;
 
     let text = result.expect("cat should echo prompt from stdin").text;
@@ -991,6 +994,7 @@ async fn cli_cross_stream_cap_kills_process() {
                 "exec 2>&-; head -c 4194304 /dev/zero; sleep 3600".to_string(),
             ],
             &GeminiParser,
+            PersistRawOutput::Never,
         ),
     )
     .await;
@@ -1123,6 +1127,7 @@ async fn cli_overflow_by_one_byte_is_rejected() {
                 format!("yes | head -c {}", MAX_OUTPUT_BYTES + 1),
             ],
             &GeminiParser,
+            PersistRawOutput::Never,
         )
         .await;
 
@@ -1184,6 +1189,7 @@ async fn cli_stderr_overflow_is_rejected() {
                 format!("echo ok; yes >&2 | head -c {} >&2", MAX_OUTPUT_BYTES + 1),
             ],
             &GeminiParser,
+            PersistRawOutput::Never,
         )
         .await;
 
@@ -1450,6 +1456,7 @@ async fn cli_exact_limit_output_not_killed() {
                 format!("yes | head -c {MAX_OUTPUT_BYTES}"),
             ],
             &GeminiParser,
+            PersistRawOutput::Never,
         )
         .await;
 

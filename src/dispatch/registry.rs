@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use tokio::sync::Semaphore;
 
-use crate::config::Config;
+use crate::config::{Config, PersistRawOutput};
 use crate::dispatch::async_poll::AsyncPollDispatch;
 use crate::dispatch::cli::CliDispatch;
 use crate::dispatch::http::HttpDispatch;
@@ -140,6 +140,7 @@ pub struct Registry {
     cli_semaphore: Semaphore,
     http_semaphore: Semaphore,
     async_poll_semaphore: Semaphore,
+    persist_raw_output: PersistRawOutput,
 }
 
 impl Registry {
@@ -152,6 +153,7 @@ impl Registry {
             cli_semaphore: Semaphore::new(CLI_MAX_CONCURRENT),
             http_semaphore: Semaphore::new(HTTP_MAX_CONCURRENT),
             async_poll_semaphore: Semaphore::new(ASYNC_POLL_MAX_CONCURRENT),
+            persist_raw_output: config.persist_raw_output,
         }
     }
 
@@ -261,7 +263,14 @@ impl Registry {
                 let parser = Self::parser_for(&entry.provider)?;
                 let _permit = Self::acquire_with_deadline(&self.cli_semaphore, req.deadline).await?;
                 self.cli
-                    .query_model(req, &entry.provider, executable, args_template, &*parser)
+                    .query_model(
+                        req,
+                        &entry.provider,
+                        executable,
+                        args_template,
+                        &*parser,
+                        self.persist_raw_output,
+                    )
                     .await
             }
             BackendConfig::AsyncPoll {

@@ -16,6 +16,14 @@ struct TomlConfig {
     providers: HashMap<String, TomlProvider>,
     #[serde(default)]
     models: HashMap<String, TomlModel>,
+    #[serde(default)]
+    settings: TomlSettings,
+}
+
+#[derive(Deserialize, Clone, Default)]
+struct TomlSettings {
+    #[serde(default)]
+    persist_raw_output: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -66,6 +74,10 @@ impl TomlConfig {
         }
         for (k, v) in other.models {
             self.models.insert(k, v);
+        }
+        // Settings: later layer overrides if explicitly set
+        if other.settings.persist_raw_output.is_some() {
+            self.settings.persist_raw_output = other.settings.persist_raw_output;
         }
     }
 
@@ -230,7 +242,26 @@ impl TomlConfig {
             tracing::error!("no models configured — set API keys or check config");
         }
 
-        Config { models, skipped }
+        // Parse persist_raw_output setting
+        let persist_raw_output = match self.settings.persist_raw_output.as_deref() {
+            Some(val) => match PersistRawOutput::from_str_validated(val) {
+                Some(mode) => mode,
+                None => {
+                    tracing::warn!(
+                        "unknown persist_raw_output value '{val}', \
+                         using default 'on_failure'"
+                    );
+                    PersistRawOutput::default()
+                }
+            },
+            None => PersistRawOutput::default(),
+        };
+
+        Config {
+            models,
+            skipped,
+            persist_raw_output,
+        }
     }
 }
 
@@ -238,12 +269,37 @@ impl TomlConfig {
 // Public Config type (unchanged — Registry, server, tests all use this)
 // ---------------------------------------------------------------------------
 
+/// When to persist raw CLI output to disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PersistRawOutput {
+    /// Always persist raw output for every CLI invocation.
+    Always,
+    /// Persist only when the CLI command fails (non-zero exit or parse error).
+    #[default]
+    OnFailure,
+    /// Never persist raw output.
+    Never,
+}
+
+impl PersistRawOutput {
+    fn from_str_validated(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "always" => Some(Self::Always),
+            "on_failure" => Some(Self::OnFailure),
+            "never" => Some(Self::Never),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Config {
     pub models: HashMap<String, ModelEntry>,
     /// Models that were defined but failed to resolve (missing key, missing CLI, etc.).
     /// Each entry is a human-readable reason string like "grok: XAI_API_KEY not set".
     pub skipped: Vec<String>,
+    /// When to persist raw CLI output to `.squall/raw/`.
+    pub persist_raw_output: PersistRawOutput,
 }
 
 impl Config {
@@ -328,6 +384,11 @@ impl Config {
 // ---------------------------------------------------------------------------
 
 const BUILTIN_DEFAULTS: &str = r#"
+# --- Settings ---
+
+[settings]
+persist_raw_output = "on_failure"
+
 # --- Providers ---
 
 [providers.xai]
@@ -954,6 +1015,120 @@ mod tests {
             !resolved.models.contains_key("my-custom-cli"),
             "CLI model with unknown provider should be rejected at config time, \
              not cause a runtime error in parser_for()"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // persist_raw_output setting tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn persist_raw_output_default_is_on_failure() {
+        let config = Config::from_toml("");
+        assert_eq!(config.persist_raw_output, PersistRawOutput::OnFailure);
+    }
+
+    #[test]
+    fn persist_raw_output_builtin_defaults_parse() {
+        let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
+        assert_eq!(
+            config.settings.persist_raw_output.as_deref(),
+            Some("on_failure")
+        );
+    }
+
+    #[test]
+    fn persist_raw_output_all_valid_values() {
+        for (input, expected) in [
+            ("always", PersistRawOutput::Always),
+            ("on_failure", PersistRawOutput::OnFailure),
+            ("never", PersistRawOutput::Never),
+        ] {
+            let toml_str = format!(
+                r#"
+                [settings]
+                persist_raw_output = "{input}"
+                "#
+            );
+            let config = Config::from_toml(&toml_str);
+            assert_eq!(
+                config.persist_raw_output, expected,
+                "persist_raw_output = '{input}' should parse to {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn persist_raw_output_invalid_value_falls_back_to_default() {
+        let config = Config::from_toml(
+            r#"
+            [settings]
+            persist_raw_output = "banana"
+            "#,
+        );
+        assert_eq!(
+            config.persist_raw_output,
+            PersistRawOutput::OnFailure,
+            "Invalid persist_raw_output value should fall back to on_failure"
+        );
+    }
+
+    #[test]
+    fn persist_raw_output_merge_override() {
+        let mut base: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
+        let overlay: TomlConfig = toml::from_str(
+            r#"
+            [settings]
+            persist_raw_output = "always"
+            "#,
+        )
+        .unwrap();
+        base.merge(overlay);
+        let resolved = base.resolve();
+        assert_eq!(resolved.persist_raw_output, PersistRawOutput::Always);
+    }
+
+    #[test]
+    fn persist_raw_output_case_insensitive() {
+        for (input, expected) in [
+            ("Always", PersistRawOutput::Always),
+            ("ALWAYS", PersistRawOutput::Always),
+            ("ON_FAILURE", PersistRawOutput::OnFailure),
+            ("On_Failure", PersistRawOutput::OnFailure),
+            ("NEVER", PersistRawOutput::Never),
+            ("Never", PersistRawOutput::Never),
+        ] {
+            let toml_str = format!(
+                r#"
+                [settings]
+                persist_raw_output = "{input}"
+                "#
+            );
+            let config = Config::from_toml(&toml_str);
+            assert_eq!(
+                config.persist_raw_output, expected,
+                "'{input}' should parse case-insensitively to {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn persist_raw_output_merge_preserves_base_when_overlay_omits() {
+        let mut base: TomlConfig = toml::from_str(
+            r#"
+            [settings]
+            persist_raw_output = "never"
+            "#,
+        )
+        .unwrap();
+        // Overlay with no settings section at all
+        let overlay: TomlConfig = toml::from_str("").unwrap();
+        base.merge(overlay);
+        let resolved = base.resolve();
+        assert_eq!(
+            resolved.persist_raw_output,
+            PersistRawOutput::Never,
+            "Base setting should be preserved when overlay omits [settings]"
         );
     }
 }
