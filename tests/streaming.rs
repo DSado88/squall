@@ -698,7 +698,7 @@ async fn anthropic_content_block_delta_parsing() {
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
         let mut buf = vec![0u8; 4096];
-        stream.read(&mut buf).await.unwrap();
+        let _ = stream.read(&mut buf).await.unwrap();
 
         let response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n\
             data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n\
@@ -749,7 +749,7 @@ async fn anthropic_stream_done_on_message_stop() {
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
         let mut buf = vec![0u8; 4096];
-        stream.read(&mut buf).await.unwrap();
+        let _ = stream.read(&mut buf).await.unwrap();
 
         // Send content then message_stop — should treat as complete (not partial)
         let response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n\
@@ -1028,7 +1028,7 @@ async fn openai_parser_unchanged_after_refactor() {
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
         let mut buf = vec![0u8; 4096];
-        stream.read(&mut buf).await.unwrap();
+        let _ = stream.read(&mut buf).await.unwrap();
 
         let response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n\
             data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n\

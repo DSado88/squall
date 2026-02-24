@@ -27,19 +27,22 @@ pub struct SquallServer {
     registry: Arc<Registry>,
     memory: Arc<MemoryStore>,
     git_cache: Arc<GitContextCache>,
+    review_config: crate::config::ReviewConfig,
     tool_router: ToolRouter<Self>,
 }
 
 #[tool_router]
 impl SquallServer {
     pub fn new(config: Config) -> Self {
+        let review_config = config.review.clone(); // Clone BEFORE from_config() move
         let registry = Arc::new(Registry::from_config(config));
-        let memory = Arc::new(MemoryStore::new());
+        let memory = Arc::new(MemoryStore::new().with_id_to_key(registry.model_id_to_key()));
         let git_cache = Arc::new(GitContextCache::new());
         Self {
             registry,
             memory,
             git_cache,
+            review_config,
             tool_router: Self::tool_router(),
         }
     }
@@ -339,7 +342,7 @@ impl SquallServer {
 
         let executor = ReviewExecutor::new(self.registry.clone());
         let prompt_len = prompt.len();
-        let review_response = executor.execute(&req, prompt, &self.memory, working_directory, files_skipped, files_errors).await;
+        let review_response = executor.execute(&req, prompt, &self.memory, working_directory, files_skipped, files_errors, Some(&self.review_config)).await;
 
         // Log model metrics to memory (non-blocking, fire-and-forget)
         let memory = self.memory.clone();

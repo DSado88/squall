@@ -10,7 +10,7 @@ use crate::context::ContextFormat;
 pub struct ReviewRequest {
     /// The prompt to send to all models. File context and diff are prepended automatically.
     pub prompt: String,
-    /// Model names to query (from `listmodels`). Defaults to all configured models if omitted.
+    /// Model names to query (from `listmodels`). Defaults to `[review] default_models` from config if omitted.
     pub models: Option<Vec<String>>,
     /// Straggler cutoff in seconds (default: 180). Models still running after this are cancelled.
     pub timeout_secs: Option<u64>,
@@ -142,6 +142,12 @@ pub struct ReviewSummary {
     pub models_partial: usize,
     /// Models not found in registry.
     pub models_not_started: usize,
+    /// True if models were auto-selected via tiered selection (models omitted in request).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub auto_selected: bool,
+    /// Human-readable explanation of how models were chosen (only when auto_selected).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_reasoning: Option<String>,
 }
 
 /// Full review response (serialized to JSON for MCP and disk).

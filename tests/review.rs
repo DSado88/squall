@@ -232,7 +232,7 @@ async fn executor_unknown_models_go_to_not_started() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     assert!(resp.results.is_empty(), "No results for unknown models");
     assert_eq!(resp.not_started, vec!["nonexistent-model"]);
 }
@@ -284,7 +284,7 @@ async fn executor_none_models_uses_all_configured() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     // Should have tried test-model (and failed since the URL is bogus)
     assert_eq!(resp.results.len(), 1);
     assert_eq!(resp.results[0].model, "test-model");
@@ -341,7 +341,7 @@ async fn executor_cutoff_aborts_slow_models() {
     };
 
     let start = Instant::now();
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     let elapsed = start.elapsed();
 
     // Should complete within ~2s cutoff + 3s cooperative grace + overhead, not hang forever
@@ -403,7 +403,7 @@ async fn executor_fast_models_complete_before_cutoff() {
     };
 
     let start = Instant::now();
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     let elapsed = start.elapsed();
 
     // Should complete quickly (connection refused), NOT wait 60s for cutoff
@@ -481,7 +481,7 @@ async fn executor_mixed_fast_and_slow() {
     };
 
     let start = Instant::now();
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     let elapsed = start.elapsed();
 
     // Should take ~2s cutoff + 3s cooperative grace + overhead
@@ -526,7 +526,7 @@ async fn executor_persists_results_to_disk() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
 
     // Should have a results_file path
     assert!(
@@ -641,7 +641,7 @@ async fn executor_clamps_huge_timeout() {
     };
 
     // Should not panic — timeout is clamped internally
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     assert_eq!(
         resp.cutoff_seconds,
         squall::review::MAX_TIMEOUT_SECS,
@@ -696,7 +696,7 @@ async fn executor_deduplicates_model_ids() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
 
     // Should produce exactly 1 result, not 2
     assert_eq!(
@@ -759,7 +759,7 @@ async fn executor_caps_all_configured_models() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     let total = resp.results.len() + resp.not_started.len();
 
     // RED: None branch doesn't apply .take(MAX_MODELS), so all 25 models run
@@ -804,7 +804,7 @@ async fn persist_filename_includes_pid() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     let path = resp.results_file.expect("should persist results");
     let pid = std::process::id().to_string();
 
@@ -921,7 +921,7 @@ async fn executor_with_per_model_system_prompts() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     // Model will fail (fake endpoint), but executor should not panic
     assert_eq!(resp.results.len(), 1, "Should have one result");
     assert_eq!(resp.results[0].status, ModelStatus::Error, "Should error on fake endpoint");
@@ -1069,7 +1069,7 @@ async fn deep_mode_executor_uses_effective_timeout() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
 
     // RED: Currently executor uses req.timeout_secs() which returns 180 (ignoring deep).
     // GREEN: executor should use req.effective_timeout_secs() → 600.
@@ -1148,7 +1148,7 @@ async fn per_model_timeout_does_not_extend_global_cutoff() {
     };
 
     let start = Instant::now();
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     let elapsed = start.elapsed();
 
     // CRITICAL: Global cutoff at 3s should NOT be extended by per-model 600s.
@@ -1230,7 +1230,7 @@ async fn warnings_surface_unknown_per_model_system_prompt_keys() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     assert!(
         resp.warnings.iter().any(|w| w.contains("per_model_system_prompts") && w.contains("typo-model")),
         "Should warn about unknown per_model_system_prompts key. Warnings: {:?}",
@@ -1287,7 +1287,7 @@ async fn warnings_surface_unknown_per_model_timeout_keys() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     assert!(
         resp.warnings.iter().any(|w| w.contains("per_model_timeout_secs") && w.contains("ghost-model")),
         "Should warn about unknown per_model_timeout_secs key. Warnings: {:?}",
@@ -1331,7 +1331,7 @@ async fn warnings_surface_max_models_truncation() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     assert!(
         resp.warnings.iter().any(|w| w.contains("Dropped")),
         "Should warn about MAX_MODELS truncation. Warnings: {:?}",
@@ -1392,7 +1392,7 @@ async fn summary_counts_match_results() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     let s = &resp.summary;
 
     assert_eq!(s.models_requested, 2, "2 models requested (post-dedup)");
@@ -1452,7 +1452,7 @@ async fn summary_buckets_reconcile() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     let s = &resp.summary;
 
     // Invariant: gated + succeeded + failed + cutoff + partial + not_started == requested
@@ -1495,7 +1495,7 @@ async fn investigation_context_persisted() {
         investigation_context: Some("Found potential race condition in auth flow".to_string()),
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
     let path = resp.results_file.expect("should persist results");
 
     let content = tokio::fs::read_to_string(&path).await.unwrap();
@@ -1542,7 +1542,7 @@ async fn investigation_context_clamped() {
         investigation_context: Some(big_context),
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
 
     // Should have a truncation warning
     assert!(
@@ -1602,7 +1602,7 @@ async fn investigation_context_clamped_utf8_boundary() {
     };
 
     // This should NOT panic (previously would on &ctx[..MAX])
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
 
     assert!(
         resp.warnings.iter().any(|w| w.contains("investigation_context was truncated")),
@@ -1705,7 +1705,7 @@ async fn persisted_json_contains_files_skipped() {
     };
 
     let skipped = Some(vec!["big_file.rs (50000B)".to_string()]);
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, skipped, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, skipped, None, None).await;
 
     // Verify persisted file contains files_skipped (previously lost because
     // server.rs set it AFTER execute, but persist ran INSIDE execute).
@@ -1764,7 +1764,7 @@ async fn truncation_warning_reports_actual_boundary() {
         investigation_context: Some(big_context.clone()),
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
 
     // The warning should mention the ACTUAL retained byte count (32766),
     // not the MAX (32768).
@@ -1855,7 +1855,7 @@ async fn zero_per_model_timeout_warns() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
 
     // A per_model_timeout of 0 should surface a warning — silently timing out
     // with Duration::from_secs(0) is never the caller's intent.
@@ -1920,7 +1920,7 @@ async fn persisted_json_contains_files_errors() {
         "nonexistent.rs: No such file or directory".to_string(),
         "secret.key: Permission denied".to_string(),
     ]);
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, file_errors).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, file_errors, None).await;
 
     // Verify files_errors field is present and correct in serialized JSON.
     let json = serde_json::to_string(&resp).unwrap();

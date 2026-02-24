@@ -27,8 +27,8 @@ related_skills:
 > |---------|-------------|
 > | Auto-depth | Claude scores the diff → QUICK / STANDARD / DEEP |
 > | User override | "deep review" forces DEEP, "quick review" forces QUICK |
-> | Opus agent | Background Task agent for STANDARD — local investigation (shell, git, tests) |
-> | DEEP investigation | Main Claude does it sequentially — Opus is redundant |
+> | Opus agent | Background Task agent for STANDARD + DEEP — local investigation (shell, git, tests) |
+> | DEEP investigation | Main Claude investigates first (hypotheses), then Opus + models run in parallel |
 > | Transparency | Always show depth reason: "Selected STANDARD (score 3): +2 auth, +1 size" |
 >
 > **Entry criteria:**
@@ -127,7 +127,7 @@ Skip directly to Phase 2 (Dispatch). No investigation, no Opus agent.
 3. Proceed immediately to Phase 2 — Opus runs concurrently with Squall dispatch
 
 ### DEEP
-Sequential investigation by main Claude (no Opus — it would be redundant):
+Sequential investigation by main Claude, then Opus + models in parallel:
 
 1. Check memory patterns for known issues in changed files (already fetched in Phase 0)
 2. Read target files with the Read tool
@@ -135,12 +135,15 @@ Sequential investigation by main Claude (no Opus — it would be redundant):
 4. Check git history (`git log`, `git blame`) on changed files
 5. Form hypotheses — specific, testable claims with file:line references, informed by memory patterns
 6. Write investigation notes — these become `investigation_context` AND inform per-model lenses
+7. **Spawn Opus agent** (same as STANDARD, but with hypotheses added to its prompt)
+8. Proceed to Phase 2 — Opus runs concurrently with Squall dispatch
 
-Investigation MUST complete before dispatch. Hypotheses inform lenses.
+Investigation MUST complete before dispatch. Hypotheses inform both model lenses AND the Opus agent.
+The Opus agent gets hypotheses as additional context so it can validate or challenge them independently.
 
 ## Phase 2: Dispatch
 
-1. **Consult memory** — call `memory` with category "recommend", then "tactics" (patterns already checked in Phase 0)
+1. **Consult memory** — call `memory` with category "recommend", then "tactic" (patterns already checked in Phase 0)
 2. **Call `listmodels`** to get current model names and metadata (speed_tier, precision_tier, strengths, weaknesses)
 3. **Select ensemble using tiered model system:**
 
@@ -156,28 +159,33 @@ Investigation MUST complete before dispatch. Hypotheses inform lenses.
    | **Opus agent** | Local investigation — shell, git, tests, cross-file tracing. | `Task` (background agent) |
 
    For **QUICK**: Use only grok (single fastest Tier 1 model). Skip Opus agent.
-   For **STANDARD** and **DEEP**: All 4 Tier 1 sources.
+   For **STANDARD**: All 4 Tier 1 sources (Opus runs in parallel with dispatch).
+   For **DEEP**: All 4 Tier 1 sources (Opus spawned after investigation, runs in parallel with dispatch).
 
    ### Tier 2: Pick 2 based on situation
 
-   For **STANDARD** and **DEEP**, add 2 models from Tier 2 based on the code type and
-   memory data. Consult `memory` recommend + tactics + `listmodels` to choose:
+   For **STANDARD** and **DEEP**, add up to 2 models from Tier 2 based on the code type and
+   memory data. If no Tier 2 models pass the gate threshold (>=70% success, >=5 samples),
+   proceed with Tier 1 only and note this in selection reasoning.
+
+   Consult `memory` recommend + `memory` tactic + `listmodels` to choose:
 
    | Model | Best For | Notes |
    |-------|----------|-------|
    | **kimi-k2.5** | Security, edge cases, adversarial scenarios | 83% LiveCodeBench. Needs a focused lens to shine. |
-   | **deepseek-v3.1** | Fast triage, broad coverage | Fastest model (~30s). Higher false positive rate — pair with focused lens. |
-   | **deepseek-r1** | Deep reasoning, logic-heavy analysis | Chain-of-thought reasoner. Currently needs auth fix or Together reroute. |
+   | **deepseek-v3.1** | Fast triage, broad coverage | Config key is `deepseek-v3.1` (provider model is V3.2-Exp). Fastest model (~30s). Pair with focused lens. |
+   | **deepseek-r1** | Deep reasoning, logic-heavy analysis | Chain-of-thought reasoner. Routed via Together — persistent auth failures, check memory before selecting. |
    | **qwen-3.5** | Pattern matching, performance analysis | 397B MoE. Good with performance-focused lens. |
-   | **qwen3-coder** | Code-specific review | Purpose-built for code. Add to config when available. |
-   | **z-ai/glm-5** | Architectural framing | Trained on Issue-PR pairs. Needs OpenRouter credits. |
-   | **mistral-large** | Multilingual, efficient | Needs API key configured. |
+   | **qwen3-coder** | Code-specific review | Purpose-built for code. |
+   | **z-ai/glm-5** | Architectural framing | Trained on Issue-PR pairs. Needs OpenRouter credits — check memory for 402 errors. |
+   | **mistral-large** | Multilingual, efficient | Needs API key configured — check memory for auth failures. |
 
    **Selection criteria for Tier 2:**
-   - Check `memory` recommend for success rates and tactics for proven lens combos
+   - Check `memory` recommend for success rates and `memory` tactic for proven lens combos
    - Match model strengths to the code type (concurrency → kimi, performance → qwen, etc.)
    - Include at least 1 model with <5 samples in memory (cold-start exploration)
    - Models with <70% success rate (>=5 samples) are **server-gated** — don't select them
+   - Check for persistent infrastructure failures (auth, credits) in memory — these models won't be gated but will waste a dispatch slot
    - Prefer diversity of strengths over raw success rate
 
    **ALWAYS show selection reasoning:**
@@ -189,7 +197,7 @@ Investigation MUST complete before dispatch. Hypotheses inform lenses.
 
 4. **Build per-model lenses** using memory tactics + investigation hypotheses (if DEEP):
 
-   Check `memory` category "tactics" for proven lens + model combos. Fall back to these defaults:
+   Check `memory` category "tactic" for proven lens + model combos. Fall back to these defaults:
 
    | Strength Area | Default Lens |
    |---------------|-------------|
@@ -204,19 +212,20 @@ Investigation MUST complete before dispatch. Hypotheses inform lenses.
 5. **Call `review`** with appropriate parameters:
    - QUICK: just `prompt`, `models`, `diff`, `temperature: 0`
    - STANDARD: add `file_paths`, `working_directory`, `per_model_system_prompts`
-   - DEEP: add `deep: true`, `investigation_context`, hypothesis-informed lenses
+   - DEEP: add `deep: true`, `investigation_context` (string field on the `review` tool — your investigation notes/hypotheses), hypothesis-informed lenses
 
 ## Phase 3: Gather
 
 1. **Read the `results_file`** from the review response
-2. **If STANDARD**: Check Opus agent output
+2. **If STANDARD or DEEP**: Check Opus agent output
    - Call `TaskOutput` with `timeout: 60000` (60s max wait after Squall returns)
    - Read `.squall/reviews/opus-{REVIEW_ID}.md`
    - If file missing or agent failed → proceed without it (graceful degradation)
    - Note in output: "Opus agent: timed out / not available" if applicable
-3. **If DEEP**: No Opus to gather — investigation was done in Phase 1
-4. **Check quality gates**:
+3. **Check quality gates**:
    - `warnings` — unknown model keys? Truncation?
+   - `not_started` — if non-empty, model was requested but not configured. Remove from future selections.
+   - `summary.models_gated` — if >0, check which models were gated (especially Tier 1). Adapt synthesis expectations.
    - `summary.models_succeeded` — if 0, diagnose before synthesizing
 
 ## Phase 4: Synthesize
@@ -241,12 +250,19 @@ Without Opus, fall back to standard model-agreement synthesis:
 - Unique catches (1 model) → MEDIUM confidence (this is WHY we use multiple models)
 - Contradictions → FLAG for human
 
-### DEEP (models + investigation hypotheses)
+### DEEP (models + Opus + investigation hypotheses)
 
-Cross-reference investigation with model findings:
-- Hypotheses confirmed by models → HIGHEST confidence
-- Hypotheses not flagged by any model → false alarm or models missed it, investigate further
-- Model findings outside hypotheses → unexpected, worth attention
+Three-way cross-reference — investigation hypotheses, model findings, and Opus agent:
+
+| Signal | Confidence |
+|--------|-----------|
+| Hypothesis confirmed by models + Opus | HIGHEST |
+| Hypothesis confirmed by models, Opus silent | HIGH |
+| Hypothesis confirmed by Opus only | MEDIUM-HIGH (local evidence) |
+| Hypothesis not flagged by anyone | Likely false alarm — drop or note as speculative |
+| Opus unique finding outside hypotheses | MEDIUM-HIGH (local context credibility) |
+| Model finding outside hypotheses | MEDIUM (unexpected, worth attention) |
+| Opus + model contradict on hypothesis | FLAG for human judgment |
 
 ### Output Format
 
@@ -279,7 +295,8 @@ After synthesis, close the learning loop:
 
 ## Opus Agent Prompt Template
 
-Used for STANDARD depth only. Caller fills `{placeholders}`.
+Used for STANDARD and DEEP depth. Caller fills `{placeholders}`.
+For DEEP, add `{hypotheses}` section with investigation hypotheses for the agent to validate.
 
 ```
 You are an expert code reviewer doing LOCAL investigation. External AI models are
@@ -305,6 +322,8 @@ CONSTRAINTS:
 Changed files: {file_list}
 Diff summary: {diff_stat}
 Working directory: {working_directory}
+
+{hypotheses_section}
 
 Write findings to: {output_file}
 
@@ -332,10 +351,10 @@ Be specific. Cite exact file paths and line numbers. If no real issues, say so b
 | Intent | Depth | Tier 1 | Tier 2 (pick 2) | Opus? | Investigation? |
 |--------|-------|--------|-----------------|-------|----------------|
 | Small non-critical change | QUICK | grok only | none | No | No |
-| Normal PR, routine code | STANDARD | gemini + codex + grok | 2 by code type + memory data | Yes (parallel) | No |
-| Security, critical infra | DEEP | gemini + codex + grok | 2 by code type + memory data | No (main Claude) | Yes (sequential) |
+| Normal PR, routine code | STANDARD | gemini + codex + grok | 2 by code type + memory data | Yes (parallel with dispatch) | No |
+| Security, critical infra | DEEP | gemini + codex + grok | 2 by code type + memory data | Yes (parallel with dispatch, gets hypotheses) | Yes (sequential, before dispatch) |
 
-**Tier 1 is non-negotiable** — gemini and codex are free and high quality, grok is fast and high quality.
+**Tier 1 is strongly preferred** — gemini and codex are free and high quality, grok is fast and high quality. Always request them. Note: if a Tier 1 model drops below 70% success rate (>=5 samples), Squall's hard gate will exclude it server-side. Check `warnings` and `summary.models_gated` in the response — if Tier 1 models are gated, note this in synthesis.
 **Always call `listmodels` first** — model availability changes. Use `memory` category "recommend" for Tier 2 selection.
 Models with <70% success rate (>=5 samples) are automatically rejected by Squall's hard gate.
 
@@ -350,12 +369,12 @@ Models with <70% success rate (>=5 samples) are automatically rejected by Squall
 | Use QUICK for security-sensitive files | Hard floor ensures minimum STANDARD |
 | Skip `listmodels` before calling review | Model availability changes — always check |
 | Omit `per_model_system_prompts` | Lenses are a huge quality improvement — always set them |
-| Spawn Opus agent for DEEP reviews | Main Claude already investigates — Opus is redundant |
 | Spawn Opus agent for QUICK reviews | Overhead isn't worth it for single-model triage |
+| Skip Opus agent for DEEP reviews | DEEP should have MORE sources, not fewer — Opus validates hypotheses independently |
 | Assume Opus will always succeed | Graceful degradation — synthesize without it if needed |
 | Start DEEP dispatch before investigation | Investigation MUST complete first — hypotheses inform lenses |
 | Forget to show depth reasoning | Transparency: always display score breakdown AND model selection rationale |
-| Skip memory before dispatch | Call `memory` recommend + tactics + patterns first |
+| Skip memory before dispatch | Call `memory` recommend + tactic + patterns first |
 | Skip memorize after synthesis | Close the learning loop — patterns, tactics, recommendations |
 | Make separate chat/clink calls for multi-model | Use `review` — it does parallel fan-out with straggler cutoff |
 | Ignore `results_file` in the response | Always read persisted file — it survives compaction |
@@ -400,6 +419,16 @@ Insights captured during skill execution:
 **Origin**: Bugs found during 9-model benchmark + model identity analysis.
 **Core insight**: (1) Model identity fragmentation — models.md logged provider model_ids ("deepseek-ai/DeepSeek-V3.1") instead of config keys ("deepseek-v3.1"). Hard gate lookups missed these. Fix: normalization map (model_id→config_key) in registry, threaded through get_model_stats and log_model_metrics. (2) Infrastructure failures (auth, rate limits) counted as quality failures → models permanently gated. Fix: added reason column to models.md, excluded auth_failed/rate_limited from success rate denominator. (3) Display rounding {:.0}% showed "70%" for 69.9% → fixed to {:.1}%. (4) models_requested counted post-gate → fixed to pre-gate count, added models_gated field. (5) Partial successes inflated stats → now check partial != "yes". Also updated deepseek-v3.1→V3.2, rerouted deepseek-r1 to Together (fixes auth), added qwen3-coder model.
 **Harvested** -> 6 new tests (399 total). Event format now has 8 columns (backward-compatible with old 7-column format via cols.len() detection).
+
+### 2026-02-23: DEEP review gets Opus agent — more sources for higher stakes
+**Origin**: User feedback: "i think deep not having a separate claude reviewer is a miss"
+**Core insight**: The original rationale ("Opus is redundant because Claude already investigates") was backwards. Investigation and independent review serve different purposes: investigation forms hypotheses (questions), Opus provides independent validation (answers). DEEP is the highest-stakes review — it should have MORE signal sources, not fewer. DEEP now runs: (1) Claude investigates sequentially → forms hypotheses, (2) Opus agent + 5 Squall models dispatch in parallel, (3) synthesize from 6+ sources with three-way cross-referencing (hypotheses vs models vs Opus). Opus gets the hypotheses as additional context so it can specifically validate or challenge them.
+**Harvested** -> Updated Phase 1, Phase 3, Phase 4, Opus prompt template, ensemble reference table, anti-patterns
+
+### 2026-02-23: 5-agent swarm audit found 1 code bug + 7 skill text gaps
+**Origin**: 5-agent team (researcher, architect, scribe, builder, tester) traced all model selection logic, dispatch paths, and naming lifecycle end-to-end.
+**Core insight**: (1) Code bug: `compute_summary()` and `generate_recommendations()` in memory.rs didn't normalize model names — legacy events with provider model_ids (e.g. "moonshotai/Kimi-K2.5") showed up in `memory recommend` output instead of config keys ("kimi-k2.5"). Fixed by threading `id_to_key` map through both functions via MemoryStore field. (2) Skill text: "non-negotiable" for Tier 1 was misleading — server CAN gate them. Changed to "strongly preferred" with gate acknowledgment. (3) "pick 2" had no escape clause for when all Tier 2 models are gated. (4) Phase 3 quality gates didn't check `not_started` or `models_gated`. (5) "tactics" vs "tactic" category naming inconsistency. (6) Stale model notes (deepseek-r1, deepseek-v3.1). (7) Zombie models (100% infra failures never gated) identified as architectural concern — not yet fixed.
+**Harvested** -> memory.rs normalization fix, 7 skill text updates, MemoryStore.with_id_to_key() builder
 
 ---
 <!-- SENTINEL:SESSION_LEARNINGS_END -->

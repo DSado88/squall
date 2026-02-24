@@ -48,6 +48,7 @@ impl ReviewExecutor {
         Self { registry }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn execute(
         &self,
         req: &ReviewRequest,
@@ -56,6 +57,7 @@ impl ReviewExecutor {
         working_directory: Option<String>,
         files_skipped: Option<Vec<String>>,
         files_errors: Option<Vec<String>>,
+        review_config: Option<&crate::config::ReviewConfig>,
     ) -> ReviewResponse {
         // Fix #3: Clamp timeout to prevent Instant overflow from untrusted input.
         // Use effective_timeout_secs() to account for deep mode (600s default).
@@ -87,16 +89,24 @@ impl ReviewExecutor {
             }
             deduped.into_iter().take(MAX_MODELS).collect()
         } else {
-            let mut all: Vec<String> = self.registry
-                .list_models()
-                .iter()
-                .map(|(key, _)| (*key).clone())
-                .collect();
+            // When models omitted: use config default_models if provided,
+            // otherwise fall back to all registry models.
+            // Claude (the MCP client) handles intelligent Tier 2 selection via the
+            // unified review skill — this is just the server-side fallback.
+            let mut all: Vec<String> = if let Some(cfg) = review_config {
+                cfg.default_models.clone()
+            } else {
+                self.registry
+                    .list_models()
+                    .iter()
+                    .map(|(key, _)| (*key).clone())
+                    .collect()
+            };
             all.sort();
             if all.len() > MAX_MODELS {
                 let dropped: Vec<&str> = all[MAX_MODELS..].iter().map(|s| s.as_str()).collect();
                 let msg = format!(
-                    "Registry has {} models but max is {MAX_MODELS}. Dropped: {:?}.",
+                    "Auto-selected {} models but max is {MAX_MODELS}. Dropped: {:?}.",
                     all.len(),
                     dropped,
                 );
@@ -106,6 +116,9 @@ impl ReviewExecutor {
             }
             all
         };
+
+        // Track whether models were auto-selected (default_models used).
+        let auto_selected = req.models.is_none() && review_config.is_some();
 
         // Capture pre-gate count for accurate API accounting (Bug #4).
         let mut target_models = target_models;
@@ -398,6 +411,14 @@ impl ReviewExecutor {
         }
 
         // Build summary from collected results.
+        let selection_reasoning = if auto_selected {
+            Some(format!(
+                "Using default models from config: {:?}",
+                review_config.map(|c| &c.default_models).unwrap_or(&vec![]),
+            ))
+        } else {
+            None
+        };
         let summary = ReviewSummary {
             models_requested: original_model_count,
             models_gated: gated_count,
@@ -406,6 +427,8 @@ impl ReviewExecutor {
             models_cutoff: results.iter().filter(|r| r.reason.as_deref() == Some("cutoff")).count(),
             models_partial: results.iter().filter(|r| r.status == ModelStatus::Success && r.partial).count(),
             models_not_started: not_started.len(),
+            auto_selected,
+            selection_reasoning,
         };
 
         // Construct response first (results_file: None), then persist.

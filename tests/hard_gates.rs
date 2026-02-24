@@ -121,7 +121,7 @@ async fn hard_gate_excludes_model_below_threshold() {
     let req = make_request(vec!["bad-model", "good-model"]);
 
     let resp = executor
-        .execute(&req, req.prompt.clone(), &store, None, None, None)
+        .execute(&req, req.prompt.clone(), &store, None, None, None, None)
         .await;
 
     // bad-model (30% success) should be excluded
@@ -169,7 +169,7 @@ async fn hard_gate_bypasses_model_with_insufficient_samples() {
     let req = make_request(vec!["new-model"]);
 
     let resp = executor
-        .execute(&req, req.prompt.clone(), &store, None, None, None)
+        .execute(&req, req.prompt.clone(), &store, None, None, None, None)
         .await;
 
     // new-model has only 3 samples (< MIN_GATE_SAMPLES=5), should NOT be gated
@@ -211,7 +211,7 @@ async fn hard_gate_fallback_when_all_models_gated() {
     let req = make_request(vec!["model-a", "model-b"]);
 
     let resp = executor
-        .execute(&req, req.prompt.clone(), &store, None, None, None)
+        .execute(&req, req.prompt.clone(), &store, None, None, None, None)
         .await;
 
     // Both models are 0% success, but since ALL would be gated,
@@ -258,7 +258,7 @@ async fn hard_gate_passes_model_above_threshold() {
     let req = make_request(vec!["border-model"]);
 
     let resp = executor
-        .execute(&req, req.prompt.clone(), &store, None, None, None)
+        .execute(&req, req.prompt.clone(), &store, None, None, None, None)
         .await;
 
     // 70% success = exactly at threshold (< 0.70 is the gate, so 70% passes)
@@ -289,7 +289,7 @@ async fn hard_gate_passes_unknown_model() {
     let req = make_request(vec!["model-a", "model-b"]);
 
     let resp = executor
-        .execute(&req, req.prompt.clone(), &store, None, None, None)
+        .execute(&req, req.prompt.clone(), &store, None, None, None, None)
         .await;
 
     // model-b has no stats in memory → should pass through (can't judge)
@@ -315,7 +315,7 @@ async fn hard_gate_noop_without_memory_data() {
     let req = make_request(vec!["some-model"]);
 
     let resp = executor
-        .execute(&req, req.prompt.clone(), &store, None, None, None)
+        .execute(&req, req.prompt.clone(), &store, None, None, None, None)
         .await;
 
     // No memory file → get_model_stats() returns None → no gating

@@ -52,6 +52,8 @@ pub struct MemoryStore {
     base_dir: PathBuf,
     write_lock: Mutex<()>,
     write_counter: AtomicU64,
+    /// Maps provider model_ids to config keys for display normalization.
+    id_to_key: HashMap<String, String>,
 }
 
 impl Default for MemoryStore {
@@ -66,6 +68,7 @@ impl MemoryStore {
             base_dir: PathBuf::from(DEFAULT_MEMORY_DIR),
             write_lock: Mutex::new(()),
             write_counter: AtomicU64::new(0),
+            id_to_key: HashMap::new(),
         }
     }
 
@@ -75,7 +78,16 @@ impl MemoryStore {
             base_dir,
             write_lock: Mutex::new(()),
             write_counter: AtomicU64::new(0),
+            id_to_key: HashMap::new(),
         }
+    }
+
+    /// Set the model_id → config_key normalization map.
+    /// Used by `compute_summary()` and `generate_recommendations()` to
+    /// normalize legacy event log entries that used provider model_ids.
+    pub fn with_id_to_key(mut self, map: HashMap<String, String>) -> Self {
+        self.id_to_key = map;
+        self
     }
 
     fn models_path(&self) -> PathBuf {
@@ -175,8 +187,9 @@ impl MemoryStore {
             all_events = all_events[start..].to_vec();
         }
 
+        let id_map = id_to_key.cloned().unwrap_or_default();
         let new_summary = if should_compact || truncated || summary_section.is_empty() {
-            compute_summary(&all_events)
+            compute_summary(&all_events, &id_map)
         } else {
             summary_section
         };
@@ -444,7 +457,8 @@ impl MemoryStore {
             let path = self.models_path();
             match tokio::fs::read_to_string(&path).await {
                 Ok(content) => {
-                    let recommendation = generate_recommendations(&content);
+                    let recommendation =
+                        generate_recommendations(&content, &self.id_to_key);
                     if !recommendation.is_empty() {
                         return Ok(recommendation);
                     }
@@ -751,7 +765,7 @@ impl MemoryStore {
         let pruned = old_count - kept_events.len();
 
         if pruned > 0 {
-            let summary = compute_summary(&kept_events);
+            let summary = compute_summary(&kept_events, &self.id_to_key);
             let new_content = format_models_file(&summary, &kept_events);
             let _ = atomic_write(&path, &new_content).await;
         }
@@ -816,9 +830,8 @@ fn parse_models_file(content: &str) -> (String, Vec<String>) {
 }
 
 /// Compute summary table from event log lines.
-fn compute_summary(events: &[String]) -> String {
-    use std::collections::HashMap;
-
+/// If `id_to_key` is non-empty, normalizes model names from provider model_ids to config keys.
+fn compute_summary(events: &[String], id_to_key: &HashMap<String, String>) -> String {
     struct ModelStats {
         total_latency: f64,
         count: usize,
@@ -836,7 +849,11 @@ fn compute_summary(events: &[String]) -> String {
         if cols.len() < 8 {
             continue;
         }
-        let model = cols[2].to_string();
+        let raw_model = cols[2];
+        let model = id_to_key
+            .get(raw_model)
+            .cloned()
+            .unwrap_or_else(|| raw_model.to_string());
         let latency_str = cols[3].trim_end_matches('s');
         let latency: f64 = latency_str.parse().unwrap_or(0.0);
         let status = cols[4];
@@ -928,9 +945,11 @@ fn compute_summary(events: &[String]) -> String {
 /// Parses the event log to compute per-model stats, applies a 90-day
 /// decay to confidence, and generates actionable recommendations for
 /// model selection.
-fn generate_recommendations(models_content: &str) -> String {
-    use std::collections::HashMap;
-
+/// If `id_to_key` is non-empty, normalizes model names from provider model_ids to config keys.
+fn generate_recommendations(
+    models_content: &str,
+    id_to_key: &HashMap<String, String>,
+) -> String {
     let (_, events) = parse_models_file(models_content);
     if events.is_empty() {
         return String::new();
@@ -954,7 +973,11 @@ fn generate_recommendations(models_content: &str) -> String {
         if cols.len() < 8 {
             continue;
         }
-        let model = cols[2].to_string();
+        let raw_model = cols[2];
+        let model = id_to_key
+            .get(raw_model)
+            .cloned()
+            .unwrap_or_else(|| raw_model.to_string());
         let latency: f64 = cols[3].trim_end_matches('s').parse().unwrap_or(0.0);
         let status = cols[4];
         let partial = cols[5];
@@ -1358,7 +1381,7 @@ pub fn content_hash_pub(content: &str, scope: Option<&str>) -> String {
 
 /// Public wrapper for `generate_recommendations` (testing sample-count weighting).
 pub fn generate_recommendations_pub(models_content: &str) -> String {
-    generate_recommendations(models_content)
+    generate_recommendations(models_content, &HashMap::new())
 }
 
 /// Public wrapper for `iso_date` (needed by tests to build model events).
@@ -1414,7 +1437,7 @@ mod tests {
             "| 2026-02-21T14:00:00Z | grok | 22.0s | success | no | \u{2014} | 4200 |".to_string(),
             "| 2026-02-21T14:00:00Z | gemini | 145.0s | success | no | \u{2014} | 4200 |".to_string(),
         ];
-        let summary = compute_summary(&events);
+        let summary = compute_summary(&events, &HashMap::new());
         let output = format_models_file(&summary, &events);
 
         let (parsed_summary, parsed_events) = parse_models_file(&output);
@@ -1429,7 +1452,7 @@ mod tests {
             "| 2026-02-21T14:00:01Z | grok | 30.0s | success | no | \u{2014} | 4200 |".to_string(),
             "| 2026-02-21T14:00:02Z | grok | 65.0s | error | no | timeout | 4200 |".to_string(),
         ];
-        let summary = compute_summary(&events);
+        let summary = compute_summary(&events, &HashMap::new());
         assert!(summary.contains("grok"));
         // 2/3 = 66.67% rounds to 67%
         assert!(summary.contains("67%"), "summary: {summary}");

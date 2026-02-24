@@ -18,12 +18,21 @@ struct TomlConfig {
     models: HashMap<String, TomlModel>,
     #[serde(default)]
     settings: TomlSettings,
+    #[serde(default)]
+    review: TomlReviewConfig,
 }
 
 #[derive(Deserialize, Clone, Default)]
 struct TomlSettings {
     #[serde(default)]
     persist_raw_output: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Default)]
+struct TomlReviewConfig {
+    /// Models dispatched when caller omits `models`. Claude adds more via the skill.
+    #[serde(default)]
+    default_models: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -78,6 +87,10 @@ impl TomlConfig {
         // Settings: later layer overrides if explicitly set
         if other.settings.persist_raw_output.is_some() {
             self.settings.persist_raw_output = other.settings.persist_raw_output;
+        }
+        // Review config: later layer overrides if explicitly set
+        if other.review.default_models.is_some() {
+            self.review.default_models = other.review.default_models;
         }
     }
 
@@ -257,10 +270,19 @@ impl TomlConfig {
             None => PersistRawOutput::default(),
         };
 
+        // Parse review config
+        let review = ReviewConfig {
+            default_models: self
+                .review
+                .default_models
+                .unwrap_or_else(|| ReviewConfig::default().default_models),
+        };
+
         Config {
             models,
             skipped,
             persist_raw_output,
+            review,
         }
     }
 }
@@ -292,6 +314,23 @@ impl PersistRawOutput {
     }
 }
 
+/// Review dispatch defaults. Claude (the MCP client) handles intelligent model
+/// selection via the unified review skill — this just sets the fallback when
+/// `models` is omitted from a review request.
+#[derive(Debug, Clone)]
+pub struct ReviewConfig {
+    /// Models dispatched when caller omits `models`. Default: ["gemini", "codex", "grok"].
+    pub default_models: Vec<String>,
+}
+
+impl Default for ReviewConfig {
+    fn default() -> Self {
+        Self {
+            default_models: vec!["gemini".into(), "codex".into(), "grok".into()],
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Config {
     pub models: HashMap<String, ModelEntry>,
@@ -300,6 +339,8 @@ pub struct Config {
     pub skipped: Vec<String>,
     /// When to persist raw CLI output to `.squall/raw/`.
     pub persist_raw_output: PersistRawOutput,
+    /// Tiered model selection for automatic review dispatch.
+    pub review: ReviewConfig,
 }
 
 impl Config {
@@ -556,6 +597,11 @@ speed_tier = "very_slow"
 precision_tier = "high"
 strengths = ["comprehensive research", "Google search integration"]
 weaknesses = ["very slow (minutes to hour)", "may need background job registry"]
+
+# --- Review defaults ---
+
+[review]
+default_models = ["gemini", "codex", "grok"]
 "#;
 
 // ---------------------------------------------------------------------------
