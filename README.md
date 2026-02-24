@@ -12,48 +12,60 @@ Squall tracks every model's performance — latency, success rate, failure modes
 
 ## Quick start
 
-### Build
+### Prerequisites
+
+- [Rust](https://rustup.rs/) toolchain (stable)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI installed (`claude` command available)
+- At least one API key (see below)
+- Optional: [Gemini CLI](https://github.com/google-gemini/gemini-cli) and/or [Codex CLI](https://github.com/openai/codex) for free CLI models
+
+### Install
 
 ```bash
-cargo build --release
+git clone https://github.com/DSado88/squall.git
+cd squall
+cp .env.example .env
+# Fill in your API keys — see .env.example for signup links
+./install.sh
 ```
 
-### Configure Claude Code
+The install script:
+1. Checks that `.env` exists and has at least one API key
+2. Builds the release binary and copies it to `~/.local/bin/squall`
+3. Registers Squall as a global MCP server in `~/.claude.json` (injects your API keys)
+4. Installs skills (slash commands) to `~/.claude/skills/`
 
-Add to `~/.claude.json`:
-
-```json
-{
-  "mcpServers": {
-    "squall": {
-      "command": "/path/to/squall/target/release/squall",
-      "env": {
-        "TOGETHER_API_KEY": "...",
-        "XAI_API_KEY": "..."
-      }
-    }
-  }
-}
-```
+Restart Claude Code (or run `/mcp`) to pick up the new server.
 
 ### API keys
 
-| Variable | Unlocks |
-|----------|---------|
-| `TOGETHER_API_KEY` | Kimi K2.5, DeepSeek R1, DeepSeek V3, Qwen 3.5, Qwen3 Coder |
-| `XAI_API_KEY` | Grok |
-| `OPENROUTER_API_KEY` | GLM-5 |
-| `MISTRAL_API_KEY` | Mistral Large |
-| `OPENAI_API_KEY` | o3-deep-research, o4-mini-deep-research |
-| `GOOGLE_API_KEY` | deep-research-pro |
+Fill in what you have, skip what you don't. Models only load when their key is set.
 
-CLI models (gemini, codex) use their own OAuth — no API key needed. Install and authenticate the [Gemini CLI](https://github.com/google-gemini/gemini-cli) and [Codex CLI](https://github.com/openai/codex) separately.
+| Variable | Unlocks | Signup |
+|----------|---------|--------|
+| `TOGETHER_API_KEY` | Kimi K2.5, DeepSeek V3.1, Qwen 3.5, Qwen3 Coder | [together.xyz](https://api.together.xyz/settings/api-keys) |
+| `XAI_API_KEY` | Grok | [console.x.ai](https://console.x.ai/) |
+| `OPENROUTER_API_KEY` | GLM-5 | [openrouter.ai](https://openrouter.ai/keys) |
+| `DEEPSEEK_API_KEY` | DeepSeek R1 | [platform.deepseek.com](https://platform.deepseek.com/api_keys) |
+| `MISTRAL_API_KEY` | Mistral Large | [console.mistral.ai](https://console.mistral.ai/api-keys) |
+| `OPENAI_API_KEY` | o3-deep-research, o4-mini-deep-research | [platform.openai.com](https://platform.openai.com/api-keys) |
+| `GOOGLE_API_KEY` | deep-research-pro | [aistudio.google.com](https://aistudio.google.com/apikey) |
 
-Models only appear in `listmodels` when their API key is set (HTTP) or their CLI is installed (CLI). Set what you have, skip what you don't.
+CLI models (gemini, codex) use their own OAuth — no API key needed. Install and authenticate them separately.
 
 ### Verify
 
 Ask Claude Code: *"list the available squall models"*. If Squall is connected, it will call `listmodels` and show what's available.
+
+### Updating
+
+After pulling new changes:
+
+```bash
+./install.sh          # rebuild + reinstall
+./install.sh --skills # skills only (skip build)
+./install.sh --build  # build only (skip skills)
+```
 
 ## Tools
 
@@ -115,7 +127,7 @@ Three dispatch backends: **HTTP** (OpenAI-compatible), **CLI** (subprocess, free
 | `codex` | OpenAI | CLI (free) | medium | Highest precision, zero false positives |
 | `kimi-k2.5` | Together | HTTP | medium | Edge cases, adversarial scenarios |
 | `deepseek-v3.1` | Together | HTTP | medium | Strong coder, finds real bugs |
-| `deepseek-r1` | Together | HTTP | medium | Deep reasoning, logic-heavy analysis |
+| `deepseek-r1` | DeepSeek | HTTP | medium | Deep reasoning, logic-heavy analysis |
 | `qwen-3.5` | Together | HTTP | medium | Pattern matching, multilingual |
 | `qwen3-coder` | Together | HTTP | medium | Purpose-built for code review |
 | `z-ai/glm-5` | OpenRouter | HTTP | medium | Architectural framing |
@@ -180,6 +192,17 @@ Three files in `.squall/memory/`:
 
 The result: reviews get better over time. Models that consistently fail get excluded. Lens assignments that produce good results get reused. The system adapts without manual tuning.
 
+### Global memory
+
+When built with the `global-memory` feature (enabled by default), Squall also maintains a DuckDB database at `~/.local/share/squall/global.duckdb`. This tracks model performance across all projects:
+
+- **Cross-project intelligence** — latency percentiles, success rates, and token costs aggregated across every project you use Squall in. A model that's fast for Python reviews but slow for Rust reviews will show different stats per project.
+- **Automatic recording** — every `chat`, `clink`, and `review` call records a model event (latency, tokens, success/failure, project context). No manual action needed.
+- **Global recommendations** — `memory` with category `recommend` returns recency-weighted model recommendations informed by all your projects, not just the current one.
+- **Local-first** — the database lives on your machine. Nothing is sent anywhere.
+
+To disable: build with `--no-default-features`. The file-based memory (`.squall/memory/`) works independently and is always available.
+
 ## Skills
 
 Squall ships with [Claude Code skills](https://docs.anthropic.com/en/docs/claude-code/skills) — prompt templates that teach Claude how to orchestrate the tools. You trigger them with natural language or slash commands:
@@ -228,24 +251,27 @@ Claude Code (orchestrator)
     |                   |-- CLI models get filesystem access via subprocess
     |                   +-- straggler cutoff returns partial results for slow models
     |
-    +-- memory/memorize/flush --> .squall/memory/ (learning loop)
+    +-- memory/memorize/flush --> .squall/memory/ (per-project learning)
+    |                        \-> ~/.local/share/squall/global.duckdb (cross-project stats)
     |
     +-- chat/clink --> single model query
     |
     +-- listmodels --> model discovery with metadata
 ```
 
-Claude is the intelligence. Squall is transport + memory. Claude decides what to ask, which models to query, and how to synthesize results. Squall handles authenticated dispatch, file context injection, parallel fan-out, and persistent learning.
+Claude is the intelligence. Squall is transport + memory. Claude decides what to ask, which models to query, and how to synthesize results. Squall handles authenticated dispatch, file context injection, parallel fan-out, and persistent learning — both per-project (markdown files) and cross-project (DuckDB).
 
 ## Safety
 
 - **Path sandboxing** — rejects absolute paths, `..` traversal, and symlink escapes
 - **No shell** — CLI dispatch uses direct exec with discrete args, no shell interpolation
-- **Process group kill** — timeouts kill the entire process tree, not just the leader
+- **Process group kill** — timeouts kill the entire process tree via `kill(-pgid)`, not just the leader
+- **Five-layer timeouts** — per-model (configurable), straggler cutoff, MCP deadline, HTTP client timeout, process group kill
 - **Capped reads** — HTTP responses: 2MB. CLI output: capped. File context: pre-checked via metadata
-- **Concurrency limits** — semaphores: 8 HTTP, 4 CLI, 4 async-poll
+- **Concurrency limits** — semaphores: 8 HTTP, 4 CLI, 4 async-poll. Prevents resource exhaustion under parallel fan-out
 - **No cascade errors** — MCP results never set `is_error: true`, preventing Claude Code sibling tool failures
 - **Error sanitization** — user-facing messages never leak internal URLs or credentials
+- **Input sanitization** — all user inputs (content, tags, metadata, scope) are sanitized against newline injection in memory files
 
 ## Contributing
 
@@ -254,10 +280,20 @@ Claude is the intelligence. Squall is transport + memory. Claude decides what to
 ```bash
 cargo build
 cargo test
-cargo clippy --all-targets
+cargo clippy --all-targets -- -D warnings
 ```
 
-All tests must pass. Zero clippy warnings.
+All tests must pass. Zero clippy warnings. Clippy `all` lints are denied.
+
+### Pre-commit
+
+Run the full check suite locally before pushing:
+
+```bash
+./scripts/pre-commit.sh
+```
+
+This runs: `rustfmt --check`, clippy (default + no-default-features), tests (default + no-default-features). The same checks run in CI on every push and PR.
 
 ### Adding a model
 
@@ -269,4 +305,4 @@ All tests must pass. Zero clippy warnings.
 
 - One feature per PR
 - Tests for new behavior
-- `cargo test && cargo clippy --all-targets` clean before submitting
+- `./scripts/pre-commit.sh` clean before submitting
