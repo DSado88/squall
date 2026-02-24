@@ -10,6 +10,8 @@ The overlap gives confidence. The divergence gives coverage. One model consisten
 
 Squall tracks every model's performance — latency, success rate, failure modes — and Claude uses those metrics to pick the best ensemble for each review. A model that keeps timing out gets benched. A model that shines on security-sensitive code gets picked when auth files change. The selection adapts over time.
 
+Squall was used to build and validate itself — ~10k lines of Rust and ~13k lines of tests, written and reviewed over the course of a few days with continuous multi-model feedback at every step.
+
 ## Quick start
 
 ### Prerequisites
@@ -51,7 +53,7 @@ Fill in what you have, skip what you don't. Models only load when their key is s
 | `OPENAI_API_KEY` | o3-deep-research, o4-mini-deep-research | [platform.openai.com](https://platform.openai.com/api-keys) |
 | `GOOGLE_API_KEY` | deep-research-pro | [aistudio.google.com](https://aistudio.google.com/apikey) |
 
-CLI models (gemini, codex) use their own OAuth — no API key needed. Install and authenticate them separately.
+CLI models (gemini, codex) use their respective CLI tools with OAuth authentication — no API key needed, but usage may be subject to each provider's terms and rate limits. Install and authenticate the [Gemini CLI](https://github.com/google-gemini/gemini-cli) and [Codex CLI](https://github.com/openai/codex) separately.
 
 ### Verify
 
@@ -118,13 +120,13 @@ Clean up branch-scoped memory after a PR merge. Graduates high-evidence patterns
 
 ## Models
 
-Three dispatch backends: **HTTP** (OpenAI-compatible), **CLI** (subprocess, free), and **async-poll** (deep research, launch-then-poll).
+Three dispatch backends: **HTTP** (OpenAI-compatible), **CLI** (subprocess, OAuth), and **async-poll** (deep research, launch-then-poll).
 
 | Model | Provider | Backend | Speed | Best for |
 |-------|----------|---------|-------|----------|
 | `grok` | xAI | HTTP | fast | Quick triage, broad coverage |
-| `gemini` | Google | CLI (free) | medium | Systems-level bugs, concurrency |
-| `codex` | OpenAI | CLI (free) | medium | Highest precision, zero false positives |
+| `gemini` | Google | CLI (OAuth) | medium | Systems-level bugs, concurrency |
+| `codex` | OpenAI | CLI (OAuth) | medium | Highest precision, zero false positives |
 | `kimi-k2.5` | Together | HTTP | medium | Edge cases, adversarial scenarios |
 | `deepseek-v3.1` | Together | HTTP | medium | Strong coder, finds real bugs |
 | `deepseek-r1` | DeepSeek | HTTP | medium | Deep reasoning, logic-heavy analysis |
