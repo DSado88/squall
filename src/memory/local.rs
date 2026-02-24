@@ -1134,7 +1134,7 @@ fn date_to_days(date: &str) -> Option<u64> {
 
 /// Convert (year, month, day) to days since Unix epoch.
 /// Inverse of days_to_ymd (Howard Hinnant civil_from_days).
-/// Caller must ensure year >= 1, month >= 1, day >= 1.
+/// Caller must ensure year >= 1970, month >= 1, day >= 1 (u64 underflows for pre-epoch dates).
 fn ymd_to_days(year: u64, month: u64, day: u64) -> u64 {
     let y = if month <= 2 { year - 1 } else { year };
     let m = if month <= 2 { month + 9 } else { month - 3 };
@@ -1823,6 +1823,21 @@ mod tests {
         // 2026-02-23 should produce a reasonable day count
         let days = date_to_days("2026-02-23").unwrap();
         assert!(days > 20000, "expected >20000 days since epoch, got {days}");
+    }
+
+    #[test]
+    fn date_to_days_1970_month_boundary() {
+        // 1970-01-01 and 1970-02-01 both trigger month<=2 branch (y = year-1 = 1969 internally)
+        // 1970-03-01 uses the else branch (y = year = 1970)
+        // All must succeed — the year < 1970 guard applies to the INPUT year, not internal y
+        let jan = date_to_days("1970-01-01").unwrap();
+        let feb = date_to_days("1970-02-01").unwrap();
+        let mar = date_to_days("1970-03-01").unwrap();
+        assert_eq!(jan, 0);
+        assert!(feb > jan, "Feb should be after Jan");
+        assert!(mar > feb, "Mar should be after Feb");
+        assert_eq!(feb, 31); // Jan has 31 days
+        assert_eq!(mar, 59); // Jan(31) + Feb(28) = 59 in non-leap 1970
     }
 
     #[test]
