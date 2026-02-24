@@ -213,6 +213,7 @@ Squall ships with [Claude Code skills](https://docs.anthropic.com/en/docs/claude
 |---------|-------|-------------|
 | "review", "review this diff", "code review" | `squall-unified-review` | Auto-depth code review — Claude scores the diff and picks the right depth |
 | "deep review", "thorough review" | `squall-unified-review` | Forces DEEP depth — full investigation + more models + longer timeouts |
+| "swarm review", "team review" | `squall-unified-review` | Forces SWARM depth — 3 independent agent teams (security, correctness, architecture) |
 | "quick review", "quick check" | `squall-unified-review` | Forces QUICK depth — single fast model, instant triage |
 | "research [topic]" | `squall-research` | Team swarm — multiple agents investigating different vectors in parallel |
 | "deep research [question]" | `squall-deep-research` | Web-sourced research via Codex and Gemini deep research |
@@ -226,14 +227,17 @@ Claude automatically picks the right review intensity based on what changed:
 | **QUICK** | Small non-critical changes | 1 (grok) | Fast triage, no parallel dispatch |
 | **STANDARD** | Normal PRs | 5 (3 core + 2 picked by memory stats) | Per-model lenses, Claude agent for local investigation |
 | **DEEP** | Security, auth, critical infra | 5+ models, deep mode | Claude investigates first, forms hypotheses, then models + agent validate in parallel |
+| **SWARM** | Large + security + memory patterns | 3 agents × 3 models each | 3 independent investigation agents (security, correctness, architecture), each with local shell access + its own Squall review dispatch |
 
 For STANDARD and DEEP, Claude spawns a background agent alongside the external model dispatch. The external models only see what's in the prompt — the agent has full access to your codebase. It reads changed files, traces callers, checks test coverage, runs `git blame`, and greps for related patterns. This is the perspective that static text analysis can't provide: cross-file interactions, test gaps, and git history context.
 
-Claude reads `memory` before each review to check model success rates, proven tactics, and recurring patterns — then picks the best ensemble for this specific diff. You can always override: "deep review" forces DEEP, "quick review" forces QUICK.
+For SWARM, Claude spawns 3 independent agents via agent teams — each with a different lens (security, correctness, architecture). Each agent does its own local investigation AND dispatches its own Squall review with 3 models. The team lead synthesizes across all agents using a cross-reference matrix. SWARM degrades gracefully to DEEP if agent teams are unavailable.
+
+Claude reads `memory` before each review to check model success rates, proven tactics, and recurring patterns — then picks the best ensemble for this specific diff. You can always override: "deep review" forces DEEP, "quick review" forces QUICK, "swarm review" forces SWARM.
 
 Skills are markdown files in `.claude/skills/`. They teach Claude how to use the tools — they don't change the server.
 
-Team swarms require Claude Code's experimental agent teams feature:
+SWARM reviews and research swarms require Claude Code's experimental agent teams feature:
 
 ```json
 {
@@ -242,6 +246,8 @@ Team swarms require Claude Code's experimental agent teams feature:
   }
 }
 ```
+
+Without this, SWARM auto-degrades to DEEP. Research swarms won't work at all.
 
 ## How it works
 

@@ -1,7 +1,7 @@
 ---
 name: squall-unified-review
-description: "Unified code review with auto-depth detection and Opus agent. Use when asked to 'review', 'squall review', 'code review', 'deep review', 'check this code', or 'review this diff'. Auto-selects QUICK/STANDARD/DEEP based on code characteristics. (project)"
-one_liner: "Auto-depth review — Claude picks the right depth, Opus adds the local perspective."
+description: "Unified code review with auto-depth detection, Opus agent, and optional agent teams. Use when asked to 'review', 'squall review', 'code review', 'deep review', 'swarm review', 'team review', 'quick review', or 'check this code'. Auto-selects QUICK/STANDARD/DEEP/SWARM based on code characteristics. (project)"
+one_liner: "Auto-depth review — from single-model triage to multi-agent swarm."
 activation_triggers:
   - "squall review"
   - "review code"
@@ -12,6 +12,9 @@ activation_triggers:
   - "squall deep review"
   - "thorough review"
   - "quick review"
+  - "swarm review"
+  - "team review"
+  - "full investigation"
   - When user wants multi-model code review
   - When user wants AI review of a diff or PR
 related_skills:
@@ -25,10 +28,12 @@ related_skills:
 >
 > | Concept | Translation |
 > |---------|-------------|
-> | Auto-depth | Claude scores the diff → QUICK / STANDARD / DEEP |
-> | User override | "deep review" forces DEEP, "quick review" forces QUICK |
+> | Auto-depth | Claude scores the diff → QUICK / STANDARD / DEEP / SWARM |
+> | User override | "deep review" forces DEEP, "quick review" forces QUICK, "swarm review" forces SWARM |
 > | Opus agent | Background Task agent for STANDARD + DEEP — local investigation (shell, git, tests) |
 > | DEEP investigation | Main Claude investigates first (hypotheses), then Opus + models run in parallel |
+> | SWARM agents | 3 independent team agents (security, correctness, architecture), each investigating + dispatching |
+> | Degradation | SWARM → DEEP if agent teams unavailable (always notified, never silent) |
 > | Transparency | Always show depth reason: "Selected STANDARD (score 3): +2 auth, +1 size" |
 >
 > **Entry criteria:**
@@ -45,6 +50,7 @@ Check the user's request first — explicit intent always wins:
 
 | User says | Force |
 |-----------|-------|
+| "swarm review", "team review", "full investigation" | SWARM |
 | "deep review", "thorough review", "investigate and review" | DEEP |
 | "quick review", "quick check", "triage" | QUICK |
 | "review" (no qualifier) | Auto-detect via score |
@@ -85,10 +91,23 @@ HARD FLOOR: If any changed file matches security keywords (auth/crypto/session/
 permission/middleware/token/jwt), minimum depth is STANDARD (never QUICK).
 
 DECISION:
+  SCORE >= 6  →  SWARM (if agent teams available; else DEEP with notification)
   SCORE >= 4  →  DEEP
   SCORE >= 2  →  STANDARD
   SCORE <  2  →  QUICK
 ```
+
+### SWARM Availability Check
+
+SWARM requires Claude Code agent teams (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`).
+
+To check availability: use `ToolSearch` with query `"TeamCreate"`. If the tool is not found, teams
+are unavailable. Alternatively, attempt `TeamCreate` — if it fails, catch the error and degrade.
+
+If SWARM is selected (by score or user override) but teams are unavailable:
+- **Always notify**: "SWARM requested (score N) but agent teams unavailable — falling back to DEEP"
+- Never silently degrade. High-stakes code getting a downgraded review must be visible.
+- Proceed with DEEP workflow.
 
 ### Transparency
 
@@ -104,6 +123,11 @@ Selected QUICK review (score 1): +1 diff size (55 lines), no critical files
 
 ```
 Selected DEEP review (score 5): +3 diff size (620 lines), +2 security files
+```
+
+```
+Selected SWARM review (score 7): +3 diff size (700 lines), +2 security, +2 memory patterns
+  → 3 investigation agents: security, correctness, architecture
 ```
 
 ## Phase 1: Launch
@@ -141,15 +165,52 @@ Sequential investigation by main Claude, then Opus + models in parallel:
 Investigation MUST complete before dispatch. Hypotheses inform both model lenses AND the Opus agent.
 The Opus agent gets hypotheses as additional context so it can validate or challenge them independently.
 
+### SWARM
+Team-based parallel investigation. 3 independent agents, each with a different lens, each doing local
+investigation AND dispatching its own Squall review. **No Opus agent** — the 3 agents replace Opus.
+
+**The team lead orchestrates only — it does NOT investigate, dispatch, or review code itself.**
+It creates the team, assigns tasks, waits for all agents, then synthesizes their output.
+
+1. Generate `REVIEW_ID` (timestamp-based)
+2. `TeamCreate` with name `squall-review-{REVIEW_ID}`
+3. `TaskCreate` × 3 tasks:
+   - "Security investigation: {REVIEW_ID}" (activeForm: "Investigating security")
+   - "Correctness investigation: {REVIEW_ID}" (activeForm: "Investigating correctness")
+   - "Architecture investigation: {REVIEW_ID}" (activeForm: "Investigating architecture")
+4. Spawn 3 `general-purpose` teammates **in parallel** (single message, 3 `Task` tool calls), each with:
+   - `team_name: "squall-review-{REVIEW_ID}"`
+   - `name: "security"` / `"correctness"` / `"architecture"`
+   - `mode: "bypassPermissions"` — agents must run autonomously, no permission prompts
+   - Lens-specific prompt (see SWARM Agent Prompt Templates below)
+   - Fill `{LENS_SLUG}` as the lowercase lens name (e.g. `security`, `correctness`, `architecture`)
+5. **Skip to Phase 3 (Gather)** — agents handle their own dispatch (Phase 2 is internal to each agent)
+
+**SWARM agent model assignments:**
+
+| Agent | Models | Rationale |
+|-------|--------|-----------|
+| Security | kimi-k2.5, codex, grok | kimi: adversarial edge cases. codex: precision anchor (0 FP). grok: fast cross-function. |
+| Correctness | codex, deepseek-v3.1, gemini | codex: precision. gemini: systems-level bugs. deepseek: fast broad coverage. |
+| Architecture | gemini, codex, qwen-3.5 | gemini: architectural bugs. codex: contract violations. qwen: pattern matching. |
+
+Model overlap across agents is intentional — same model with different lens produces different analysis.
+Cross-agent overlap creates consensus signal (codex flagging the same issue through security AND
+correctness lens = very high confidence).
+
 ## Phase 2: Dispatch
 
-1. **Consult memory** — call `memory` with category "recommend", then "tactic" (patterns already checked in Phase 0)
+**For SWARM**: Skip this phase entirely. Each SWARM agent handles its own dispatch internally
+(calls `listmodels`, `memory`, and `review` with its lens-specific models and system prompts).
+Proceed to Phase 3. The instructions below apply to QUICK, STANDARD, and DEEP only.
+
+1. **Consult memory** — call `memory` with category "recommend", then "tactics" (patterns already checked in Phase 0)
 2. **Call `listmodels`** to get current model names and metadata (speed_tier, precision_tier, strengths, weaknesses)
 3. **Select ensemble using tiered model system:**
 
    ### Tier 1: ALWAYS included (free + high quality)
 
-   These 4 sources run on EVERY review regardless of depth:
+   These 4 sources run on every QUICK/STANDARD/DEEP review (SWARM uses per-agent ensembles instead):
 
    | Source | Why | Backend |
    |--------|-----|---------|
@@ -197,7 +258,7 @@ The Opus agent gets hypotheses as additional context so it can validate or chall
 
 4. **Build per-model lenses** using memory tactics + investigation hypotheses (if DEEP):
 
-   Check `memory` category "tactic" for proven lens + model combos. Fall back to these defaults:
+   Check `memory` category "tactics" for proven lens + model combos. Fall back to these defaults:
 
    | Strength Area | Default Lens |
    |---------------|-------------|
@@ -215,6 +276,23 @@ The Opus agent gets hypotheses as additional context so it can validate or chall
    - DEEP: add `deep: true`, `investigation_context` (string field on the `review` tool — your investigation notes/hypotheses), hypothesis-informed lenses
 
 ## Phase 3: Gather
+
+### SWARM
+
+**Wait for all teammates — do not synthesize alone.** Agents may take 15+ minutes each
+(local investigation + deep review with 600s Squall ceiling). Be patient.
+
+1. Monitor via `TaskList` and incoming `SendMessage` notifications from agents
+2. Wait until all 3 agents have completed their tasks (or an agent appears stuck — no progress
+   for 5+ minutes after claiming its task, which may indicate a tool failure)
+3. **Partial completion**: if an agent fails or stalls, proceed with available output and flag
+   the missing lens: "Architecture agent failed — synthesis covers security + correctness only"
+4. Read completed agent output files from `.squall/reviews/swarm-{REVIEW_ID}-{LENS_SLUG}.md`
+   (where `{LENS_SLUG}` is `security`, `correctness`, or `architecture`)
+5. Send `SendMessage` with `type: "shutdown_request"` to each teammate, then `TeamDelete`
+6. Proceed to Phase 4 (Synthesize → SWARM section)
+
+### QUICK / STANDARD / DEEP
 
 1. **Read the `results_file`** from the review response
 2. **If STANDARD or DEEP**: Check Opus agent output
@@ -264,7 +342,51 @@ Three-way cross-reference — investigation hypotheses, model findings, and Opus
 | Model finding outside hypotheses | MEDIUM (unexpected, worth attention) |
 | Opus + model contradict on hypothesis | FLAG for human judgment |
 
-### Output Format
+### SWARM (3 agents × 3 models each)
+
+Read all completed agent output files. Cross-reference findings across agents:
+
+| Signal | Confidence |
+|--------|-----------|
+| Found by 2+ agents' local investigation | CRITICAL (independent local evidence) |
+| 1 agent local + models in another agent confirm | HIGH |
+| Same model flags it through different lenses | HIGH (e.g. codex via security + correctness) |
+| 1 agent local only | MEDIUM-HIGH (local evidence is credible) |
+| Multiple models within 1 agent | MEDIUM |
+| Single model only | MEDIUM |
+| Agents contradict | FLAG for human judgment |
+
+Group findings by consensus strength, not by agent. The output should unify across lenses:
+
+```
+### Depth: SWARM (score 7): +3 diff size, +2 security, +2 memory patterns
+### Investigation: 3 agents (security, correctness, architecture) × 3 models each
+
+### Cross-Agent Consensus (found by 2+ agents)
+- [critical] Description (agents: security + correctness; models: codex, kimi, gemini)
+  - Security perspective: [detail]
+  - Correctness perspective: [detail]
+
+### Agent-Specific Findings
+#### Security
+- [high] Description (source: local investigation + codex) — trust boundary at file:line
+
+#### Correctness
+- [medium] Description (source: gemini + deepseek-v3.1) — off-by-one at file:line
+
+#### Architecture
+- [medium] Description (source: local investigation) — layering violation
+
+### Contradictions
+- [flag] Security says X, Architecture says Y — needs human judgment
+
+### Coverage Summary
+- Security: 2 local + 4 model findings, agent completed
+- Correctness: 1 local + 3 model findings, agent completed
+- Architecture: agent timed out — findings from partial output only
+```
+
+### Output Format (QUICK / STANDARD / DEEP)
 
 ```
 ### Depth: STANDARD (score 3): +2 auth files, +1 diff size
@@ -346,6 +468,105 @@ OUTPUT FORMAT — use these exact sections:
 Be specific. Cite exact file paths and line numbers. If no real issues, say so briefly.
 ```
 
+## SWARM Agent Prompt Templates
+
+Used for SWARM depth. One prompt per lens, parameterized by `{placeholders}`.
+Each agent loads Squall tools via ToolSearch, investigates locally, then dispatches its own Squall review.
+
+### Generic Template (fill {LENS}, {LENS_SLUG}, {INVESTIGATION_STEPS}, {MODELS})
+
+`{LENS}` is the display name (e.g. "Security"). `{LENS_SLUG}` is the lowercase identifier
+(e.g. `security`, `correctness`, `architecture`) — used in filenames and task matching.
+
+```
+You are the {LENS} investigator in a review swarm.
+Your shore is {LENS} — own it completely.
+
+You operate autonomously. No human gates your work.
+Investigate deep, dispatch to models, write your findings, report back.
+
+Two jobs, one mission:
+1. LOCAL INVESTIGATION — shell, git, tests. Find what static analysis cannot.
+2. SQUALL DISPATCH — 3 external models amplify your {LENS} lens.
+
+## Step 1: Claim your task
+- Call ToolSearch with query "squall" to load Squall MCP tools
+- Call TaskList, find the task with "{LENS}" in its title, then TaskUpdate it to in_progress
+
+## Step 2: Investigate locally
+- Read changed files: {file_list}
+- {INVESTIGATION_STEPS}
+- Form specific hypotheses with file:line references
+- Write investigation notes — these become your system prompts for the models
+
+## Step 3: Dispatch to models
+- Call `listmodels` to verify model names
+- Call `memory` category "tactics" for proven system prompts
+- Call `review` with:
+  - models: {MODELS}
+  - per_model_system_prompts: build from YOUR investigation findings + {LENS} focus
+  - diff: {diff}
+  - file_paths: {file_paths}
+  - working_directory: {working_directory}
+  - deep: true
+  (This call may take 10+ minutes — the Squall ceiling is 600s. Be patient.)
+
+## Step 4: Synthesize & write output
+- Read the results_file from the review response
+- Combine YOUR local findings with model findings
+- Write to: .squall/reviews/swarm-{REVIEW_ID}-{LENS_SLUG}.md
+
+OUTPUT FORMAT:
+## {LENS} Investigation: {REVIEW_ID}
+
+### Local Findings
+#### [severity] Finding title
+- **File**: path/to/file.rs:line
+- **Evidence**: what you found locally (shell, git, tests)
+- **Risk**: why it matters from a {LENS} perspective
+
+### Model Findings
+#### [severity] Finding title
+- **Models agreeing**: [list]
+- **Detail**: what models found
+
+### {LENS} Assessment
+Overall: safe / concerning / critical
+
+## Step 5: Report and complete
+- TaskUpdate your task to completed
+- SendMessage to "team-lead" with a 2-3 sentence summary of your findings
+
+CONSTRAINTS:
+- Do NOT modify source code. Read-only investigation + Squall calls only.
+- Write ONLY to your output file: .squall/reviews/swarm-{REVIEW_ID}-{LENS_SLUG}.md
+- Do NOT read other agents' output files in .squall/reviews/. Your investigation must be independent.
+- Always use non-interactive git flags (e.g. git --no-pager log).
+- Focus on {LENS}-specific issues — other agents cover other lenses.
+- If running tests, scope to changed modules, not the full suite.
+```
+
+### Lens-Specific Investigation Steps
+
+**Security** (`{MODELS}`: kimi-k2.5, codex, grok):
+- Trace all trust boundary crossings in changed code
+- Check input validation and sanitization paths
+- `git blame` on security-critical lines
+- Grep for `unsafe`, `unwrap`, hardcoded secrets, TODO security comments
+- Check if security-relevant tests exist for changed paths
+
+**Correctness** (`{MODELS}`: codex, deepseek-v3.1, gemini):
+- Trace control flow through changed functions, map all branches
+- Run targeted tests (`cargo test module_name`) on changed modules
+- Check error handling completeness (all error paths covered?)
+- Verify changed public APIs still satisfy existing callers (grep for callers)
+
+**Architecture** (`{MODELS}`: gemini, codex, qwen-3.5):
+- Map dependency graph of changed modules (who imports what)
+- Check for API contract changes by diffing public function signatures
+- Grep for performance anti-patterns (allocations in hot loops, clone() chains)
+- `git log --oneline -20` on changed files for refactoring context
+
 ## Ensemble Selection Reference
 
 | Intent | Depth | Tier 1 | Tier 2 (pick 2) | Opus? | Investigation? |
@@ -353,6 +574,7 @@ Be specific. Cite exact file paths and line numbers. If no real issues, say so b
 | Small non-critical change | QUICK | grok only | none | No | No |
 | Normal PR, routine code | STANDARD | gemini + codex + grok | 2 by code type + memory data | Yes (parallel with dispatch) | No |
 | Security, critical infra | DEEP | gemini + codex + grok | 2 by code type + memory data | Yes (parallel with dispatch, gets hypotheses) | Yes (sequential, before dispatch) |
+| Large + security + memory patterns | SWARM | 3 agents × 3 models each | Per-agent (see SWARM tables) | No (agents replace Opus) | Yes (per agent, parallel) |
 
 **Tier 1 is strongly preferred** — gemini and codex are free and high quality, grok is fast and high quality. Always request them. Note: if a Tier 1 model drops below 70% success rate (>=5 samples), Squall's hard gate will exclude it server-side. Check `warnings` and `summary.models_gated` in the response — if Tier 1 models are gated, note this in synthesis.
 **Always call `listmodels` first** — model availability changes. Use `memory` category "recommend" for Tier 2 selection.
@@ -382,12 +604,24 @@ Models with <70% success rate (>=5 samples) are automatically rejected by Squall
 | Always pick the same 3 "proven" models | Include at least 1 model with <5 samples for exploration (cold-start diversity) |
 | Assume infrastructure failures = model quality | Auth/credit failures inflate error rates — check `reason` field, not just `status` |
 | Skip per_model_system_prompts for "weak" models | Lenses transform average models into unique contributors (Kimi: B→A with security lens) |
+| Spawn SWARM for score < 6 | SWARM costs ~3x tokens vs DEEP — reserve for high-stakes changes |
+| Use SWARM without checking team availability | Always check first, degrade to DEEP with notification if unavailable |
+| Silently degrade from SWARM to DEEP | Always notify — high-stakes code getting downgraded review must be visible |
+| Have team lead investigate or dispatch | Team lead orchestrates and synthesizes ONLY — agents own their shores |
+| Let SWARM agents read each other's output files | Each agent must investigate independently for the cross-reference matrix to work |
+| Skip TeamDelete after SWARM | Always clean up — orphan teammates waste resources |
+| Skip memorize after SWARM synthesis | 3x more signal = 3x more to learn from |
+| Synthesize before all agents report back | Wait for all teammates — do not synthesize alone. Patience > premature results |
+| Spawn SWARM agents without bypassPermissions | Agents must run autonomously — permission prompts stall the swarm |
+| Set a short fixed timeout for SWARM agents | Agents call deep review (600s ceiling) — be patient, monitor for stalls instead |
 
 ## Backward Compatibility
 
 - `/squall-review` still works — redirects to this skill at STANDARD depth
 - `/squall-deep-review` still works — redirects to this skill at DEEP depth
-- Explicit depth keywords ("deep review", "quick review") override auto-detection
+- Explicit depth keywords ("deep review", "quick review", "swarm review") override auto-detection
+- SWARM degrades gracefully to DEEP when agent teams are unavailable — no Rust code changes needed
+- SWARM is entirely a skill-layer pattern using existing primitives (TeamCreate, TaskCreate, SendMessage, Squall `review`)
 
 ## Related Skills
 
@@ -398,6 +632,12 @@ Models with <70% success rate (>=5 samples) are automatically rejected by Squall
 ## Session Learnings Archive
 
 Insights captured during skill execution:
+
+### 2026-02-24: SWARM implementation review found 9 issues — placeholder contracts + lifecycle duplication
+**Origin**: 3-model review (gemini, codex, grok) of the SWARM skill diff with lens-specific prompts (runtime-execution, contract-verification, usability).
+**Core insight**: Skill text for multi-agent workflows has a specific failure mode: **lifecycle phase duplication**. Phase 1 had monitoring + partial synthesis that Phase 3 repeated — Claude would get confused about which phase owns completion logic. Fix: Phase 1 = launch only, Phase 3 = all monitoring. Second pattern: **placeholder contracts** — declaring `{LENS_FOCUS}` but using `{LENS_SLUG}`, or using `{lens}` in gather but `{LENS_SLUG}` in the agent template. Every placeholder must have exactly one canonical name and one definition point. Third: "EVERY review" wording is dangerous when adding a new depth that doesn't include a component — always qualify with which depths a statement applies to.
+**Model performance**: Codex found the most issues (8) with highest precision (all actionable). Gemini found 5, including the best fix for availability check (ToolSearch for TeamCreate). Grok provided useful overall assessment (9/10) but fewer unique findings. The contract-verification lens was the most productive — good tactic for skill-file reviews.
+**Harvested** -> 9 fixes applied: removed Phase 1/3 duplication, fixed `{LENS_FOCUS}` → `{LENS_SLUG}`, unified filename tokens, added ToolSearch availability check, fixed "tactic" → "tactics", qualified Tier 1 scope, specified SendMessage shutdown format, added lens-based task matching.
 
 ### 2026-02-23: First self-review found 5 actionable fixes
 **Origin**: Ran unified review on its own implementation (STANDARD depth, score 2)
