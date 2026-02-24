@@ -63,13 +63,17 @@ fn persist_json_contains_required_fields() {
             "gemini",
             b"stdout content here",
             b"stderr content here",
-            0,      // exit_code
-            1234,   // timing_ms
+            0,         // exit_code
+            1234,      // timing_ms
             "success", // parse_status
         )
         .await;
 
-        assert!(result.is_ok(), "persist_cli_output should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "persist_cli_output should succeed: {:?}",
+            result.err()
+        );
         let path = result.unwrap();
 
         let contents = std::fs::read_to_string(&path).unwrap();
@@ -82,7 +86,10 @@ fn persist_json_contains_required_fields() {
         assert!(json.get("timing_ms").is_some(), "JSON missing 'timing_ms'");
         assert!(json.get("model").is_some(), "JSON missing 'model'");
         assert!(json.get("provider").is_some(), "JSON missing 'provider'");
-        assert!(json.get("parse_status").is_some(), "JSON missing 'parse_status'");
+        assert!(
+            json.get("parse_status").is_some(),
+            "JSON missing 'parse_status'"
+        );
 
         // Verify field values
         assert_eq!(json["stdout"], "stdout content here");
@@ -124,7 +131,10 @@ fn persist_json_handles_non_utf8_stdout() {
         let path = result.unwrap();
         let contents = std::fs::read_to_string(&path).unwrap();
         let json: serde_json::Value = serde_json::from_str(&contents).unwrap();
-        assert!(json["stdout"].is_string(), "stdout should be lossy-converted to string");
+        assert!(
+            json["stdout"].is_string(),
+            "stdout should be lossy-converted to string"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     });
@@ -144,7 +154,7 @@ fn persist_json_records_nonzero_exit_code() {
             "gemini",
             b"",
             b"error: something went wrong",
-            1,      // non-zero exit code
+            1, // non-zero exit code
             2000,
             "parse_error: invalid JSON",
         )
@@ -188,8 +198,15 @@ fn persist_creates_raw_directory_if_missing() {
         )
         .await;
 
-        assert!(result.is_ok(), "persist should create directory: {:?}", result.err());
-        assert!(raw_dir.exists(), ".squall/raw/ should be created automatically");
+        assert!(
+            result.is_ok(),
+            "persist should create directory: {:?}",
+            result.err()
+        );
+        assert!(
+            raw_dir.exists(),
+            ".squall/raw/ should be created automatically"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     });
@@ -216,7 +233,10 @@ fn persist_succeeds_when_raw_directory_already_exists() {
         )
         .await;
 
-        assert!(result.is_ok(), "persist should work when dir already exists");
+        assert!(
+            result.is_ok(),
+            "persist should work when dir already exists"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     });
@@ -252,7 +272,10 @@ fn persist_filename_matches_convention() {
         let path_str = path.display().to_string();
 
         // Should end with .json
-        assert!(path_str.ends_with(".json"), "File should end with .json: {path_str}");
+        assert!(
+            path_str.ends_with(".json"),
+            "File should end with .json: {path_str}"
+        );
 
         // Should be inside .squall/raw/
         assert!(
@@ -319,11 +342,7 @@ fn persist_filename_sanitizes_model_with_slashes() {
 
         assert!(result.is_ok());
         let path = result.unwrap();
-        let filename = path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap();
+        let filename = path.file_name().unwrap().to_str().unwrap();
 
         // Filename should NOT contain slashes (except in directory path)
         let name_without_ext = filename.strip_suffix(".json").unwrap();
@@ -357,7 +376,10 @@ fn persist_produces_unique_filenames() {
         .await
         .unwrap();
 
-        assert_ne!(path1, path2, "Two persist calls should produce unique filenames");
+        assert_ne!(
+            path1, path2,
+            "Two persist calls should produce unique filenames"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     });
@@ -391,11 +413,22 @@ fn persist_truncates_long_model_name_in_filename() {
         let long_model = "a".repeat(300);
 
         let result = squall::dispatch::cli::persist_cli_output(
-            &dir, &long_model, "test", b"output", b"", 0, 100, "success",
+            &dir,
+            &long_model,
+            "test",
+            b"output",
+            b"",
+            0,
+            100,
+            "success",
         )
         .await;
 
-        assert!(result.is_ok(), "should handle long model names: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "should handle long model names: {:?}",
+            result.err()
+        );
         let path = result.unwrap();
         let filename = path.file_name().unwrap().to_str().unwrap();
         assert!(
@@ -426,7 +459,14 @@ fn persist_truncates_unicode_model_name_safely() {
         let unicode_model = "中".repeat(200); // 600 bytes
 
         let result = squall::dispatch::cli::persist_cli_output(
-            &dir, &unicode_model, "test", b"output", b"", 0, 100, "success",
+            &dir,
+            &unicode_model,
+            "test",
+            b"output",
+            b"",
+            0,
+            100,
+            "success",
         )
         .await;
 
@@ -517,7 +557,10 @@ async fn persist_fires_on_overflow_when_on_failure() {
             &req,
             "test",
             "bash",
-            &["-c".to_string(), format!("yes | head -c {}", MAX_OUTPUT_BYTES + 1)],
+            &[
+                "-c".to_string(),
+                format!("yes | head -c {}", MAX_OUTPUT_BYTES + 1),
+            ],
             &GeminiParser,
             PersistRawOutput::OnFailure,
         )

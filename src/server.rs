@@ -3,15 +3,13 @@ use std::time::{Duration, Instant};
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{
-    CallToolResult, Implementation, ServerCapabilities, ServerInfo,
-};
-use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler};
+use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerInfo};
+use rmcp::{ErrorData as McpError, ServerHandler, tool, tool_handler, tool_router};
 
 use crate::config::Config;
 use crate::context::{self, GitContextCache};
-use crate::dispatch::registry::Registry;
 use crate::dispatch::ProviderRequest;
+use crate::dispatch::registry::Registry;
 use crate::memory::MemoryStore;
 use crate::response::{PalMetadata, PalToolResponse};
 use crate::review::ReviewExecutor;
@@ -20,7 +18,6 @@ use crate::tools::clink::ClinkRequest;
 use crate::tools::listmodels::{ListModelsResponse, ModelInfo};
 use crate::tools::memory::{FlushRequest, MemorizeRequest, MemoryRequest};
 use crate::tools::review::ReviewRequest;
-
 
 #[derive(Clone)]
 pub struct SquallServer {
@@ -53,7 +50,9 @@ impl SquallServer {
                     store = store.with_global(writer);
                 }
                 None => {
-                    tracing::warn!("global memory: failed to initialize, continuing with local only");
+                    tracing::warn!(
+                        "global memory: failed to initialize, continuing with local only"
+                    );
                 }
             }
         }
@@ -78,8 +77,7 @@ impl SquallServer {
         &self,
         Parameters(req): Parameters<ChatRequest>,
     ) -> Result<CallToolResult, McpError> {
-        context::validate_prompt(&req.prompt)
-            .map_err(|msg| McpError::invalid_params(msg, None))?;
+        context::validate_prompt(&req.prompt).map_err(|msg| McpError::invalid_params(msg, None))?;
         context::validate_temperature(req.temperature)
             .map_err(|msg| McpError::invalid_params(msg, None))?;
 
@@ -200,8 +198,7 @@ impl SquallServer {
         &self,
         Parameters(req): Parameters<ClinkRequest>,
     ) -> Result<CallToolResult, McpError> {
-        context::validate_prompt(&req.prompt)
-            .map_err(|msg| McpError::invalid_params(msg, None))?;
+        context::validate_prompt(&req.prompt).map_err(|msg| McpError::invalid_params(msg, None))?;
         context::validate_temperature(req.temperature)
             .map_err(|msg| McpError::invalid_params(msg, None))?;
 
@@ -222,10 +219,9 @@ impl SquallServer {
             let base_dir = context::validate_working_directory(wd)
                 .await
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-            if let Some(manifest) =
-                context::resolve_file_manifest(file_paths, &base_dir)
-                    .await
-                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?
+            if let Some(manifest) = context::resolve_file_manifest(file_paths, &base_dir)
+                .await
+                .map_err(|e| McpError::invalid_params(e.to_string(), None))?
             {
                 prompt = format!("{manifest}\n\n{prompt}");
             }
@@ -289,8 +285,7 @@ impl SquallServer {
         &self,
         Parameters(req): Parameters<ReviewRequest>,
     ) -> Result<CallToolResult, McpError> {
-        context::validate_prompt(&req.prompt)
-            .map_err(|msg| McpError::invalid_params(msg, None))?;
+        context::validate_prompt(&req.prompt).map_err(|msg| McpError::invalid_params(msg, None))?;
         context::validate_temperature(req.temperature)
             .map_err(|msg| McpError::invalid_params(msg, None))?;
 
@@ -319,14 +314,10 @@ impl SquallServer {
                 .await
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
             let fmt = req.context_format.unwrap_or_default();
-            let file_result = context::resolve_file_context(
-                file_paths,
-                &base_dir,
-                file_budget,
-                fmt,
-            )
-            .await
-            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+            let file_result =
+                context::resolve_file_context(file_paths, &base_dir, file_budget, fmt)
+                    .await
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
             if !file_result.skipped.is_empty() {
                 files_skipped = Some(
                     file_result
@@ -355,8 +346,7 @@ impl SquallServer {
         // Inject diff context (shared budget with file context)
         if let Some(ref diff_text) = req.diff {
             let file_context_used = prompt.len() - req.prompt.len();
-            let diff_budget =
-                context::MAX_FILE_CONTEXT_BYTES.saturating_sub(file_context_used);
+            let diff_budget = context::MAX_FILE_CONTEXT_BYTES.saturating_sub(file_context_used);
             if let Some(wrapped) = context::wrap_diff_context(diff_text, diff_budget) {
                 prompt = format!("{wrapped}\n{prompt}");
             }
@@ -365,14 +355,31 @@ impl SquallServer {
         let executor = ReviewExecutor::new(self.registry.clone());
         let prompt_len = prompt.len();
         let wd_for_memory = working_directory.clone();
-        let review_response = executor.execute(&req, prompt, &self.memory, working_directory, files_skipped, files_errors, Some(&self.review_config)).await;
+        let review_response = executor
+            .execute(
+                &req,
+                prompt,
+                &self.memory,
+                working_directory,
+                files_skipped,
+                files_errors,
+                Some(&self.review_config),
+            )
+            .await;
 
         // Log model metrics to memory (non-blocking, fire-and-forget)
         let memory = self.memory.clone();
         let results_for_memory = review_response.results.clone();
         let id_to_key = self.registry.model_id_to_key();
         tokio::spawn(async move {
-            memory.log_model_metrics(&results_for_memory, prompt_len, Some(&id_to_key), wd_for_memory.as_deref()).await;
+            memory
+                .log_model_metrics(
+                    &results_for_memory,
+                    prompt_len,
+                    Some(&id_to_key),
+                    wd_for_memory.as_deref(),
+                )
+                .await;
         });
 
         // Serialize the full review response as the MCP content

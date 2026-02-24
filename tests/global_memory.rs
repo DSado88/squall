@@ -15,9 +15,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use squall::memory::global::GlobalWriter;
-use squall::memory::schema::{self, ModelEvent, CURRENT_VERSION};
 use squall::memory::MemoryStore;
+use squall::memory::global::GlobalWriter;
+use squall::memory::schema::{self, CURRENT_VERSION, ModelEvent};
 use squall::tools::review::{ModelStatus, ReviewModelResult};
 
 // ===========================================================================
@@ -129,9 +129,11 @@ fn schema_fresh_db_creates_all_tables() {
     assert_eq!(version, CURRENT_VERSION);
 
     // Verify all tables exist by querying them
-    conn.execute_batch("SELECT COUNT(*) FROM schema_version").unwrap();
+    conn.execute_batch("SELECT COUNT(*) FROM schema_version")
+        .unwrap();
     conn.execute_batch("SELECT COUNT(*) FROM projects").unwrap();
-    conn.execute_batch("SELECT COUNT(*) FROM model_events").unwrap();
+    conn.execute_batch("SELECT COUNT(*) FROM model_events")
+        .unwrap();
 
     // Verify model_events columns match the Parquet schema
     let mut stmt = conn
@@ -160,11 +162,12 @@ fn schema_migration_idempotent() {
     assert_eq!(v1, CURRENT_VERSION);
 
     // Only one version record should exist
-    let mut stmt = conn
-        .prepare("SELECT COUNT(*) FROM schema_version")
-        .unwrap();
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM schema_version").unwrap();
     let count: i32 = stmt.query_row([], |row| row.get(0)).unwrap();
-    assert_eq!(count, 1, "Re-running migrations should not add duplicate version rows");
+    assert_eq!(
+        count, 1,
+        "Re-running migrations should not add duplicate version rows"
+    );
 }
 
 /// schema_version table should track the applied version and a recent timestamp.
@@ -244,7 +247,13 @@ fn parquet_multiple_writes_all_queryable() {
     // Write 3 batches with different project IDs
     for i in 0..3 {
         let results = vec![make_result("grok", 20000 + i * 5000, ModelStatus::Success)];
-        writer.log_events(&results, 1000, &format!("test:proj-{i}"), Some("/tmp"), None);
+        writer.log_events(
+            &results,
+            1000,
+            &format!("test:proj-{i}"),
+            Some("/tmp"),
+            None,
+        );
         // Small sleep to ensure distinct filenames (nanosecond timestamps)
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
@@ -257,12 +266,13 @@ fn parquet_multiple_writes_all_queryable() {
 
     let conn = duckdb::Connection::open_in_memory().unwrap();
     let mut stmt = conn
-        .prepare(&format!(
-            "SELECT COUNT(*) FROM read_parquet('{glob_str}')"
-        ))
+        .prepare(&format!("SELECT COUNT(*) FROM read_parquet('{glob_str}')"))
         .unwrap();
     let count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
-    assert_eq!(count, 3, "3 log_events calls should produce 3 rows across parquet files");
+    assert_eq!(
+        count, 3,
+        "3 log_events calls should produce 3 rows across parquet files"
+    );
 
     drop(writer);
     let _ = std::fs::remove_dir_all(&dir);
@@ -287,7 +297,13 @@ fn actor_write_merge_query_e2e() {
             make_result("grok", 25000 + i * 100, ModelStatus::Success),
             make_result("gemini", 50000 + i * 100, ModelStatus::Success),
         ];
-        writer.log_events(&results, 1000, &format!("test:proj-{i}"), Some("/tmp"), None);
+        writer.log_events(
+            &results,
+            1000,
+            &format!("test:proj-{i}"),
+            Some("/tmp"),
+            None,
+        );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
@@ -299,12 +315,21 @@ fn actor_write_merge_query_e2e() {
 
     // Query recommendations
     let recs = await_query(&writer, None).expect("query should succeed");
-    assert!(!recs.models.is_empty(), "should have recommendations after merge");
+    assert!(
+        !recs.models.is_empty(),
+        "should have recommendations after merge"
+    );
 
     // Both models should appear
     let model_keys: Vec<&str> = recs.models.iter().map(|m| m.model_key.as_str()).collect();
-    assert!(model_keys.contains(&"grok"), "grok should be in recommendations");
-    assert!(model_keys.contains(&"gemini"), "gemini should be in recommendations");
+    assert!(
+        model_keys.contains(&"grok"),
+        "grok should be in recommendations"
+    );
+    assert!(
+        model_keys.contains(&"gemini"),
+        "gemini should be in recommendations"
+    );
 
     // Success rate should be 1.0 (all successes)
     for m in &recs.models {
@@ -340,11 +365,15 @@ fn actor_drop_triggers_clean_shutdown() {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // After drop, DuckDB file should exist (created during worker startup)
-    assert!(db_path.exists(), "DuckDB file should exist after writer drop");
+    assert!(
+        db_path.exists(),
+        "DuckDB file should exist after writer drop"
+    );
 
     // Verify the DuckDB file has the schema (tables created during worker startup)
     let conn = duckdb::Connection::open(&db_path).unwrap();
-    conn.execute_batch("SELECT COUNT(*) FROM model_events").unwrap();
+    conn.execute_batch("SELECT COUNT(*) FROM model_events")
+        .unwrap();
     conn.execute_batch("SELECT COUNT(*) FROM projects").unwrap();
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -361,7 +390,13 @@ fn actor_query_excludes_project() {
     // Log events for "alpha" model from projects 0..5 (different latencies for unique UIDs)
     for i in 0..6 {
         let results_a = vec![make_result("alpha", 25000 + i * 100, ModelStatus::Success)];
-        writer.log_events(&results_a, 1000, &format!("test:proj-{i}"), Some("/tmp"), None);
+        writer.log_events(
+            &results_a,
+            1000,
+            &format!("test:proj-{i}"),
+            Some("/tmp"),
+            None,
+        );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
@@ -377,8 +412,7 @@ fn actor_query_excludes_project() {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // Query excluding proj-0 — alpha should still have data from proj-1..5
-    let recs = await_query(&writer, Some("test:proj-0"))
-        .expect("query should succeed");
+    let recs = await_query(&writer, Some("test:proj-0")).expect("query should succeed");
     let model_keys: Vec<&str> = recs.models.iter().map(|m| m.model_key.as_str()).collect();
     assert!(
         model_keys.contains(&"alpha"),
@@ -420,7 +454,10 @@ fn merge_does_not_crash_worker() {
                 .unwrap_or(false)
         })
         .count();
-    assert!(parquet_count_before >= 1, "should have parquet file(s) before merge");
+    assert!(
+        parquet_count_before >= 1,
+        "should have parquet file(s) before merge"
+    );
 
     // Trigger merge — should not crash even if FK constraint prevents ingestion
     writer.trigger_merge();
@@ -455,7 +492,10 @@ async fn composite_global_none_is_local_only() {
     let content = tokio::fs::read_to_string(local_dir.join("models.md"))
         .await
         .unwrap();
-    assert!(content.contains("grok"), "Local store should work: {content}");
+    assert!(
+        content.contains("grok"),
+        "Local store should work: {content}"
+    );
     assert!(content.contains("22.0s"), "Should have latency: {content}");
 
     // Verify read_memory still works
@@ -498,7 +538,10 @@ async fn composite_log_metrics_writes_both_stores() {
     let content = tokio::fs::read_to_string(local_dir.join("models.md"))
         .await
         .unwrap();
-    assert!(content.contains("grok"), "Local should be written: {content}");
+    assert!(
+        content.contains("grok"),
+        "Local should be written: {content}"
+    );
 
     // Verify global parquet was written
     let parquet_count: usize = std::fs::read_dir(&events_dir)
@@ -542,7 +585,10 @@ async fn composite_no_working_dir_skips_global() {
     let content = tokio::fs::read_to_string(local_dir.join("models.md"))
         .await
         .unwrap();
-    assert!(content.contains("grok"), "Local should be written: {content}");
+    assert!(
+        content.contains("grok"),
+        "Local should be written: {content}"
+    );
 
     // Global parquet should NOT be written (no working_directory)
     let parquet_count: usize = std::fs::read_dir(&events_dir)
@@ -647,7 +693,10 @@ async fn project_id_different_dirs_differ() {
     let dir_b = test_dir("project-id-b");
     let id_a = squall::context::compute_project_id(&dir_a).await;
     let id_b = squall::context::compute_project_id(&dir_b).await;
-    assert_ne!(id_a, id_b, "Different directories should produce different IDs");
+    assert_ne!(
+        id_a, id_b,
+        "Different directories should produce different IDs"
+    );
     let _ = std::fs::remove_dir_all(&dir_a);
     let _ = std::fs::remove_dir_all(&dir_b);
 }
@@ -669,8 +718,10 @@ async fn project_id_git_repo_uses_git_prefix() {
 #[test]
 fn project_id_normalize_preserves_path_case() {
     let normalized = squall::context::normalize_git_url("https://GitHub.com/User/Repo.git");
-    assert_eq!(normalized, "github.com/User/Repo",
-        "Path case must be preserved (only host lowercased)");
+    assert_eq!(
+        normalized, "github.com/User/Repo",
+        "Path case must be preserved (only host lowercased)"
+    );
 }
 
 // ===========================================================================
@@ -699,7 +750,10 @@ async fn read_composition_local_only_no_duckdb() {
         .unwrap();
 
     assert!(rec.contains("grok"), "Should show local grok data: {rec}");
-    assert!(rec.contains("gemini"), "Should show local gemini data: {rec}");
+    assert!(
+        rec.contains("gemini"),
+        "Should show local gemini data: {rec}"
+    );
     assert!(
         rec.contains("Model Recommendations"),
         "Should have recommendations header: {rec}"
@@ -847,11 +901,12 @@ fn model_event_duckdb_dedup() {
     .unwrap();
 
     // Should have exactly 1 row
-    let mut stmt = conn
-        .prepare("SELECT COUNT(*) FROM model_events")
-        .unwrap();
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM model_events").unwrap();
     let count: i32 = stmt.query_row([], |row| row.get(0)).unwrap();
-    assert_eq!(count, 1, "Duplicate event_uid should be ignored via ON CONFLICT");
+    assert_eq!(
+        count, 1,
+        "Duplicate event_uid should be ignored via ON CONFLICT"
+    );
 }
 
 // ===========================================================================
@@ -945,7 +1000,11 @@ fn infra_failures_excluded_from_quality_stats() {
     for i in 0..6u64 {
         let project = format!("test:proj-{i}");
         // 1 success per project
-        let success = vec![make_result("flaky-model", 25000 + i * 100, ModelStatus::Success)];
+        let success = vec![make_result(
+            "flaky-model",
+            25000 + i * 100,
+            ModelStatus::Success,
+        )];
         writer.log_events(&success, 1000, &project, Some("/tmp"), None);
         std::thread::sleep(std::time::Duration::from_millis(20));
 
@@ -997,14 +1056,20 @@ fn query_recv_has_timeout_semantics() {
     let dir = test_dir("recv-timeout");
     let db_path = dir.join("global.duckdb");
 
-    let writer = GlobalWriter::new(db_path)
-        .expect("open should succeed");
+    let writer = GlobalWriter::new(db_path).expect("open should succeed");
 
     // Normal query should succeed within bounded time (worker is alive)
     let start = std::time::Instant::now();
     let result = await_query(&writer, None);
-    assert!(result.is_ok(), "query on live worker should succeed: {:?}", result);
-    assert!(start.elapsed().as_secs() < 15, "query should complete within bounded time");
+    assert!(
+        result.is_ok(),
+        "query on live worker should succeed: {:?}",
+        result
+    );
+    assert!(
+        start.elapsed().as_secs() < 15,
+        "query should complete within bounded time"
+    );
 
     drop(writer);
     let _ = std::fs::remove_dir_all(&dir);
@@ -1024,8 +1089,7 @@ fn sql_path_with_single_quote_survives_query() {
     std::fs::create_dir_all(&quoted_dir).unwrap();
     let db_path = quoted_dir.join("global.duckdb");
 
-    let writer = GlobalWriter::new(db_path)
-        .expect("open with quoted path should succeed");
+    let writer = GlobalWriter::new(db_path).expect("open with quoted path should succeed");
 
     // Write events to create parquet files in the quoted-path events dir
     writer.log_events(
@@ -1109,8 +1173,7 @@ async fn compose_excludes_current_project_from_global() {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // Build CompositeMemoryStore with cached project_id = "test:proj-a"
-    let store = MemoryStore::with_base_dir(local_dir)
-        .with_global(writer);
+    let store = MemoryStore::with_base_dir(local_dir).with_global(writer);
     store.set_project_id("test:proj-a".to_string());
 
     // Read recommendations — global should exclude proj-a
@@ -1267,7 +1330,11 @@ fn bootstrap_ingests_old_new_and_malformed_formats() {
     );
 
     // Check normalization: old "grok-4-1-fast-reasoning" should map to "grok"
-    let grok_count = rows.iter().find(|(k, _)| k == "grok").map(|(_, c)| *c).unwrap_or(0);
+    let grok_count = rows
+        .iter()
+        .find(|(k, _)| k == "grok")
+        .map(|(_, c)| *c)
+        .unwrap_or(0);
     assert!(
         grok_count >= 2,
         "expected at least 2 grok events (normalized), got {grok_count}: {rows:?}"
@@ -1301,7 +1368,9 @@ fn bootstrap_ingests_old_new_and_malformed_formats() {
 
     // Verify partial flag was parsed correctly for kimi-k2.5 new-format line
     let mut stmt = conn
-        .prepare("SELECT partial FROM model_events WHERE model_key = 'kimi-k2.5' AND partial = true")
+        .prepare(
+            "SELECT partial FROM model_events WHERE model_key = 'kimi-k2.5' AND partial = true",
+        )
         .unwrap();
     let partial_count: usize = stmt.query_map([], |_| Ok(())).unwrap().count();
     assert_eq!(partial_count, 1, "kimi-k2.5 should have 1 partial event");
@@ -1353,9 +1422,7 @@ fn bootstrap_is_idempotent() {
     drop(writer);
 
     let conn = duckdb::Connection::open(&db_path).unwrap();
-    let mut stmt = conn
-        .prepare("SELECT COUNT(*) FROM model_events")
-        .unwrap();
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM model_events").unwrap();
     let count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
     assert_eq!(count, 2, "should have exactly 2 events, not duplicates");
 
@@ -1383,18 +1450,12 @@ fn bootstrap_skips_empty_models_md() {
     std::fs::write(&models_md_path, content).unwrap();
 
     let writer = GlobalWriter::new(db_path.clone()).expect("writer created");
-    writer.send_bootstrap(
-        models_md_path,
-        "git:empty-test".to_string(),
-        HashMap::new(),
-    );
+    writer.send_bootstrap(models_md_path, "git:empty-test".to_string(), HashMap::new());
     std::thread::sleep(std::time::Duration::from_secs(1));
     drop(writer);
 
     let conn = duckdb::Connection::open(&db_path).unwrap();
-    let mut stmt = conn
-        .prepare("SELECT COUNT(*) FROM model_events")
-        .unwrap();
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM model_events").unwrap();
     let count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
     assert_eq!(count, 0, "empty models.md should produce no events");
 
@@ -1418,9 +1479,7 @@ fn bootstrap_handles_missing_file() {
 
     // Should not panic, DB should be empty
     let conn = duckdb::Connection::open(&db_path).unwrap();
-    let mut stmt = conn
-        .prepare("SELECT COUNT(*) FROM model_events")
-        .unwrap();
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM model_events").unwrap();
     let count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
     assert_eq!(count, 0);
 

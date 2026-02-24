@@ -104,7 +104,10 @@ fn review_response_serializes_to_json() {
     assert!(json.contains("\"status\":\"success\""));
     assert!(json.contains("\"model\":\"grok\""));
     assert!(json.contains("\"results_file\""));
-    assert!(!json.contains("persist_error"), "None persist_error should be omitted");
+    assert!(
+        !json.contains("persist_error"),
+        "None persist_error should be omitted"
+    );
 }
 
 #[test]
@@ -133,9 +136,15 @@ fn review_response_omits_none_fields() {
 
     let json = serde_json::to_string(&resp).unwrap();
     // response field should be omitted (not "response":null)
-    assert!(!json.contains("\"response\":null"), "None fields should be skipped: {json}");
+    assert!(
+        !json.contains("\"response\":null"),
+        "None fields should be skipped: {json}"
+    );
     // results_file should be omitted
-    assert!(!json.contains("\"results_file\":null"), "None fields should be skipped: {json}");
+    assert!(
+        !json.contains("\"results_file\":null"),
+        "None fields should be skipped: {json}"
+    );
 }
 
 #[test]
@@ -190,7 +199,10 @@ fn review_response_omits_files_skipped_when_none() {
         summary: ReviewSummary::default(),
     };
     let json = serde_json::to_string(&resp).unwrap();
-    assert!(!json.contains("files_skipped"), "None files_skipped should be omitted: {json}");
+    assert!(
+        !json.contains("files_skipped"),
+        "None files_skipped should be omitted: {json}"
+    );
 }
 
 #[test]
@@ -232,7 +244,17 @@ async fn executor_unknown_models_go_to_not_started() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     assert!(resp.results.is_empty(), "No results for unknown models");
     assert_eq!(resp.not_started, vec!["nonexistent-model"]);
 }
@@ -262,7 +284,10 @@ async fn executor_none_models_uses_all_configured() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -284,7 +309,17 @@ async fn executor_none_models_uses_all_configured() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     // Should have tried test-model (and failed since the URL is bogus)
     assert_eq!(resp.results.len(), 1);
     assert_eq!(resp.results[0].model, "test-model");
@@ -318,7 +353,10 @@ async fn executor_cutoff_aborts_slow_models() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -341,7 +379,17 @@ async fn executor_cutoff_aborts_slow_models() {
     };
 
     let start = Instant::now();
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     let elapsed = start.elapsed();
 
     // Should complete within ~2s cutoff + 3s cooperative grace + overhead, not hang forever
@@ -380,7 +428,10 @@ async fn executor_fast_models_complete_before_cutoff() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -403,7 +454,17 @@ async fn executor_fast_models_complete_before_cutoff() {
     };
 
     let start = Instant::now();
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     let elapsed = start.elapsed();
 
     // Should complete quickly (connection refused), NOT wait 60s for cutoff
@@ -458,7 +519,10 @@ async fn executor_mixed_fast_and_slow() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -481,7 +545,17 @@ async fn executor_mixed_fast_and_slow() {
     };
 
     let start = Instant::now();
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     let elapsed = start.elapsed();
 
     // Should take ~2s cutoff + 3s cooperative grace + overhead
@@ -526,7 +600,17 @@ async fn executor_persists_results_to_disk() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
 
     // Should have a results_file path
     assert!(
@@ -608,8 +692,14 @@ fn server_has_review_tool() {
 #[test]
 fn max_timeout_constant_is_reasonable() {
     let max = squall::review::MAX_TIMEOUT_SECS;
-    assert!(max <= 600, "MAX_TIMEOUT_SECS should not exceed 600, got {max}");
-    assert!(max >= 60, "MAX_TIMEOUT_SECS should be at least 60, got {max}");
+    assert!(
+        max <= 600,
+        "MAX_TIMEOUT_SECS should not exceed 600, got {max}"
+    );
+    assert!(
+        max >= 60,
+        "MAX_TIMEOUT_SECS should be at least 60, got {max}"
+    );
 }
 
 #[tokio::test]
@@ -641,7 +731,17 @@ async fn executor_clamps_huge_timeout() {
     };
 
     // Should not panic — timeout is clamped internally
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     assert_eq!(
         resp.cutoff_seconds,
         squall::review::MAX_TIMEOUT_SECS,
@@ -674,7 +774,10 @@ async fn executor_deduplicates_model_ids() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -696,7 +799,17 @@ async fn executor_deduplicates_model_ids() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
 
     // Should produce exactly 1 result, not 2
     assert_eq!(
@@ -736,7 +849,10 @@ async fn executor_caps_all_configured_models() {
             },
         );
     }
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -759,7 +875,17 @@ async fn executor_caps_all_configured_models() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     let total = resp.results.len() + resp.not_started.len();
 
     // RED: None branch doesn't apply .take(MAX_MODELS), so all 25 models run
@@ -804,7 +930,17 @@ async fn persist_filename_includes_pid() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     let path = resp.results_file.expect("should persist results");
     let pid = std::process::id().to_string();
 
@@ -823,9 +959,10 @@ async fn persist_filename_includes_pid() {
 
 #[test]
 fn per_model_system_prompt_overrides_shared() {
-    let per_model = Some(HashMap::from([
-        ("model-a".to_string(), "You are a security reviewer".to_string()),
-    ]));
+    let per_model = Some(HashMap::from([(
+        "model-a".to_string(),
+        "You are a security reviewer".to_string(),
+    )]));
     let shared = Some("You are a code reviewer".to_string());
 
     let result = resolve_system_prompt(&per_model, "model-a", &shared);
@@ -838,9 +975,10 @@ fn per_model_system_prompt_overrides_shared() {
 
 #[test]
 fn per_model_system_prompt_falls_back_to_shared() {
-    let per_model = Some(HashMap::from([
-        ("model-a".to_string(), "You are a security reviewer".to_string()),
-    ]));
+    let per_model = Some(HashMap::from([(
+        "model-a".to_string(),
+        "You are a security reviewer".to_string(),
+    )]));
     let shared = Some("You are a code reviewer".to_string());
 
     let result = resolve_system_prompt(&per_model, "model-b", &shared);
@@ -860,9 +998,7 @@ fn per_model_both_none_yields_none() {
 #[test]
 fn per_model_empty_string_overrides() {
     // Intentional: explicit empty string means "no system prompt for this model"
-    let per_model = Some(HashMap::from([
-        ("model-a".to_string(), "".to_string()),
-    ]));
+    let per_model = Some(HashMap::from([("model-a".to_string(), "".to_string())]));
     let shared = Some("You are a code reviewer".to_string());
 
     let result = resolve_system_prompt(&per_model, "model-a", &shared);
@@ -897,7 +1033,10 @@ async fn executor_with_per_model_system_prompts() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -910,9 +1049,10 @@ async fn executor_with_per_model_system_prompts() {
         file_paths: None,
         working_directory: None,
         diff: None,
-        per_model_system_prompts: Some(HashMap::from([
-            ("model-a".to_string(), "You are a security expert".to_string()),
-        ])),
+        per_model_system_prompts: Some(HashMap::from([(
+            "model-a".to_string(),
+            "You are a security expert".to_string(),
+        )])),
         per_model_timeout_secs: None,
         deep: None,
         max_tokens: None,
@@ -921,10 +1061,24 @@ async fn executor_with_per_model_system_prompts() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     // Model will fail (fake endpoint), but executor should not panic
     assert_eq!(resp.results.len(), 1, "Should have one result");
-    assert_eq!(resp.results[0].status, ModelStatus::Error, "Should error on fake endpoint");
+    assert_eq!(
+        resp.results[0].status,
+        ModelStatus::Error,
+        "Should error on fake endpoint"
+    );
 }
 
 // ===========================================================================
@@ -1047,7 +1201,10 @@ async fn deep_mode_executor_uses_effective_timeout() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -1069,7 +1226,17 @@ async fn deep_mode_executor_uses_effective_timeout() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
 
     // RED: Currently executor uses req.timeout_secs() which returns 180 (ignoring deep).
     // GREEN: executor should use req.effective_timeout_secs() → 600.
@@ -1122,7 +1289,10 @@ async fn per_model_timeout_does_not_extend_global_cutoff() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -1148,7 +1318,17 @@ async fn per_model_timeout_does_not_extend_global_cutoff() {
     };
 
     let start = Instant::now();
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     let elapsed = start.elapsed();
 
     // CRITICAL: Global cutoff at 3s should NOT be extended by per-model 600s.
@@ -1205,7 +1385,10 @@ async fn warnings_surface_unknown_per_model_system_prompt_keys() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -1230,9 +1413,21 @@ async fn warnings_surface_unknown_per_model_system_prompt_keys() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     assert!(
-        resp.warnings.iter().any(|w| w.contains("per_model_system_prompts") && w.contains("typo-model")),
+        resp.warnings
+            .iter()
+            .any(|w| w.contains("per_model_system_prompts") && w.contains("typo-model")),
         "Should warn about unknown per_model_system_prompts key. Warnings: {:?}",
         resp.warnings,
     );
@@ -1262,7 +1457,10 @@ async fn warnings_surface_unknown_per_model_timeout_keys() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -1287,9 +1485,21 @@ async fn warnings_surface_unknown_per_model_timeout_keys() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     assert!(
-        resp.warnings.iter().any(|w| w.contains("per_model_timeout_secs") && w.contains("ghost-model")),
+        resp.warnings
+            .iter()
+            .any(|w| w.contains("per_model_timeout_secs") && w.contains("ghost-model")),
         "Should warn about unknown per_model_timeout_secs key. Warnings: {:?}",
         resp.warnings,
     );
@@ -1331,7 +1541,17 @@ async fn warnings_surface_max_models_truncation() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     assert!(
         resp.warnings.iter().any(|w| w.contains("Dropped")),
         "Should warn about MAX_MODELS truncation. Warnings: {:?}",
@@ -1370,7 +1590,10 @@ async fn summary_counts_match_results() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -1392,7 +1615,17 @@ async fn summary_counts_match_results() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     let s = &resp.summary;
 
     assert_eq!(s.models_requested, 2, "2 models requested (post-dedup)");
@@ -1430,13 +1663,20 @@ async fn summary_buckets_reconcile() {
             },
         );
     }
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
     let req = ReviewRequest {
         prompt: "hello".to_string(),
-        models: Some(vec!["model-a".to_string(), "model-b".to_string(), "unknown".to_string()]),
+        models: Some(vec![
+            "model-a".to_string(),
+            "model-b".to_string(),
+            "unknown".to_string(),
+        ]),
         timeout_secs: Some(5),
         system_prompt: None,
         temperature: None,
@@ -1452,12 +1692,27 @@ async fn summary_buckets_reconcile() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     let s = &resp.summary;
 
     // Invariant: gated + succeeded + failed + cutoff + partial + not_started == requested
     // (requested is pre-gate, post-dedup count)
-    let total = s.models_gated + s.models_succeeded + s.models_failed + s.models_cutoff + s.models_partial + s.models_not_started;
+    let total = s.models_gated
+        + s.models_succeeded
+        + s.models_failed
+        + s.models_cutoff
+        + s.models_partial
+        + s.models_not_started;
     assert_eq!(
         total, s.models_requested,
         "Summary buckets must reconcile: {s:?}"
@@ -1495,7 +1750,17 @@ async fn investigation_context_persisted() {
         investigation_context: Some("Found potential race condition in auth flow".to_string()),
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     let path = resp.results_file.expect("should persist results");
 
     let content = tokio::fs::read_to_string(&path).await.unwrap();
@@ -1542,11 +1807,23 @@ async fn investigation_context_clamped() {
         investigation_context: Some(big_context),
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
 
     // Should have a truncation warning
     assert!(
-        resp.warnings.iter().any(|w| w.contains("investigation_context was truncated")),
+        resp.warnings
+            .iter()
+            .any(|w| w.contains("investigation_context was truncated")),
         "Should warn about clamped investigation_context. Warnings: {:?}",
         resp.warnings,
     );
@@ -1602,10 +1879,22 @@ async fn investigation_context_clamped_utf8_boundary() {
     };
 
     // This should NOT panic (previously would on &ctx[..MAX])
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
 
     assert!(
-        resp.warnings.iter().any(|w| w.contains("investigation_context was truncated")),
+        resp.warnings
+            .iter()
+            .any(|w| w.contains("investigation_context was truncated")),
         "Should warn about clamped investigation_context. Warnings: {:?}",
         resp.warnings,
     );
@@ -1616,8 +1905,16 @@ async fn investigation_context_clamped_utf8_boundary() {
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         let ctx = parsed["investigation_context"].as_str().unwrap();
         // Should be truncated to the char boundary before 32768 (32766 in this case)
-        assert!(ctx.len() <= max, "Context should be <= 32KB, got {}", ctx.len());
-        assert!(ctx.len() >= max - 4, "Should truncate near the boundary, got {}", ctx.len());
+        assert!(
+            ctx.len() <= max,
+            "Context should be <= 32KB, got {}",
+            ctx.len()
+        );
+        assert!(
+            ctx.len() >= max - 4,
+            "Should truncate near the boundary, got {}",
+            ctx.len()
+        );
         let _ = tokio::fs::remove_file(path).await;
     }
 }
@@ -1682,7 +1979,10 @@ async fn persisted_json_contains_files_skipped() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -1705,7 +2005,17 @@ async fn persisted_json_contains_files_skipped() {
     };
 
     let skipped = Some(vec!["big_file.rs (50000B)".to_string()]);
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, skipped, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            skipped,
+            None,
+            None,
+        )
+        .await;
 
     // Verify persisted file contains files_skipped (previously lost because
     // server.rs set it AFTER execute, but persist ran INSIDE execute).
@@ -1713,12 +2023,14 @@ async fn persisted_json_contains_files_skipped() {
         let content = tokio::fs::read_to_string(path).await.unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert!(
-            parsed.get("files_skipped").is_some()
-                && !parsed["files_skipped"].is_null(),
+            parsed.get("files_skipped").is_some() && !parsed["files_skipped"].is_null(),
             "Persisted JSON should contain files_skipped, but it's missing. \
              This proves the bug: persist runs before server.rs sets files_skipped. \
              Persisted: {}",
-            parsed.get("files_skipped").map(|v| v.to_string()).unwrap_or("ABSENT".into()),
+            parsed
+                .get("files_skipped")
+                .map(|v| v.to_string())
+                .unwrap_or("ABSENT".into()),
         );
         let _ = tokio::fs::remove_file(path).await;
     }
@@ -1764,11 +2076,23 @@ async fn truncation_warning_reports_actual_boundary() {
         investigation_context: Some(big_context.clone()),
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
 
     // The warning should mention the ACTUAL retained byte count (32766),
     // not the MAX (32768).
-    let warning = resp.warnings.iter()
+    let warning = resp
+        .warnings
+        .iter()
         .find(|w| w.contains("investigation_context was truncated"))
         .expect("Should have truncation warning");
     assert!(
@@ -1831,7 +2155,10 @@ async fn zero_per_model_timeout_warns() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -1845,9 +2172,7 @@ async fn zero_per_model_timeout_warns() {
         working_directory: None,
         diff: None,
         per_model_system_prompts: None,
-        per_model_timeout_secs: Some(HashMap::from([
-            ("test-model".to_string(), 0u64),
-        ])),
+        per_model_timeout_secs: Some(HashMap::from([("test-model".to_string(), 0u64)])),
         deep: None,
         max_tokens: None,
         reasoning_effort: None,
@@ -1855,12 +2180,24 @@ async fn zero_per_model_timeout_warns() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
 
     // A per_model_timeout of 0 should surface a warning — silently timing out
     // with Duration::from_secs(0) is never the caller's intent.
     assert!(
-        resp.warnings.iter().any(|w| w.contains("timeout") && w.contains("0")),
+        resp.warnings
+            .iter()
+            .any(|w| w.contains("timeout") && w.contains("0")),
         "Should warn about zero per_model_timeout_secs. Warnings: {:?}",
         resp.warnings,
     );
@@ -1894,7 +2231,10 @@ async fn persisted_json_contains_files_errors() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -1920,7 +2260,17 @@ async fn persisted_json_contains_files_errors() {
         "nonexistent.rs: No such file or directory".to_string(),
         "secret.key: Permission denied".to_string(),
     ]);
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, file_errors, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            file_errors,
+            None,
+        )
+        .await;
 
     // Verify files_errors field is present and correct in serialized JSON.
     let json = serde_json::to_string(&resp).unwrap();

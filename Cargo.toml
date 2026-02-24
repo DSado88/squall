@@ -28,5 +28,9 @@ hex = { version = "0.4", optional = true }
 default = ["global-memory"]
 global-memory = ["duckdb", "sha2", "hex"]
 
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+too_many_arguments = "allow"
+
 [dev-dependencies]
 tokio-test = "0.4"

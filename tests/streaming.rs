@@ -1,15 +1,15 @@
 //! Tests for SSE streaming HTTP dispatch and cooperative review cancellation.
 
+use squall::dispatch::ProviderRequest;
 use squall::dispatch::http::HttpDispatch;
 use squall::dispatch::registry::ApiFormat;
-use squall::dispatch::ProviderRequest;
 use squall::error::SquallError;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-use squall::dispatch::http::{first_byte_timeout_for, stall_timeout_for, HEADERS_TIMEOUT};
+use squall::dispatch::http::{HEADERS_TIMEOUT, first_byte_timeout_for, stall_timeout_for};
 
 /// Helper: bind a TCP listener on localhost and return (listener, port).
 async fn mock_listener() -> (TcpListener, u16) {
@@ -20,16 +20,12 @@ async fn mock_listener() -> (TcpListener, u16) {
 
 /// Helper: format an SSE data event from a content string.
 fn sse_chunk(content: &str) -> String {
-    format!(
-        "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{content}\"}}}}]}}\n\n"
-    )
+    format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{content}\"}}}}]}}\n\n")
 }
 
 /// Helper: format an SSE data event with reasoning_content.
 fn sse_reasoning_chunk(reasoning: &str) -> String {
-    format!(
-        "data: {{\"choices\":[{{\"delta\":{{\"reasoning_content\":\"{reasoning}\"}}}}]}}\n\n"
-    )
+    format!("data: {{\"choices\":[{{\"delta\":{{\"reasoning_content\":\"{reasoning}\"}}}}]}}\n\n")
 }
 
 const SSE_HEADERS: &[u8] = b"HTTP/1.1 200 OK\r\n\
@@ -82,8 +78,14 @@ async fn streaming_complete_response() {
         let _ = socket.read(&mut buf).await;
 
         socket.write_all(SSE_HEADERS).await.unwrap();
-        socket.write_all(sse_chunk("Hello ").as_bytes()).await.unwrap();
-        socket.write_all(sse_chunk("world!").as_bytes()).await.unwrap();
+        socket
+            .write_all(sse_chunk("Hello ").as_bytes())
+            .await
+            .unwrap();
+        socket
+            .write_all(sse_chunk("world!").as_bytes())
+            .await
+            .unwrap();
         socket.write_all(SSE_DONE).await.unwrap();
     });
 
@@ -91,7 +93,13 @@ async fn streaming_complete_response() {
     let req = make_req(30);
 
     let result = dispatch
-        .query_model(&req, "test", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await
         .unwrap();
 
@@ -116,11 +124,20 @@ async fn streaming_partial_on_deadline() {
         let _ = socket.read(&mut buf).await;
 
         socket.write_all(SSE_HEADERS).await.unwrap();
-        socket.write_all(sse_chunk("chunk1 ").as_bytes()).await.unwrap();
-        socket.write_all(sse_chunk("chunk2 ").as_bytes()).await.unwrap();
+        socket
+            .write_all(sse_chunk("chunk1 ").as_bytes())
+            .await
+            .unwrap();
+        socket
+            .write_all(sse_chunk("chunk2 ").as_bytes())
+            .await
+            .unwrap();
         // Wait longer than deadline — simulates slow model
         tokio::time::sleep(Duration::from_secs(10)).await;
-        socket.write_all(sse_chunk("never").as_bytes()).await.unwrap();
+        socket
+            .write_all(sse_chunk("never").as_bytes())
+            .await
+            .unwrap();
     });
 
     let dispatch = HttpDispatch::new();
@@ -128,7 +145,13 @@ async fn streaming_partial_on_deadline() {
 
     let start = Instant::now();
     let result = dispatch
-        .query_model(&req, "test", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await
         .unwrap();
 
@@ -153,8 +176,14 @@ async fn streaming_partial_on_cancellation() {
         let _ = socket.read(&mut buf).await;
 
         socket.write_all(SSE_HEADERS).await.unwrap();
-        socket.write_all(sse_chunk("partial ").as_bytes()).await.unwrap();
-        socket.write_all(sse_chunk("data").as_bytes()).await.unwrap();
+        socket
+            .write_all(sse_chunk("partial ").as_bytes())
+            .await
+            .unwrap();
+        socket
+            .write_all(sse_chunk("data").as_bytes())
+            .await
+            .unwrap();
         // Hold connection open
         tokio::time::sleep(Duration::from_secs(30)).await;
     });
@@ -170,7 +199,13 @@ async fn streaming_partial_on_cancellation() {
     });
 
     let result = dispatch
-        .query_model(&req, "test", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await
         .unwrap();
 
@@ -204,7 +239,13 @@ async fn streaming_first_byte_timeout() {
     let req = make_req(2);
 
     let result = dispatch
-        .query_model(&req, "test", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await;
 
     assert!(result.is_err());
@@ -238,7 +279,13 @@ async fn streaming_empty_done() {
     let req = make_req(30);
 
     let result = dispatch
-        .query_model(&req, "test", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await;
 
     assert!(result.is_err());
@@ -265,8 +312,14 @@ async fn streaming_network_error_with_partial_data() {
         let _ = socket.read(&mut buf).await;
 
         socket.write_all(SSE_HEADERS).await.unwrap();
-        socket.write_all(sse_chunk("saved ").as_bytes()).await.unwrap();
-        socket.write_all(sse_chunk("data").as_bytes()).await.unwrap();
+        socket
+            .write_all(sse_chunk("saved ").as_bytes())
+            .await
+            .unwrap();
+        socket
+            .write_all(sse_chunk("data").as_bytes())
+            .await
+            .unwrap();
         // Drop connection abruptly (no [DONE])
         drop(socket);
     });
@@ -275,7 +328,13 @@ async fn streaming_network_error_with_partial_data() {
     let req = make_req(30);
 
     let result = dispatch
-        .query_model(&req, "test", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await
         .unwrap();
 
@@ -308,7 +367,13 @@ async fn streaming_network_error_no_data() {
     let req = make_req(30);
 
     let result = dispatch
-        .query_model(&req, "test", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await;
 
     assert!(result.is_err(), "Empty stream should be an error");
@@ -347,7 +412,13 @@ async fn streaming_reasoning_content() {
     let req = make_req(30);
 
     let result = dispatch
-        .query_model(&req, "test", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await
         .unwrap();
 
@@ -386,10 +457,19 @@ async fn streaming_cancel_empty_returns_cancelled() {
     });
 
     let result = dispatch
-        .query_model(&req, "test", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await;
 
-    assert!(result.is_err(), "Cancel with no data should be error, not partial");
+    assert!(
+        result.is_err(),
+        "Cancel with no data should be error, not partial"
+    );
     assert!(
         matches!(result.unwrap_err(), SquallError::Cancelled(_)),
         "Expected Cancelled error, not Timeout"
@@ -416,7 +496,10 @@ async fn streaming_request_includes_stream_true() {
         // Extract JSON body from HTTP request (after blank line)
         let body_start = request.find("\r\n\r\n").unwrap() + 4;
         let body = &request[body_start..];
-        assert!(body.contains("\"stream\":true"), "Request body should include stream:true, got: {body}");
+        assert!(
+            body.contains("\"stream\":true"),
+            "Request body should include stream:true, got: {body}"
+        );
 
         socket.write_all(SSE_HEADERS).await.unwrap();
         socket.write_all(sse_chunk("ok").as_bytes()).await.unwrap();
@@ -427,7 +510,13 @@ async fn streaming_request_includes_stream_true() {
     let req = make_req(30);
 
     let _ = dispatch
-        .query_model(&req, "test", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await;
 
     server.await.unwrap();
@@ -450,11 +539,20 @@ async fn streaming_ignores_unparseable_events() {
         // Keepalive / comment
         socket.write_all(b": keepalive\n\n").await.unwrap();
         // Valid chunk
-        socket.write_all(sse_chunk("good").as_bytes()).await.unwrap();
+        socket
+            .write_all(sse_chunk("good").as_bytes())
+            .await
+            .unwrap();
         // Malformed JSON
-        socket.write_all(b"data: {not valid json}\n\n").await.unwrap();
+        socket
+            .write_all(b"data: {not valid json}\n\n")
+            .await
+            .unwrap();
         // Another valid chunk
-        socket.write_all(sse_chunk(" data").as_bytes()).await.unwrap();
+        socket
+            .write_all(sse_chunk(" data").as_bytes())
+            .await
+            .unwrap();
         socket.write_all(SSE_DONE).await.unwrap();
     });
 
@@ -462,7 +560,13 @@ async fn streaming_ignores_unparseable_events() {
     let req = make_req(30);
 
     let result = dispatch
-        .query_model(&req, "test", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await
         .unwrap();
 
@@ -480,22 +584,20 @@ async fn streaming_ignores_unparseable_events() {
 fn sse_error_message_does_not_leak_internals() {
     // Simulate the Other error as constructed by the SSE error path.
     // The raw library error ({e}) must NOT appear in user_message().
-    let err = SquallError::Other(
-        "SSE stream error from test-provider".to_string()
-    );
+    let err = SquallError::Other("SSE stream error from test-provider".to_string());
     let msg = err.user_message();
 
     // Should contain provider name
-    assert!(msg.contains("test-provider"), "Should mention provider. Got: {msg}");
+    assert!(
+        msg.contains("test-provider"),
+        "Should mention provider. Got: {msg}"
+    );
     // Should NOT contain raw error details (the old format included {e})
     assert!(
         !msg.contains("connection reset"),
         "Should not leak raw error details. Got: {msg}"
     );
-    assert!(
-        !msg.contains("http://"),
-        "Should not leak URLs. Got: {msg}"
-    );
+    assert!(!msg.contains("http://"), "Should not leak URLs. Got: {msg}");
 }
 
 // ---------------------------------------------------------------------------
@@ -545,9 +647,15 @@ async fn streaming_reasoning_model_survives_stall() {
 
         socket.write_all(SSE_HEADERS).await.unwrap();
         // Send one chunk, then go silent for 3s (simulating thinking)
-        socket.write_all(sse_chunk("thinking...").as_bytes()).await.unwrap();
+        socket
+            .write_all(sse_chunk("thinking...").as_bytes())
+            .await
+            .unwrap();
         tokio::time::sleep(Duration::from_secs(3)).await;
-        socket.write_all(sse_chunk(" done!").as_bytes()).await.unwrap();
+        socket
+            .write_all(sse_chunk(" done!").as_bytes())
+            .await
+            .unwrap();
         socket.write_all(SSE_DONE).await.unwrap();
     });
 
@@ -567,7 +675,13 @@ async fn streaming_reasoning_model_survives_stall() {
     };
 
     let result = dispatch
-        .query_model(&req, "test", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await
         .unwrap();
 
@@ -585,7 +699,10 @@ async fn streaming_reasoning_model_survives_stall() {
 fn first_byte_timeout_default_is_60s() {
     // 60s accommodates OpenRouter-routed models (Kimi, GLM) that queue >30s.
     assert_eq!(first_byte_timeout_for(None), Duration::from_secs(60));
-    assert_eq!(first_byte_timeout_for(Some("none")), Duration::from_secs(60));
+    assert_eq!(
+        first_byte_timeout_for(Some("none")),
+        Duration::from_secs(60)
+    );
     assert_eq!(first_byte_timeout_for(Some("low")), Duration::from_secs(60));
 }
 
@@ -615,7 +732,10 @@ async fn streaming_reasoning_model_survives_pre_first_token_silence() {
         // With FIRST_BYTE_TIMEOUT=30s this passes, but the unit test above
         // proves the function returns >= 300s for "high".
         tokio::time::sleep(Duration::from_secs(3)).await;
-        socket.write_all(sse_chunk("answer").as_bytes()).await.unwrap();
+        socket
+            .write_all(sse_chunk("answer").as_bytes())
+            .await
+            .unwrap();
         socket.write_all(SSE_DONE).await.unwrap();
     });
 
@@ -634,7 +754,13 @@ async fn streaming_reasoning_model_survives_pre_first_token_silence() {
     };
 
     let result = dispatch
-        .query_model(&req, "test", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await
         .unwrap();
 
@@ -671,7 +797,13 @@ async fn streaming_error_body_respects_deadline() {
 
     let start = Instant::now();
     let result = dispatch
-        .query_model(&req, "test", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "test",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await;
 
     let elapsed = start.elapsed();
@@ -872,10 +1004,19 @@ async fn streaming_together_reasoning_field() {
 
         socket.write_all(SSE_HEADERS).await.unwrap();
         // Together/Kimi sends thinking in "reasoning" field with empty "content"
-        socket.write_all(sse_together_reasoning_chunk("thinking...").as_bytes()).await.unwrap();
-        socket.write_all(sse_together_reasoning_chunk(" done").as_bytes()).await.unwrap();
+        socket
+            .write_all(sse_together_reasoning_chunk("thinking...").as_bytes())
+            .await
+            .unwrap();
+        socket
+            .write_all(sse_together_reasoning_chunk(" done").as_bytes())
+            .await
+            .unwrap();
         // Then actual answer in content field
-        socket.write_all(sse_chunk("answer").as_bytes()).await.unwrap();
+        socket
+            .write_all(sse_chunk("answer").as_bytes())
+            .await
+            .unwrap();
         socket.write_all(SSE_DONE).await.unwrap();
     });
 
@@ -883,7 +1024,13 @@ async fn streaming_together_reasoning_field() {
     let req = make_req(30);
 
     let result = dispatch
-        .query_model(&req, "together", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "together",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await
         .unwrap();
 
@@ -905,7 +1052,10 @@ async fn streaming_together_reasoning_only() {
 
         socket.write_all(SSE_HEADERS).await.unwrap();
         // Kimi K2.5 sends ALL text as reasoning, content always empty
-        socket.write_all(sse_together_reasoning_chunk("the answer is 42").as_bytes()).await.unwrap();
+        socket
+            .write_all(sse_together_reasoning_chunk("the answer is 42").as_bytes())
+            .await
+            .unwrap();
         socket.write_all(SSE_DONE).await.unwrap();
     });
 
@@ -913,7 +1063,13 @@ async fn streaming_together_reasoning_only() {
     let req = make_req(30);
 
     let result = dispatch
-        .query_model(&req, "together", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "together",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await
         .unwrap();
 
@@ -968,7 +1124,13 @@ async fn openai_sends_max_completion_tokens() {
     };
 
     let _ = dispatch
-        .query_model(&req, "openai", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "openai",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await;
 
     server.await.unwrap();
@@ -1015,7 +1177,13 @@ async fn non_openai_sends_max_tokens() {
     };
 
     let _ = dispatch
-        .query_model(&req, "together", &format!("http://127.0.0.1:{port}/v1/chat"), "fake", &ApiFormat::OpenAi)
+        .query_model(
+            &req,
+            "together",
+            &format!("http://127.0.0.1:{port}/v1/chat"),
+            "fake",
+            &ApiFormat::OpenAi,
+        )
         .await;
 
     server.await.unwrap();

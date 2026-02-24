@@ -113,18 +113,26 @@ impl SquallError {
             Self::AuthFailed { provider, message } => {
                 format!("authentication failed for {provider}: {message}")
             }
-            Self::SchemaParse(_) => {
-                "failed to parse provider response".to_string()
-            }
+            Self::SchemaParse(_) => "failed to parse provider response".to_string(),
             Self::ProcessExit { code, stderr } => {
                 if stderr.trim().is_empty() {
                     format!("CLI process exited with code {code}")
                 } else {
                     // Take tail (last 200 chars) — CLI tools dump banners first,
                     // the actual error is at the end.
-                    let preview: String =
-                        stderr.chars().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect();
-                    let prefix = if preview.len() < stderr.len() { "..." } else { "" };
+                    let preview: String = stderr
+                        .chars()
+                        .rev()
+                        .take(200)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
+                    let prefix = if preview.len() < stderr.len() {
+                        "..."
+                    } else {
+                        ""
+                    };
                     format!("CLI process exited with code {code}: {prefix}{preview}")
                 }
             }

@@ -13,8 +13,7 @@
 //! A global mutex serializes all tests that need to change the process cwd.
 
 use squall::memory::{
-    MemoryStore, MAX_MEMORIZE_CONTENT_LEN, MAX_PATTERN_ENTRIES, MAX_TACTICS_BYTES,
-    VALID_CATEGORIES,
+    MAX_MEMORIZE_CONTENT_LEN, MAX_PATTERN_ENTRIES, MAX_TACTICS_BYTES, MemoryStore, VALID_CATEGORIES,
 };
 use squall::tools::review::{ModelStatus, ReviewModelResult};
 use std::path::PathBuf;
@@ -127,10 +126,20 @@ fn write_log_metrics_appends_events() {
     run_async(async {
         let store = MemoryStore::new();
         store
-            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None, None)
+            .log_model_metrics(
+                &[make_result("grok", 20000, ModelStatus::Success)],
+                1000,
+                None,
+                None,
+            )
             .await;
         store
-            .log_model_metrics(&[make_result("grok", 30000, ModelStatus::Success)], 2000, None, None)
+            .log_model_metrics(
+                &[make_result("grok", 30000, ModelStatus::Success)],
+                2000,
+                None,
+                None,
+            )
             .await;
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("models.md"))
@@ -152,14 +161,22 @@ fn write_log_metrics_records_errors() {
     run_async(async {
         let store = MemoryStore::new();
         store
-            .log_model_metrics(&[make_result("kimi", 300000, ModelStatus::Error)], 5000, None, None)
+            .log_model_metrics(
+                &[make_result("kimi", 300000, ModelStatus::Error)],
+                5000,
+                None,
+                None,
+            )
             .await;
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("models.md"))
             .await
             .unwrap();
         assert!(content.contains("error"), "Should record error status");
-        assert!(content.contains("test error"), "Should record error message");
+        assert!(
+            content.contains("test error"),
+            "Should record error message"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -170,7 +187,12 @@ fn write_creates_index_md() {
     run_async(async {
         let store = MemoryStore::new();
         store
-            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None, None)
+            .log_model_metrics(
+                &[make_result("grok", 20000, ModelStatus::Success)],
+                1000,
+                None,
+                None,
+            )
             .await;
 
         let index = tokio::fs::read_to_string(memory_dir(&dir).join("index.md"))
@@ -188,7 +210,12 @@ fn write_no_tmp_files_remain() {
     run_async(async {
         let store = MemoryStore::new();
         store
-            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None, None)
+            .log_model_metrics(
+                &[make_result("grok", 20000, ModelStatus::Success)],
+                1000,
+                None,
+                None,
+            )
             .await;
 
         let tmp_files: Vec<_> = std::fs::read_dir(memory_dir(&dir))
@@ -233,7 +260,10 @@ fn write_concurrent_metrics_safe() {
             .lines()
             .filter(|l| l.starts_with('|') && l.contains("grok") && l.contains("success"))
             .count();
-        assert_eq!(event_count, 10, "10 concurrent writes should produce 10 events");
+        assert_eq!(
+            event_count, 10,
+            "10 concurrent writes should produce 10 events"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -325,7 +355,14 @@ fn memorize_appends_tactic() {
     run_async(async {
         let store = MemoryStore::new();
         let result = store
-            .memorize("tactic", "Step-by-step reduces FP", Some("grok"), None, None, None)
+            .memorize(
+                "tactic",
+                "Step-by-step reduces FP",
+                Some("grok"),
+                None,
+                None,
+                None,
+            )
             .await;
 
         assert!(result.is_ok());
@@ -342,7 +379,9 @@ fn memorize_appends_tactic() {
 fn memorize_rejects_invalid_category() {
     run_async(async {
         let store = MemoryStore::new();
-        let result = store.memorize("invalid", "test", None, None, None, None).await;
+        let result = store
+            .memorize("invalid", "test", None, None, None, None)
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("invalid category"));
     });
@@ -352,7 +391,9 @@ fn memorize_rejects_invalid_category() {
 fn memorize_rejects_empty_content() {
     run_async(async {
         let store = MemoryStore::new();
-        let result = store.memorize("pattern", "   ", None, None, None, None).await;
+        let result = store
+            .memorize("pattern", "   ", None, None, None, None)
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("must not be empty"));
     });
@@ -363,7 +404,9 @@ fn memorize_rejects_oversized_content() {
     run_async(async {
         let store = MemoryStore::new();
         let long_content = "x".repeat(MAX_MEMORIZE_CONTENT_LEN + 1);
-        let result = store.memorize("pattern", &long_content, None, None, None, None).await;
+        let result = store
+            .memorize("pattern", &long_content, None, None, None, None)
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("too long"));
     });
@@ -375,8 +418,13 @@ fn memorize_accepts_exactly_max_content() {
     run_async(async {
         let store = MemoryStore::new();
         let exact = "x".repeat(MAX_MEMORIZE_CONTENT_LEN);
-        let result = store.memorize("pattern", &exact, None, None, None, None).await;
-        assert!(result.is_ok(), "Exactly 500 chars should be accepted: {result:?}");
+        let result = store
+            .memorize("pattern", &exact, None, None, None, None)
+            .await;
+        assert!(
+            result.is_ok(),
+            "Exactly 500 chars should be accepted: {result:?}"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -390,7 +438,11 @@ fn memorize_patterns_prune_at_50() {
             let result = store
                 .memorize("pattern", &format!("Pattern {i}"), None, None, None, None)
                 .await;
-            assert!(result.is_ok(), "Write {i} failed: {:?}", result.unwrap_err());
+            assert!(
+                result.is_ok(),
+                "Write {i} failed: {:?}",
+                result.unwrap_err()
+            );
         }
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("patterns.md"))
@@ -416,15 +468,27 @@ fn memorize_tactics_auto_prunes_at_size_cap() {
         // Write 200 entries — should auto-prune oldest to stay under 10KB
         for i in 0..200 {
             let content = format!("Tactic {i}: {}", "x".repeat(90));
-            let result = store.memorize("tactic", &content, Some("grok"), None, None, None).await;
-            assert!(result.is_ok(), "Write {i} should succeed via auto-prune: {result:?}");
+            let result = store
+                .memorize("tactic", &content, Some("grok"), None, None, None)
+                .await;
+            assert!(
+                result.is_ok(),
+                "Write {i} should succeed via auto-prune: {result:?}"
+            );
         }
         // File should be under cap and contain the latest entry
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("tactics.md"))
             .await
             .unwrap();
-        assert!(content.len() <= MAX_TACTICS_BYTES, "Should be within cap: {} bytes", content.len());
-        assert!(content.contains("Tactic 199"), "Should contain latest entry");
+        assert!(
+            content.len() <= MAX_TACTICS_BYTES,
+            "Should be within cap: {} bytes",
+            content.len()
+        );
+        assert!(
+            content.contains("Tactic 199"),
+            "Should contain latest entry"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -440,7 +504,12 @@ fn read_all_categories() {
         let store = MemoryStore::new();
 
         store
-            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None, None)
+            .log_model_metrics(
+                &[make_result("grok", 20000, ModelStatus::Success)],
+                1000,
+                None,
+                None,
+            )
             .await;
         store
             .memorize("pattern", "test pattern", None, None, None, None)
@@ -466,18 +535,29 @@ fn read_filters_by_category() {
         let store = MemoryStore::new();
 
         store
-            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None, None)
+            .log_model_metrics(
+                &[make_result("grok", 20000, ModelStatus::Success)],
+                1000,
+                None,
+                None,
+            )
             .await;
         store
             .memorize("pattern", "test pattern", None, None, None, None)
             .await
             .unwrap();
 
-        let models_only = store.read_memory(Some("models"), None, 10000, None).await.unwrap();
+        let models_only = store
+            .read_memory(Some("models"), None, 10000, None)
+            .await
+            .unwrap();
         assert!(models_only.contains("grok"));
         assert!(!models_only.contains("Recurring Patterns"));
 
-        let patterns_only = store.read_memory(Some("patterns"), None, 10000, None).await.unwrap();
+        let patterns_only = store
+            .read_memory(Some("patterns"), None, 10000, None)
+            .await
+            .unwrap();
         assert!(patterns_only.contains("test pattern"));
     });
     teardown(&dir, &orig);
@@ -500,7 +580,10 @@ fn read_models_returns_summary_only() {
                 .await;
         }
 
-        let result = store.read_memory(Some("models"), None, 10000, None).await.unwrap();
+        let result = store
+            .read_memory(Some("models"), None, 10000, None)
+            .await
+            .unwrap();
         assert!(
             result.contains("Model") && result.contains("Avg Latency"),
             "Should contain summary table"
@@ -516,11 +599,25 @@ fn read_tactics_filters_by_model() {
         let store = MemoryStore::new();
 
         store
-            .memorize("tactic", "Grok specific tactic", Some("grok"), None, None, None)
+            .memorize(
+                "tactic",
+                "Grok specific tactic",
+                Some("grok"),
+                None,
+                None,
+                None,
+            )
             .await
             .unwrap();
         store
-            .memorize("tactic", "Gemini specific tactic", Some("gemini"), None, None, None)
+            .memorize(
+                "tactic",
+                "Gemini specific tactic",
+                Some("gemini"),
+                None,
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -566,9 +663,16 @@ fn read_respects_max_chars() {
                 .unwrap();
         }
 
-        let result = store.read_memory(Some("patterns"), None, 500, None).await.unwrap();
+        let result = store
+            .read_memory(Some("patterns"), None, 500, None)
+            .await
+            .unwrap();
         // 500 chars + "[truncated]" (12 chars) + newlines
-        assert!(result.len() <= 530, "Should respect max_chars, got {} chars", result.len());
+        assert!(
+            result.len() <= 530,
+            "Should respect max_chars, got {} chars",
+            result.len()
+        );
         assert!(result.contains("[truncated]"));
     });
     teardown(&dir, &orig);
@@ -611,7 +715,14 @@ fn integration_full_cycle() {
             .await
             .unwrap();
         store
-            .memorize("tactic", "Use focused system prompt for security review", Some("grok"), None, None, None)
+            .memorize(
+                "tactic",
+                "Use focused system prompt for security review",
+                Some("grok"),
+                None,
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -632,7 +743,12 @@ fn integration_survives_restart() {
         {
             let store = MemoryStore::new();
             store
-                .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None, None)
+                .log_model_metrics(
+                    &[make_result("grok", 20000, ModelStatus::Success)],
+                    1000,
+                    None,
+                    None,
+                )
                 .await;
             store
                 .memorize("pattern", "Persisted finding", None, None, None, None)
@@ -710,9 +826,15 @@ fn adversarial_unicode_in_memory() {
     run_async(async {
         let store = MemoryStore::new();
         let unicode = "Race condition \u{1F980} in \u{4F60}\u{597D} handler";
-        store.memorize("pattern", unicode, None, None, None, None).await.unwrap();
+        store
+            .memorize("pattern", unicode, None, None, None, None)
+            .await
+            .unwrap();
 
-        let result = store.read_memory(Some("patterns"), None, 10000, None).await.unwrap();
+        let result = store
+            .read_memory(Some("patterns"), None, 10000, None)
+            .await
+            .unwrap();
         assert!(result.contains("\u{1F980}"), "Crab emoji should survive");
         assert!(result.contains("\u{4F60}\u{597D}"), "CJK should survive");
     });
@@ -732,7 +854,10 @@ fn adversarial_empty_model_name() {
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("tactics.md"))
             .await
             .unwrap();
-        assert!(!content.contains("[]"), "Empty model should not produce brackets");
+        assert!(
+            !content.contains("[]"),
+            "Empty model should not produce brackets"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -747,9 +872,16 @@ fn adversarial_concurrent_memorize() {
         for i in 0..10 {
             let s = store.clone();
             handles.push(tokio::spawn(async move {
-                s.memorize("pattern", &format!("Concurrent pattern {i}"), None, None, None, None)
-                    .await
-                    .unwrap();
+                s.memorize(
+                    "pattern",
+                    &format!("Concurrent pattern {i}"),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
             }));
         }
 
@@ -762,7 +894,10 @@ fn adversarial_concurrent_memorize() {
             .unwrap();
 
         let entry_count = content.matches("## [").count();
-        assert_eq!(entry_count, 10, "10 concurrent memorize should produce 10 entries");
+        assert_eq!(
+            entry_count, 10,
+            "10 concurrent memorize should produce 10 entries"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -772,7 +907,9 @@ fn memorize_minimal_fields() {
     let (dir, orig, _guard) = setup_test_env("a7-minimal");
     run_async(async {
         let store = MemoryStore::new();
-        let result = store.memorize("pattern", "Simple observation", None, None, None, None).await;
+        let result = store
+            .memorize("pattern", "Simple observation", None, None, None, None)
+            .await;
         assert!(result.is_ok());
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("patterns.md"))
@@ -789,7 +926,9 @@ fn memorize_empty_tags() {
     let (dir, orig, _guard) = setup_test_env("a8-empty-tags");
     run_async(async {
         let store = MemoryStore::new();
-        let result = store.memorize("pattern", "No tags here", None, Some(&[]), None, None).await;
+        let result = store
+            .memorize("pattern", "No tags here", None, Some(&[]), None, None)
+            .await;
         assert!(result.is_ok());
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("patterns.md"))
@@ -814,12 +953,17 @@ fn bug1_unicode_truncation_does_not_panic() {
         tokio::fs::create_dir_all(&md).await.unwrap();
         // Write patterns.md with emoji right after "AB" (2 ASCII bytes)
         // 🦀 is 4 bytes (F0 9F A6 80). Truncating at byte 3 would land inside it.
-        tokio::fs::write(md.join("patterns.md"), "AB\u{1F980}CD").await.unwrap();
+        tokio::fs::write(md.join("patterns.md"), "AB\u{1F980}CD")
+            .await
+            .unwrap();
 
         let store = MemoryStore::new();
         // max_chars=3 lands inside the 4-byte emoji (byte indices 2..6)
         let result = store.read_memory(Some("patterns"), None, 3, None).await;
-        assert!(result.is_ok(), "Should not panic on unicode boundary: {result:?}");
+        assert!(
+            result.is_ok(),
+            "Should not panic on unicode boundary: {result:?}"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -900,10 +1044,18 @@ fn bug2b_pipe_in_error_does_not_corrupt_summary() {
             .lines()
             .filter(|l| l.starts_with('|') && l.contains("grok") && l.contains("5.0s"))
             .collect();
-        assert_eq!(event_lines.len(), 1, "Should have exactly 1 event line for grok: {event_lines:?}");
+        assert_eq!(
+            event_lines.len(),
+            1,
+            "Should have exactly 1 event line for grok: {event_lines:?}"
+        );
         // Verify the event line has exactly 8 pipe-delimited columns (not more from unescaped pipes)
         let cols: Vec<&str> = event_lines[0].split('|').collect();
-        assert_eq!(cols.len(), 10, "Event row should have 8 data columns (10 parts after split): {cols:?}");
+        assert_eq!(
+            cols.len(),
+            10,
+            "Event row should have 8 data columns (10 parts after split): {cols:?}"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -919,14 +1071,24 @@ fn bug5_summary_recomputed_on_truncation() {
         // Write 105 events for model "old" — this will truncate to 100
         for _ in 0..105 {
             store
-                .log_model_metrics(&[make_result("old-model", 10000, ModelStatus::Success)], 100, None, None)
+                .log_model_metrics(
+                    &[make_result("old-model", 10000, ModelStatus::Success)],
+                    100,
+                    None,
+                    None,
+                )
                 .await;
         }
 
         // Now write 1 event for "new" — this should trigger truncation of "old" events
         // and summary should reflect current window, not stale data
         store
-            .log_model_metrics(&[make_result("new-model", 50000, ModelStatus::Success)], 100, None, None)
+            .log_model_metrics(
+                &[make_result("new-model", 50000, ModelStatus::Success)],
+                100,
+                None,
+                None,
+            )
             .await;
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("models.md"))
@@ -966,7 +1128,14 @@ fn bug6_tactics_auto_prunes_instead_of_rejecting() {
 
         // This write should succeed by auto-pruning oldest lines, not hard-rejecting
         let result = store
-            .memorize("tactic", "This should still work by pruning old entries", Some("grok"), None, None, None)
+            .memorize(
+                "tactic",
+                "This should still work by pruning old entries",
+                Some("grok"),
+                None,
+                None,
+                None,
+            )
             .await;
         assert!(
             result.is_ok(),
@@ -997,11 +1166,18 @@ fn bug7_compaction_counter_is_per_store() {
         // Write 10 events for "alpha" — should trigger compaction on write #10
         for _ in 0..10 {
             store
-                .log_model_metrics(&[make_result("alpha", 20000, ModelStatus::Success)], 100, None, None)
+                .log_model_metrics(
+                    &[make_result("alpha", 20000, ModelStatus::Success)],
+                    100,
+                    None,
+                    None,
+                )
                 .await;
         }
 
-        let content = tokio::fs::read_to_string(md.join("models.md")).await.unwrap();
+        let content = tokio::fs::read_to_string(md.join("models.md"))
+            .await
+            .unwrap();
         let summary_end = content.find("## Recent Events").unwrap_or(content.len());
         let summary = &content[..summary_end];
         assert!(
@@ -1012,11 +1188,18 @@ fn bug7_compaction_counter_is_per_store() {
         // Now write 10 events for "beta" — should trigger compaction again on write #20
         for _ in 0..10 {
             store
-                .log_model_metrics(&[make_result("beta", 30000, ModelStatus::Success)], 100, None, None)
+                .log_model_metrics(
+                    &[make_result("beta", 30000, ModelStatus::Success)],
+                    100,
+                    None,
+                    None,
+                )
                 .await;
         }
 
-        let content2 = tokio::fs::read_to_string(md.join("models.md")).await.unwrap();
+        let content2 = tokio::fs::read_to_string(md.join("models.md"))
+            .await
+            .unwrap();
         let summary_end2 = content2.find("## Recent Events").unwrap_or(content2.len());
         let summary2 = &content2[..summary_end2];
         // After 20 writes, both models should appear in summary (compacted at write 10 and 20)
@@ -1040,15 +1223,43 @@ fn scope_exact_match_does_not_prefix_match() {
         let store = MemoryStore::new();
 
         // Write patterns with similar-prefix scopes
-        store.memorize("pattern", "PR 42 finding", None, None, Some("pr:42"), None).await.unwrap();
-        store.memorize("pattern", "PR 420 finding", None, None, Some("pr:420"), None).await.unwrap();
-        store.memorize("pattern", "PR 4 finding", None, None, Some("pr:4"), None).await.unwrap();
+        store
+            .memorize("pattern", "PR 42 finding", None, None, Some("pr:42"), None)
+            .await
+            .unwrap();
+        store
+            .memorize(
+                "pattern",
+                "PR 420 finding",
+                None,
+                None,
+                Some("pr:420"),
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .memorize("pattern", "PR 4 finding", None, None, Some("pr:4"), None)
+            .await
+            .unwrap();
 
         // Filter by "pr:42" — should match only the first, not "pr:420" or "pr:4"
-        let result = store.read_memory(Some("patterns"), None, 10000, Some("pr:42")).await.unwrap();
-        assert!(result.contains("PR 42 finding"), "Should match pr:42: {result}");
-        assert!(!result.contains("PR 420 finding"), "Should NOT match pr:420: {result}");
-        assert!(!result.contains("PR 4 finding"), "Should NOT match pr:4: {result}");
+        let result = store
+            .read_memory(Some("patterns"), None, 10000, Some("pr:42"))
+            .await
+            .unwrap();
+        assert!(
+            result.contains("PR 42 finding"),
+            "Should match pr:42: {result}"
+        );
+        assert!(
+            !result.contains("PR 420 finding"),
+            "Should NOT match pr:420: {result}"
+        );
+        assert!(
+            !result.contains("PR 4 finding"),
+            "Should NOT match pr:4: {result}"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -1060,14 +1271,49 @@ fn scope_none_returns_all_entries() {
     run_async(async {
         let store = MemoryStore::new();
 
-        store.memorize("pattern", "Branch scoped", None, None, Some("branch:main"), None).await.unwrap();
-        store.memorize("pattern", "Codebase scoped", None, None, Some("codebase"), None).await.unwrap();
-        store.memorize("pattern", "Unscoped entry", None, None, None, None).await.unwrap();
+        store
+            .memorize(
+                "pattern",
+                "Branch scoped",
+                None,
+                None,
+                Some("branch:main"),
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .memorize(
+                "pattern",
+                "Codebase scoped",
+                None,
+                None,
+                Some("codebase"),
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .memorize("pattern", "Unscoped entry", None, None, None, None)
+            .await
+            .unwrap();
 
-        let result = store.read_memory(Some("patterns"), None, 10000, None).await.unwrap();
-        assert!(result.contains("Branch scoped"), "Should include branch scoped: {result}");
-        assert!(result.contains("Codebase scoped"), "Should include codebase scoped: {result}");
-        assert!(result.contains("Unscoped entry"), "Should include unscoped: {result}");
+        let result = store
+            .read_memory(Some("patterns"), None, 10000, None)
+            .await
+            .unwrap();
+        assert!(
+            result.contains("Branch scoped"),
+            "Should include branch scoped: {result}"
+        );
+        assert!(
+            result.contains("Codebase scoped"),
+            "Should include codebase scoped: {result}"
+        );
+        assert!(
+            result.contains("Unscoped entry"),
+            "Should include unscoped: {result}"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -1079,12 +1325,41 @@ fn scope_codebase_filters_branch_entries() {
     run_async(async {
         let store = MemoryStore::new();
 
-        store.memorize("pattern", "Codebase finding", None, None, Some("codebase"), None).await.unwrap();
-        store.memorize("pattern", "Branch finding", None, None, Some("branch:feature/auth"), None).await.unwrap();
+        store
+            .memorize(
+                "pattern",
+                "Codebase finding",
+                None,
+                None,
+                Some("codebase"),
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .memorize(
+                "pattern",
+                "Branch finding",
+                None,
+                None,
+                Some("branch:feature/auth"),
+                None,
+            )
+            .await
+            .unwrap();
 
-        let result = store.read_memory(Some("patterns"), None, 10000, Some("codebase")).await.unwrap();
-        assert!(result.contains("Codebase finding"), "Should include codebase entry: {result}");
-        assert!(!result.contains("Branch finding"), "Should exclude branch entry: {result}");
+        let result = store
+            .read_memory(Some("patterns"), None, 10000, Some("codebase"))
+            .await
+            .unwrap();
+        assert!(
+            result.contains("Codebase finding"),
+            "Should include codebase entry: {result}"
+        );
+        assert!(
+            !result.contains("Branch finding"),
+            "Should exclude branch entry: {result}"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -1096,12 +1371,25 @@ fn memorize_renders_scope_in_pattern() {
     run_async(async {
         let store = MemoryStore::new();
 
-        store.memorize("pattern", "Scoped finding", None, None, Some("branch:feature/x"), None).await.unwrap();
+        store
+            .memorize(
+                "pattern",
+                "Scoped finding",
+                None,
+                None,
+                Some("branch:feature/x"),
+                None,
+            )
+            .await
+            .unwrap();
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("patterns.md"))
             .await
             .unwrap();
-        assert!(content.contains("- Scope: branch:feature/x"), "Should render scope line: {content}");
+        assert!(
+            content.contains("- Scope: branch:feature/x"),
+            "Should render scope line: {content}"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -1113,12 +1401,18 @@ fn memorize_no_scope_no_scope_line() {
     run_async(async {
         let store = MemoryStore::new();
 
-        store.memorize("pattern", "Unscoped finding", None, None, None, None).await.unwrap();
+        store
+            .memorize("pattern", "Unscoped finding", None, None, None, None)
+            .await
+            .unwrap();
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("patterns.md"))
             .await
             .unwrap();
-        assert!(!content.contains("- Scope:"), "Should not have scope line: {content}");
+        assert!(
+            !content.contains("- Scope:"),
+            "Should not have scope line: {content}"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -1126,7 +1420,7 @@ fn memorize_no_scope_no_scope_line() {
 /// default_scope_from_git: branch available → "branch:{name}".
 #[test]
 fn default_scope_from_git_with_branch() {
-    use squall::context::{default_scope_from_git, GitContext};
+    use squall::context::{GitContext, default_scope_from_git};
 
     let ctx = GitContext {
         commit_sha: Some("abc1234".to_string()),
@@ -1138,7 +1432,7 @@ fn default_scope_from_git_with_branch() {
 /// default_scope_from_git: no branch, only commit → "commit:{sha}".
 #[test]
 fn default_scope_from_git_detached_head() {
-    use squall::context::{default_scope_from_git, GitContext};
+    use squall::context::{GitContext, default_scope_from_git};
 
     let ctx = GitContext {
         commit_sha: Some("abc1234".to_string()),
@@ -1168,7 +1462,12 @@ fn bug3_read_failure_preserves_existing_data() {
         // Write 5 events to build up models.md
         for _ in 0..5 {
             store
-                .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 100, None, None)
+                .log_model_metrics(
+                    &[make_result("grok", 20000, ModelStatus::Success)],
+                    100,
+                    None,
+                    None,
+                )
                 .await;
         }
 
@@ -1177,7 +1476,10 @@ fn bug3_read_failure_preserves_existing_data() {
 
         let initial = tokio::fs::read_to_string(&models_path).await.unwrap();
         let initial_lines = initial.lines().count();
-        assert!(initial_lines > 8, "Should have header + 5 events: {initial_lines}");
+        assert!(
+            initial_lines > 8,
+            "Should have header + 5 events: {initial_lines}"
+        );
 
         // Corrupt models.md by appending invalid UTF-8 (simulates disk corruption)
         let mut bytes = initial.into_bytes();
@@ -1186,7 +1488,12 @@ fn bug3_read_failure_preserves_existing_data() {
 
         // Log one more event — with the bug, unwrap_or_default() drops ALL prior data
         store
-            .log_model_metrics(&[make_result("gemini", 50000, ModelStatus::Success)], 100, None, None)
+            .log_model_metrics(
+                &[make_result("gemini", 50000, ModelStatus::Success)],
+                100,
+                None,
+                None,
+            )
             .await;
 
         let after = tokio::fs::read_to_string(&models_path).await.unwrap();
@@ -1211,9 +1518,18 @@ fn evidence_hash_dedup_merges_same_content() {
     run_async(async {
         let store = MemoryStore::new();
 
-        store.memorize("pattern", "Race condition in auth", None, None, None, None).await.unwrap();
-        store.memorize("pattern", "Race condition in auth", None, None, None, None).await.unwrap();
-        store.memorize("pattern", "Race condition in auth", None, None, None, None).await.unwrap();
+        store
+            .memorize("pattern", "Race condition in auth", None, None, None, None)
+            .await
+            .unwrap();
+        store
+            .memorize("pattern", "Race condition in auth", None, None, None, None)
+            .await
+            .unwrap();
+        store
+            .memorize("pattern", "Race condition in auth", None, None, None, None)
+            .await
+            .unwrap();
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("patterns.md"))
             .await
@@ -1221,9 +1537,18 @@ fn evidence_hash_dedup_merges_same_content() {
 
         // Should have 1 entry with [x3], not 3 separate entries
         let entry_count = content.matches("## [").count();
-        assert_eq!(entry_count, 1, "Should merge into 1 entry, got {entry_count}");
-        assert!(content.contains("[x3]"), "Should show evidence count [x3]: {content}");
-        assert!(content.contains("- Evidence: 3 occurrences"), "Should show evidence line: {content}");
+        assert_eq!(
+            entry_count, 1,
+            "Should merge into 1 entry, got {entry_count}"
+        );
+        assert!(
+            content.contains("[x3]"),
+            "Should show evidence count [x3]: {content}"
+        );
+        assert!(
+            content.contains("- Evidence: 3 occurrences"),
+            "Should show evidence line: {content}"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -1235,15 +1560,38 @@ fn evidence_hash_no_false_merge_on_similar_prefix() {
     run_async(async {
         let store = MemoryStore::new();
 
-        store.memorize("pattern", "Race condition in auth module", None, None, None, None).await.unwrap();
-        store.memorize("pattern", "Race condition in payment module", None, None, None, None).await.unwrap();
+        store
+            .memorize(
+                "pattern",
+                "Race condition in auth module",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .memorize(
+                "pattern",
+                "Race condition in payment module",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("patterns.md"))
             .await
             .unwrap();
 
         let entry_count = content.matches("## [").count();
-        assert_eq!(entry_count, 2, "Different content should not merge: {content}");
+        assert_eq!(
+            entry_count, 2,
+            "Different content should not merge: {content}"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -1256,14 +1604,20 @@ fn evidence_confirmed_at_threshold() {
         let store = MemoryStore::new();
 
         for _ in 0..5 {
-            store.memorize("pattern", "Confirmed pattern", None, None, None, None).await.unwrap();
+            store
+                .memorize("pattern", "Confirmed pattern", None, None, None, None)
+                .await
+                .unwrap();
         }
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("patterns.md"))
             .await
             .unwrap();
 
-        assert!(content.contains("[confirmed]"), "Should have [confirmed] at 5 occurrences: {content}");
+        assert!(
+            content.contains("[confirmed]"),
+            "Should have [confirmed] at 5 occurrences: {content}"
+        );
         assert!(content.contains("[x5]"), "Should show [x5]: {content}");
     });
     teardown(&dir, &orig);
@@ -1278,7 +1632,17 @@ fn flush_graduates_high_evidence_to_codebase() {
 
         // Create a pattern with evidence >= 3 on branch scope
         for _ in 0..3 {
-            store.memorize("pattern", "Important finding", None, None, Some("branch:feature/auth"), None).await.unwrap();
+            store
+                .memorize(
+                    "pattern",
+                    "Important finding",
+                    None,
+                    None,
+                    Some("branch:feature/auth"),
+                    None,
+                )
+                .await
+                .unwrap();
         }
 
         // Flush the branch
@@ -1289,8 +1653,14 @@ fn flush_graduates_high_evidence_to_codebase() {
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("patterns.md"))
             .await
             .unwrap();
-        assert!(content.contains("- Scope: codebase"), "Should be graduated to codebase: {content}");
-        assert!(!content.contains("- Scope: branch:feature/auth"), "Should not have branch scope: {content}");
+        assert!(
+            content.contains("- Scope: codebase"),
+            "Should be graduated to codebase: {content}"
+        );
+        assert!(
+            !content.contains("- Scope: branch:feature/auth"),
+            "Should not have branch scope: {content}"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -1303,7 +1673,17 @@ fn flush_archives_low_evidence_branch_entries() {
         let store = MemoryStore::new();
 
         // Create a pattern with evidence < 3 on branch scope
-        store.memorize("pattern", "Minor observation", None, None, Some("branch:feature/auth"), None).await.unwrap();
+        store
+            .memorize(
+                "pattern",
+                "Minor observation",
+                None,
+                None,
+                Some("branch:feature/auth"),
+                None,
+            )
+            .await
+            .unwrap();
 
         // Flush the branch
         let report = store.flush_branch("feature/auth").await.unwrap();
@@ -1313,13 +1693,19 @@ fn flush_archives_low_evidence_branch_entries() {
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("patterns.md"))
             .await
             .unwrap();
-        assert!(!content.contains("Minor observation"), "Should be removed from patterns: {content}");
+        assert!(
+            !content.contains("Minor observation"),
+            "Should be removed from patterns: {content}"
+        );
 
         // Verify it's in archive.md
         let archive = tokio::fs::read_to_string(memory_dir(&dir).join("archive.md"))
             .await
             .unwrap();
-        assert!(archive.contains("Minor observation"), "Should be in archive: {archive}");
+        assert!(
+            archive.contains("Minor observation"),
+            "Should be in archive: {archive}"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -1331,17 +1717,53 @@ fn flush_preserves_other_branch_patterns() {
     run_async(async {
         let store = MemoryStore::new();
 
-        store.memorize("pattern", "Auth branch finding", None, None, Some("branch:feature/auth"), None).await.unwrap();
-        store.memorize("pattern", "Other branch finding", None, None, Some("branch:feature/other"), None).await.unwrap();
-        store.memorize("pattern", "Codebase finding", None, None, Some("codebase"), None).await.unwrap();
+        store
+            .memorize(
+                "pattern",
+                "Auth branch finding",
+                None,
+                None,
+                Some("branch:feature/auth"),
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .memorize(
+                "pattern",
+                "Other branch finding",
+                None,
+                None,
+                Some("branch:feature/other"),
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .memorize(
+                "pattern",
+                "Codebase finding",
+                None,
+                None,
+                Some("codebase"),
+                None,
+            )
+            .await
+            .unwrap();
 
         store.flush_branch("feature/auth").await.unwrap();
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("patterns.md"))
             .await
             .unwrap();
-        assert!(content.contains("Other branch finding"), "Should preserve other branch: {content}");
-        assert!(content.contains("Codebase finding"), "Should preserve codebase: {content}");
+        assert!(
+            content.contains("Other branch finding"),
+            "Should preserve other branch: {content}"
+        );
+        assert!(
+            content.contains("Codebase finding"),
+            "Should preserve codebase: {content}"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -1353,13 +1775,22 @@ fn memorize_includes_hash_comment() {
     run_async(async {
         let store = MemoryStore::new();
 
-        store.memorize("pattern", "Test finding", None, None, None, None).await.unwrap();
+        store
+            .memorize("pattern", "Test finding", None, None, None, None)
+            .await
+            .unwrap();
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("patterns.md"))
             .await
             .unwrap();
-        assert!(content.contains("<!-- hash:"), "Should include hash comment: {content}");
-        assert!(content.contains("[x1]"), "Should include evidence count [x1]: {content}");
+        assert!(
+            content.contains("<!-- hash:"),
+            "Should include hash comment: {content}"
+        );
+        assert!(
+            content.contains("[x1]"),
+            "Should include evidence count [x1]: {content}"
+        );
     });
     teardown(&dir, &orig);
 }
@@ -1381,7 +1812,14 @@ async fn memorize_metadata_renders_in_pattern() {
     meta.insert("diff_size".to_string(), "+120 -45".to_string());
 
     store
-        .memorize("pattern", "Auth bypass found", None, None, None, Some(&meta))
+        .memorize(
+            "pattern",
+            "Auth bypass found",
+            None,
+            None,
+            None,
+            Some(&meta),
+        )
         .await
         .unwrap();
 
@@ -1389,7 +1827,10 @@ async fn memorize_metadata_renders_in_pattern() {
         .await
         .unwrap();
     assert!(content.contains("- consensus: 3/5"), "content: {content}");
-    assert!(content.contains("- diff_size: +120 -45"), "content: {content}");
+    assert!(
+        content.contains("- diff_size: +120 -45"),
+        "content: {content}"
+    );
     let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
 }
 
@@ -1414,9 +1855,18 @@ async fn memorize_empty_metadata_no_extra_lines() {
     // Should not contain any "- key: value" lines other than standard ones
     let custom_meta_lines: Vec<&str> = content
         .lines()
-        .filter(|l| l.starts_with("- ") && !l.starts_with("- Scope:") && !l.starts_with("- Model:") && !l.starts_with("- Tags:") && !l.starts_with("- Evidence:"))
+        .filter(|l| {
+            l.starts_with("- ")
+                && !l.starts_with("- Scope:")
+                && !l.starts_with("- Model:")
+                && !l.starts_with("- Tags:")
+                && !l.starts_with("- Evidence:")
+        })
         .collect();
-    assert!(custom_meta_lines.is_empty(), "unexpected metadata: {custom_meta_lines:?}");
+    assert!(
+        custom_meta_lines.is_empty(),
+        "unexpected metadata: {custom_meta_lines:?}"
+    );
     let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
 }
 
@@ -1565,11 +2015,22 @@ async fn defect_read_error_must_not_destroy_existing_patterns() {
     let store = MemoryStore::with_base_dir(tmp.clone());
 
     // Write 3 patterns
-    store.memorize("pattern", "Pattern A", None, None, None, None).await.unwrap();
-    store.memorize("pattern", "Pattern B", None, None, None, None).await.unwrap();
-    store.memorize("pattern", "Pattern C", None, None, None, None).await.unwrap();
+    store
+        .memorize("pattern", "Pattern A", None, None, None, None)
+        .await
+        .unwrap();
+    store
+        .memorize("pattern", "Pattern B", None, None, None, None)
+        .await
+        .unwrap();
+    store
+        .memorize("pattern", "Pattern C", None, None, None, None)
+        .await
+        .unwrap();
 
-    let before = tokio::fs::read_to_string(tmp.join("patterns.md")).await.unwrap();
+    let before = tokio::fs::read_to_string(tmp.join("patterns.md"))
+        .await
+        .unwrap();
     assert!(before.contains("Pattern A"), "setup: {before}");
     assert!(before.contains("Pattern B"), "setup: {before}");
     assert!(before.contains("Pattern C"), "setup: {before}");
@@ -1583,7 +2044,9 @@ async fn defect_read_error_must_not_destroy_existing_patterns() {
     }
 
     // Try to memorize — should FAIL, not silently destroy the file
-    let result = store.memorize("pattern", "Pattern D", None, None, None, None).await;
+    let result = store
+        .memorize("pattern", "Pattern D", None, None, None, None)
+        .await;
 
     // Restore permissions for cleanup
     #[cfg(unix)]
@@ -1594,13 +2057,28 @@ async fn defect_read_error_must_not_destroy_existing_patterns() {
     }
 
     // The operation should have returned an error
-    assert!(result.is_err(), "memorize should fail when patterns.md can't be read, got: {:?}", result);
+    assert!(
+        result.is_err(),
+        "memorize should fail when patterns.md can't be read, got: {:?}",
+        result
+    );
 
     // The original file must still contain all 3 patterns (no data loss)
-    let after = tokio::fs::read_to_string(tmp.join("patterns.md")).await.unwrap();
-    assert!(after.contains("Pattern A"), "Pattern A destroyed! after: {after}");
-    assert!(after.contains("Pattern B"), "Pattern B destroyed! after: {after}");
-    assert!(after.contains("Pattern C"), "Pattern C destroyed! after: {after}");
+    let after = tokio::fs::read_to_string(tmp.join("patterns.md"))
+        .await
+        .unwrap();
+    assert!(
+        after.contains("Pattern A"),
+        "Pattern A destroyed! after: {after}"
+    );
+    assert!(
+        after.contains("Pattern B"),
+        "Pattern B destroyed! after: {after}"
+    );
+    assert!(
+        after.contains("Pattern C"),
+        "Pattern C destroyed! after: {after}"
+    );
 
     let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
 }
@@ -1611,10 +2089,10 @@ async fn defect_read_error_must_not_destroy_existing_patterns() {
 /// returns None. Default review also uses model_id, so these models are never queried.
 #[test]
 fn defect_listmodels_must_return_map_key_not_model_id() {
-    use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
     use squall::config::Config;
-    use std::collections::HashMap;
+    use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
     use squall::tools::listmodels::ModelInfo;
+    use std::collections::HashMap;
 
     let mut models = HashMap::new();
     models.insert(
@@ -1634,7 +2112,10 @@ fn defect_listmodels_must_return_map_key_not_model_id() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Registry::from_config(config);
 
     // listmodels returns entries — the name shown to users must be the lookup key
@@ -1644,12 +2125,18 @@ fn defect_listmodels_must_return_map_key_not_model_id() {
     let info = ModelInfo::from(entries[0]);
 
     // The name must be "deepseek-r1" (the key), NOT "deepseek-reasoner" (the model_id)
-    assert_eq!(info.name, "deepseek-r1",
-        "listmodels should return map key 'deepseek-r1', not model_id '{}'", info.name);
+    assert_eq!(
+        info.name, "deepseek-r1",
+        "listmodels should return map key 'deepseek-r1', not model_id '{}'",
+        info.name
+    );
 
     // And that key must be resolvable via Registry::get
-    assert!(registry.get(&info.name).is_some(),
-        "Registry::get('{}') should find the model", info.name);
+    assert!(
+        registry.get(&info.name).is_some(),
+        "Registry::get('{}') should find the model",
+        info.name
+    );
 }
 
 /// DEFECT #3: SSE keep-alive events (ParsedChunk::Skip) don't reset the stall timer.
@@ -1657,9 +2144,9 @@ fn defect_listmodels_must_return_map_key_not_model_id() {
 /// the stall timer expires and kills the request, even though the connection is alive.
 #[tokio::test]
 async fn defect_sse_keepalive_must_reset_stall_timer() {
+    use squall::dispatch::ProviderRequest;
     use squall::dispatch::http::HttpDispatch;
     use squall::dispatch::registry::ApiFormat;
-    use squall::dispatch::ProviderRequest;
     use std::time::{Duration, Instant};
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
@@ -1683,7 +2170,10 @@ async fn defect_sse_keepalive_must_reset_stall_timer() {
         // Send SSE data events that parse to ParsedChunk::Skip every 500ms for 4 seconds.
         // Empty JSON objects with no content/choices → Skip in parse_openai_event.
         for _ in 0..8 {
-            stream.write_all(b"data: {\"choices\":[]}\n\n").await.unwrap();
+            stream
+                .write_all(b"data: {\"choices\":[]}\n\n")
+                .await
+                .unwrap();
             stream.flush().await.unwrap();
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
@@ -1723,7 +2213,10 @@ async fn defect_sse_keepalive_must_reset_stall_timer() {
     // With the bug: stall timer expires at 3s (keep-alives don't reset it) → timeout/partial
     // With the fix: keep-alives reset the timer → "survived" text arrives at 4s → success
     let result = result.expect("request should succeed when keep-alives are present");
-    assert_eq!(result.text, "survived", "should receive text after keep-alive period");
+    assert_eq!(
+        result.text, "survived",
+        "should receive text after keep-alive period"
+    );
     assert!(!result.partial, "should be complete, not partial");
 }
 
@@ -1743,12 +2236,34 @@ async fn defect_scope_blind_dedup_must_not_merge_across_scopes() {
     let store = MemoryStore::with_base_dir(tmp.clone());
 
     // Memorize same content under branch:alpha
-    store.memorize("pattern", "Race condition in auth", None, None, Some("branch:alpha"), None).await.unwrap();
+    store
+        .memorize(
+            "pattern",
+            "Race condition in auth",
+            None,
+            None,
+            Some("branch:alpha"),
+            None,
+        )
+        .await
+        .unwrap();
 
     // Memorize same content under branch:beta
-    store.memorize("pattern", "Race condition in auth", None, None, Some("branch:beta"), None).await.unwrap();
+    store
+        .memorize(
+            "pattern",
+            "Race condition in auth",
+            None,
+            None,
+            Some("branch:beta"),
+            None,
+        )
+        .await
+        .unwrap();
 
-    let content = tokio::fs::read_to_string(tmp.join("patterns.md")).await.unwrap();
+    let content = tokio::fs::read_to_string(tmp.join("patterns.md"))
+        .await
+        .unwrap();
 
     // Should have TWO separate entries — one per scope
     let x1_count = content.matches("[x1]").count();
@@ -1786,12 +2301,34 @@ async fn defect_dedup_merge_must_preserve_prior_model_and_tags() {
     let tags = vec!["security".to_string(), "payment".to_string()];
 
     // First memorize with model + tags
-    store.memorize("pattern", "Null pointer in payment handler", Some("gemini"), Some(&tags), Some("codebase"), None).await.unwrap();
+    store
+        .memorize(
+            "pattern",
+            "Null pointer in payment handler",
+            Some("gemini"),
+            Some(&tags),
+            Some("codebase"),
+            None,
+        )
+        .await
+        .unwrap();
 
     // Second memorize — same content + scope, but NO model or tags
-    store.memorize("pattern", "Null pointer in payment handler", None, None, Some("codebase"), None).await.unwrap();
+    store
+        .memorize(
+            "pattern",
+            "Null pointer in payment handler",
+            None,
+            None,
+            Some("codebase"),
+            None,
+        )
+        .await
+        .unwrap();
 
-    let content = tokio::fs::read_to_string(tmp.join("patterns.md")).await.unwrap();
+    let content = tokio::fs::read_to_string(tmp.join("patterns.md"))
+        .await
+        .unwrap();
 
     // Should have [x2] (merged)
     assert!(content.contains("[x2]"), "Should have merged: {content}");
@@ -1825,10 +2362,21 @@ fn memorize_recommend_category_accepted() {
     run_async(async {
         let store = MemoryStore::new();
         let result = store
-            .memorize("recommend", "grok best for fast triage", Some("grok"), None, None, None)
+            .memorize(
+                "recommend",
+                "grok best for fast triage",
+                Some("grok"),
+                None,
+                None,
+                None,
+            )
             .await;
 
-        assert!(result.is_ok(), "recommend category should be accepted: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "recommend category should be accepted: {:?}",
+            result.err()
+        );
         // Recommend is routed to tactics.md
         let tactics = tokio::fs::read_to_string(memory_dir(&dir).join("tactics.md"))
             .await

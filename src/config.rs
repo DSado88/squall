@@ -167,11 +167,7 @@ impl TomlConfig {
                         Ok(k) if !k.trim().is_empty() => k,
                         _ => skip!(format!("{key_env} not set or empty")),
                     };
-                    let api_format = match provider
-                        .api_format
-                        .as_deref()
-                        .unwrap_or("openai")
-                    {
+                    let api_format = match provider.api_format.as_deref().unwrap_or("openai") {
                         "openai" => ApiFormat::OpenAi,
                         "anthropic" => ApiFormat::Anthropic,
                         other => skip!(format!("unknown api_format '{other}'")),
@@ -194,9 +190,7 @@ impl TomlConfig {
                     }
                 }
                 "cli" => {
-                    let executable = model
-                        .executable
-                        .unwrap_or_else(|| name.clone());
+                    let executable = model.executable.unwrap_or_else(|| name.clone());
                     if !which_exists(&executable) {
                         skip!(format!("{executable} not found in PATH"));
                     }
@@ -234,14 +228,11 @@ impl TomlConfig {
                         Ok(k) if !k.trim().is_empty() => k,
                         _ => skip!(format!("{key_env} not set or empty")),
                     };
-                    let provider_type =
-                        match model.async_poll_type.as_deref().unwrap_or("") {
-                            "openai_responses" => AsyncPollProviderType::OpenAiResponses,
-                            "gemini_interactions" => {
-                                AsyncPollProviderType::GeminiInteractions
-                            }
-                            other => skip!(format!("unknown async_poll_type '{other}'")),
-                        };
+                    let provider_type = match model.async_poll_type.as_deref().unwrap_or("") {
+                        "openai_responses" => AsyncPollProviderType::OpenAiResponses,
+                        "gemini_interactions" => AsyncPollProviderType::GeminiInteractions,
+                        other => skip!(format!("unknown async_poll_type '{other}'")),
+                    };
                     ModelEntry {
                         model_id,
                         provider: model.provider.unwrap_or_else(|| name.clone()),
@@ -252,9 +243,7 @@ impl TomlConfig {
                         description: model.description.unwrap_or_default(),
                         strengths: model.strengths.unwrap_or_default(),
                         weaknesses: model.weaknesses.unwrap_or_default(),
-                        speed_tier: model
-                            .speed_tier
-                            .unwrap_or_else(|| "very_slow".to_string()),
+                        speed_tier: model.speed_tier.unwrap_or_else(|| "very_slow".to_string()),
                         precision_tier: model
                             .precision_tier
                             .unwrap_or_else(|| "medium".to_string()),
@@ -267,11 +256,7 @@ impl TomlConfig {
         }
 
         if !skipped.is_empty() {
-            tracing::warn!(
-                "skipped {} model(s): {}",
-                skipped.len(),
-                skipped.join(", ")
-            );
+            tracing::warn!("skipped {} model(s): {}", skipped.len(), skipped.join(", "));
         }
         if models.is_empty() {
             tracing::error!("no models configured — set API keys or check config");
@@ -425,10 +410,7 @@ impl Config {
                         config.merge(user);
                     }
                     Err(e) => {
-                        tracing::warn!(
-                            "failed to parse {}: {e}",
-                            path.display()
-                        );
+                        tracing::warn!("failed to parse {}: {e}", path.display());
                     }
                 },
                 Err(e) => {
@@ -442,24 +424,15 @@ impl Config {
             match std::fs::read_to_string(&project_path) {
                 Ok(contents) => match toml::from_str::<TomlConfig>(&contents) {
                     Ok(project) => {
-                        tracing::info!(
-                            "loaded project config from {}",
-                            project_path.display()
-                        );
+                        tracing::info!("loaded project config from {}", project_path.display());
                         config.merge(project);
                     }
                     Err(e) => {
-                        tracing::warn!(
-                            "failed to parse {}: {e}",
-                            project_path.display()
-                        );
+                        tracing::warn!("failed to parse {}: {e}", project_path.display());
                     }
                 },
                 Err(e) => {
-                    tracing::warn!(
-                        "failed to read {}: {e}",
-                        project_path.display()
-                    );
+                    tracing::warn!("failed to read {}: {e}", project_path.display());
                 }
             }
         }
@@ -475,8 +448,7 @@ impl Config {
     /// Load config from a TOML string (for testing).
     #[cfg(test)]
     pub fn from_toml(toml_str: &str) -> Self {
-        let config: TomlConfig =
-            toml::from_str(toml_str).expect("invalid TOML in test");
+        let config: TomlConfig = toml::from_str(toml_str).expect("invalid TOML in test");
         config.resolve()
     }
 }
@@ -697,7 +669,9 @@ fn find_project_config(start: &std::path::Path) -> Option<PathBuf> {
 
 /// Walk up from the current working directory.
 fn find_project_config_from_cwd() -> Option<PathBuf> {
-    env::current_dir().ok().and_then(|cwd| find_project_config(&cwd))
+    env::current_dir()
+        .ok()
+        .and_then(|cwd| find_project_config(&cwd))
 }
 
 /// Check if an executable exists in PATH.
@@ -757,10 +731,7 @@ mod tests {
         )
         .unwrap();
         base.merge(overlay);
-        assert_eq!(
-            base.models["grok"].model_id.as_deref(),
-            Some("grok-custom")
-        );
+        assert_eq!(base.models["grok"].model_id.as_deref(), Some("grok-custom"));
     }
 
     #[test]
@@ -810,7 +781,9 @@ mod tests {
     #[test]
     fn resolve_http_model_with_env_key() {
         let key = "SQUALL_TEST_RESOLVE_KEY_HTTP";
-        unsafe { env::set_var(key, "test-secret"); }
+        unsafe {
+            env::set_var(key, "test-secret");
+        }
         let config: TomlConfig = toml::from_str(&format!(
             r#"
             [providers.testprov]
@@ -827,18 +800,25 @@ mod tests {
         ))
         .unwrap();
         let resolved = config.resolve();
-        let entry = resolved.models.get("test-model").expect("model should exist");
+        let entry = resolved
+            .models
+            .get("test-model")
+            .expect("model should exist");
         assert_eq!(entry.model_id, "test-v1");
         assert_eq!(entry.provider, "testprov");
         assert_eq!(entry.speed_tier, "fast");
         assert!(matches!(entry.backend, BackendConfig::Http { .. }));
-        unsafe { env::remove_var(key); }
+        unsafe {
+            env::remove_var(key);
+        }
     }
 
     #[test]
     fn resolve_model_id_defaults_to_name() {
         let key = "SQUALL_TEST_RESOLVE_KEY_DEFAULT_ID";
-        unsafe { env::set_var(key, "secret"); }
+        unsafe {
+            env::set_var(key, "secret");
+        }
         let config: TomlConfig = toml::from_str(&format!(
             r#"
             [providers.p]
@@ -853,8 +833,13 @@ mod tests {
         .unwrap();
         let resolved = config.resolve();
         let entry = resolved.models.get("my-model").unwrap();
-        assert_eq!(entry.model_id, "my-model", "model_id should default to the model name");
-        unsafe { env::remove_var(key); }
+        assert_eq!(
+            entry.model_id, "my-model",
+            "model_id should default to the model name"
+        );
+        unsafe {
+            env::remove_var(key);
+        }
     }
 
     #[test]
@@ -890,7 +875,9 @@ mod tests {
     #[test]
     fn resolve_async_poll_model() {
         let key = "SQUALL_TEST_RESOLVE_KEY_ASYNC";
-        unsafe { env::set_var(key, "secret"); }
+        unsafe {
+            env::set_var(key, "secret");
+        }
         let config: TomlConfig = toml::from_str(&format!(
             r#"
             [models.test-research]
@@ -908,7 +895,9 @@ mod tests {
             .get("test-research")
             .expect("async_poll model should exist");
         assert!(matches!(entry.backend, BackendConfig::AsyncPoll { .. }));
-        unsafe { env::remove_var(key); }
+        unsafe {
+            env::remove_var(key);
+        }
     }
 
     #[test]
@@ -934,7 +923,9 @@ mod tests {
     #[test]
     fn from_toml_convenience() {
         let key = "SQUALL_TEST_FROM_TOML";
-        unsafe { env::set_var(key, "secret"); }
+        unsafe {
+            env::set_var(key, "secret");
+        }
         let config = Config::from_toml(&format!(
             r#"
             [providers.t]
@@ -947,7 +938,9 @@ mod tests {
             "#
         ));
         assert!(config.models.contains_key("t-model"));
-        unsafe { env::remove_var(key); }
+        unsafe {
+            env::remove_var(key);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -997,7 +990,9 @@ mod tests {
     #[test]
     fn p1_unknown_api_format_is_rejected() {
         let key = "SQUALL_TEST_P1_API_FORMAT_KEY";
-        unsafe { env::set_var(key, "secret"); }
+        unsafe {
+            env::set_var(key, "secret");
+        }
         let config: TomlConfig = toml::from_str(&format!(
             r#"
             [providers.bad-format]
@@ -1018,7 +1013,9 @@ mod tests {
             "Model with unknown api_format 'anthrpoic' should be skipped, \
              not silently default to OpenAI"
         );
-        unsafe { env::remove_var(key); }
+        unsafe {
+            env::remove_var(key);
+        }
     }
 
     /// P1: Empty API key string (KEY="") is accepted and stored.
@@ -1026,7 +1023,9 @@ mod tests {
     #[test]
     fn p1_empty_api_key_is_rejected() {
         let key = "SQUALL_TEST_P1_EMPTY_KEY";
-        unsafe { env::set_var(key, ""); }  // empty string
+        unsafe {
+            env::set_var(key, "");
+        } // empty string
         let config: TomlConfig = toml::from_str(&format!(
             r#"
             [providers.empty]
@@ -1045,7 +1044,9 @@ mod tests {
             !resolved.models.contains_key("empty-key-model"),
             "Model with empty API key should be skipped, not accepted"
         );
-        unsafe { env::remove_var(key); }
+        unsafe {
+            env::remove_var(key);
+        }
     }
 
     /// #2: resolve() should report skipped models in a summary, not just
@@ -1054,7 +1055,9 @@ mod tests {
     #[test]
     fn find2_resolve_reports_skipped_models() {
         let key = "SQUALL_TEST_F2_KEY";
-        unsafe { env::set_var(key, "secret"); }
+        unsafe {
+            env::set_var(key, "secret");
+        }
         let config: TomlConfig = toml::from_str(&format!(
             r#"
             [providers.good]
@@ -1083,7 +1086,9 @@ mod tests {
             resolved.skipped.iter().any(|s| s.contains("bad-model")),
             "Skipped list should mention 'bad-model'"
         );
-        unsafe { env::remove_var(key); }
+        unsafe {
+            env::remove_var(key);
+        }
     }
 
     /// #7: Project config should be found by walking up from CWD, not just

@@ -136,10 +136,7 @@ async fn hard_gate_excludes_model_below_threshold() {
     );
 
     // Warning should mention the exclusion
-    let gate_warning = resp
-        .warnings
-        .iter()
-        .find(|w| w.contains("hard gate"));
+    let gate_warning = resp.warnings.iter().find(|w| w.contains("hard gate"));
     assert!(
         gate_warning.is_some(),
         "should have a hard gate warning. Warnings: {:?}",
@@ -343,14 +340,21 @@ async fn get_model_stats_computes_correctly() {
 | 2026-02-23T10:01:00Z | slow-model | 40.0s | success | no | — | 2000 |";
 
     let (store, _dir) = store_with_events(events);
-    let stats = store.get_model_stats(None).await.expect("should have stats");
+    let stats = store
+        .get_model_stats(None)
+        .await
+        .expect("should have stats");
 
-    let fast = stats.get("fast-model").expect("fast-model should be present");
+    let fast = stats
+        .get("fast-model")
+        .expect("fast-model should be present");
     assert_eq!(fast.sample_count, 3);
     assert!((fast.success_rate - 2.0 / 3.0).abs() < 0.01);
     assert!((fast.avg_latency_secs - 5.0).abs() < 0.01);
 
-    let slow = stats.get("slow-model").expect("slow-model should be present");
+    let slow = stats
+        .get("slow-model")
+        .expect("slow-model should be present");
     assert_eq!(slow.sample_count, 2);
     assert!((slow.success_rate - 1.0).abs() < 0.01);
     assert!((slow.avg_latency_secs - 35.0).abs() < 0.01);
@@ -375,15 +379,34 @@ async fn normalization_maps_model_id_to_config_key() {
     // Build normalization map: model_id → config_key
     let mut id_to_key = HashMap::new();
     id_to_key.insert("grok-4-1-fast-reasoning".to_string(), "grok".to_string());
-    id_to_key.insert("deepseek-ai/DeepSeek-V3.1".to_string(), "deepseek-v3.1".to_string());
+    id_to_key.insert(
+        "deepseek-ai/DeepSeek-V3.1".to_string(),
+        "deepseek-v3.1".to_string(),
+    );
 
-    let stats = store.get_model_stats(Some(&id_to_key)).await.expect("should have stats");
+    let stats = store
+        .get_model_stats(Some(&id_to_key))
+        .await
+        .expect("should have stats");
 
     // Should be keyed by config key, not model_id
-    assert!(stats.contains_key("grok"), "Should have 'grok' key, got: {:?}", stats.keys().collect::<Vec<_>>());
-    assert!(stats.contains_key("deepseek-v3.1"), "Should have 'deepseek-v3.1' key");
-    assert!(!stats.contains_key("grok-4-1-fast-reasoning"), "Should NOT have model_id key");
-    assert!(!stats.contains_key("deepseek-ai/DeepSeek-V3.1"), "Should NOT have model_id key");
+    assert!(
+        stats.contains_key("grok"),
+        "Should have 'grok' key, got: {:?}",
+        stats.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        stats.contains_key("deepseek-v3.1"),
+        "Should have 'deepseek-v3.1' key"
+    );
+    assert!(
+        !stats.contains_key("grok-4-1-fast-reasoning"),
+        "Should NOT have model_id key"
+    );
+    assert!(
+        !stats.contains_key("deepseek-ai/DeepSeek-V3.1"),
+        "Should NOT have model_id key"
+    );
 
     let grok = stats.get("grok").unwrap();
     assert_eq!(grok.sample_count, 2);
@@ -396,9 +419,15 @@ async fn normalization_none_uses_raw_names() {
 | 2026-02-24T10:00:00Z | grok-4-1-fast-reasoning | 10.0s | success | no | — | 1000 |";
 
     let (store, _dir) = store_with_events(events);
-    let stats = store.get_model_stats(None).await.expect("should have stats");
+    let stats = store
+        .get_model_stats(None)
+        .await
+        .expect("should have stats");
 
-    assert!(stats.contains_key("grok-4-1-fast-reasoning"), "Without map, raw names preserved");
+    assert!(
+        stats.contains_key("grok-4-1-fast-reasoning"),
+        "Without map, raw names preserved"
+    );
 }
 
 // Bug 2: Auth failures are excluded from success rate calculation.
@@ -418,14 +447,24 @@ async fn auth_failures_excluded_from_success_rate() {
 | 2026-02-24T10:09:00Z | bad-model | 0.5s | error | no | auth_failed | 401 Unauthorized | 1000 |";
 
     let (store, _dir) = store_with_events(events);
-    let stats = store.get_model_stats(None).await.expect("should have stats");
+    let stats = store
+        .get_model_stats(None)
+        .await
+        .expect("should have stats");
 
     let bad = stats.get("bad-model").unwrap();
     // 5 successes + 5 auth failures. Auth failures excluded from denominator.
     // Success rate should be 5/5 = 100%, NOT 5/10 = 50%.
     assert_eq!(bad.sample_count, 5, "Only quality events count as samples");
-    assert!((bad.success_rate - 1.0).abs() < 0.01, "5/5 = 100%, got {:.2}%", bad.success_rate * 100.0);
-    assert_eq!(bad.infrastructure_failures, 5, "Should track 5 infra failures");
+    assert!(
+        (bad.success_rate - 1.0).abs() < 0.01,
+        "5/5 = 100%, got {:.2}%",
+        bad.success_rate * 100.0
+    );
+    assert_eq!(
+        bad.infrastructure_failures, 5,
+        "Should track 5 infra failures"
+    );
 }
 
 // Bug 2: Old format events (without reason column) still parse correctly.
@@ -437,12 +476,21 @@ async fn old_format_events_parse_without_reason() {
 | 2026-02-24T10:01:00Z | old-model | 15.0s | error | no | timeout | 1000 |";
 
     let (store, _dir) = store_with_events(events);
-    let stats = store.get_model_stats(None).await.expect("should have stats");
+    let stats = store
+        .get_model_stats(None)
+        .await
+        .expect("should have stats");
 
     let old = stats.get("old-model").unwrap();
-    assert_eq!(old.sample_count, 2, "Both old-format events should be quality events");
+    assert_eq!(
+        old.sample_count, 2,
+        "Both old-format events should be quality events"
+    );
     assert!((old.success_rate - 0.5).abs() < 0.01, "1/2 = 50%");
-    assert_eq!(old.infrastructure_failures, 0, "No infra failures in old format");
+    assert_eq!(
+        old.infrastructure_failures, 0,
+        "No infra failures in old format"
+    );
 }
 
 // Bug 3: Display rounding shows one decimal place (69.9%, not 70%).
@@ -454,7 +502,8 @@ async fn display_rounding_shows_one_decimal() {
     for i in 0..699 {
         event_lines.push(format!(
             "| 2026-02-24T10:{:02}:{:02}Z | borderline | 10.0s | success | no | — | — | 1000 |",
-            i / 60, i % 60
+            i / 60,
+            i % 60
         ));
     }
     for i in 0..301 {
@@ -466,13 +515,19 @@ async fn display_rounding_shows_one_decimal() {
     let events = event_lines.join("\n");
 
     let (store, _dir) = store_with_events(&events);
-    let stats = store.get_model_stats(None).await.expect("should have stats");
+    let stats = store
+        .get_model_stats(None)
+        .await
+        .expect("should have stats");
 
     let b = stats.get("borderline").unwrap();
     // Verify the model IS below threshold
-    assert!(b.success_rate < squall::review::MIN_SUCCESS_RATE,
+    assert!(
+        b.success_rate < squall::review::MIN_SUCCESS_RATE,
         "69.9% ({:.3}) should be below {:.1}% threshold",
-        b.success_rate, squall::review::MIN_SUCCESS_RATE * 100.0);
+        b.success_rate,
+        squall::review::MIN_SUCCESS_RATE * 100.0
+    );
 
     // Verify display format uses 1 decimal
     let display = format!("{:.1}%", b.success_rate * 100.0);
@@ -491,9 +546,16 @@ async fn partial_results_not_counted_as_success() {
 | 2026-02-24T10:04:00Z | partial-model | 10.0s | success | yes | partial | — | 1000 |";
 
     let (store, _dir) = store_with_events(events);
-    let stats = store.get_model_stats(None).await.expect("should have stats");
+    let stats = store
+        .get_model_stats(None)
+        .await
+        .expect("should have stats");
 
     let p = stats.get("partial-model").unwrap();
     assert_eq!(p.sample_count, 5, "All 5 are quality events");
-    assert!((p.success_rate - 0.0).abs() < 0.01, "0 full successes / 5 = 0%, got {:.1}%", p.success_rate * 100.0);
+    assert!(
+        (p.success_rate - 0.0).abs() < 0.01,
+        "0 full successes / 5 = 0%, got {:.1}%",
+        p.success_rate * 100.0
+    );
 }

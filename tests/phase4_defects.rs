@@ -47,7 +47,8 @@ fn find4_3b_anthropic_parser_handles_error_event() {
 fn find4_3c_anthropic_parser_text_delta_still_works() {
     use squall::dispatch::http::parse_anthropic_event_pub;
 
-    let event = r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello world"}}"#;
+    let event =
+        r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello world"}}"#;
     let result = parse_anthropic_event_pub(event);
     assert!(result.is_text());
     assert_eq!(result.text().unwrap(), "Hello world");
@@ -141,7 +142,9 @@ fn find4_7_recommendation_scoring_uses_sample_count() {
     // Note: "Quick triage" picks the fastest model with >80% success (model-a),
     // which is correct behavior — triage is about speed, not sample size.
     // The RANKING table is what should reflect Bayesian smoothing.
-    let table_start = recommendations.find("| Model |").expect("ranking table should exist");
+    let table_start = recommendations
+        .find("| Model |")
+        .expect("ranking table should exist");
     let table_section = &recommendations[table_start..];
     let pos_a = table_section.find("model-a");
     let pos_b = table_section.find("model-b");
@@ -167,8 +170,8 @@ fn find4_7_recommendation_scoring_uses_sample_count() {
 
 #[test]
 fn find4_8_gemini_error_parsing_extracts_nested_message() {
-    use squall::dispatch::async_poll::GeminiInteractionsApi;
     use squall::dispatch::async_poll::AsyncPollApi;
+    use squall::dispatch::async_poll::GeminiInteractionsApi;
 
     let api = GeminiInteractionsApi;
 
@@ -200,8 +203,8 @@ fn find4_8_gemini_error_parsing_extracts_nested_message() {
 
 #[test]
 fn find4_8b_gemini_error_string_still_works() {
-    use squall::dispatch::async_poll::GeminiInteractionsApi;
     use squall::dispatch::async_poll::AsyncPollApi;
+    use squall::dispatch::async_poll::GeminiInteractionsApi;
 
     let api = GeminiInteractionsApi;
 

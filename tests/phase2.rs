@@ -2,9 +2,9 @@
 
 use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry};
 use squall::error::SquallError;
-use squall::parsers::gemini::GeminiParser;
-use squall::parsers::codex::CodexParser;
 use squall::parsers::OutputParser;
+use squall::parsers::codex::CodexParser;
+use squall::parsers::gemini::GeminiParser;
 
 // ---------------------------------------------------------------------------
 // Gemini parser
@@ -53,10 +53,14 @@ fn codex_parser_extracts_message_content() {
     let parser = CodexParser;
     // Real Codex JSONL event stream format
     let input = concat!(
-        r#"{"type":"thread.started","thread_id":"abc123"}"#, "\n",
-        r#"{"type":"turn.started"}"#, "\n",
-        r#"{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Hello from Codex!"}}"#, "\n",
-        r#"{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":20}}"#, "\n",
+        r#"{"type":"thread.started","thread_id":"abc123"}"#,
+        "\n",
+        r#"{"type":"turn.started"}"#,
+        "\n",
+        r#"{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Hello from Codex!"}}"#,
+        "\n",
+        r#"{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":20}}"#,
+        "\n",
     );
     let result = parser.parse(input.as_bytes()).unwrap();
     assert_eq!(result, "Hello from Codex!");
@@ -66,9 +70,12 @@ fn codex_parser_extracts_message_content() {
 fn codex_parser_joins_multiple_messages() {
     let parser = CodexParser;
     let input = concat!(
-        r#"{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Part 1"}}"#, "\n",
-        r#"{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Part 2"}}"#, "\n",
-        r#"{"type":"turn.completed","usage":{}}"#, "\n",
+        r#"{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Part 1"}}"#,
+        "\n",
+        r#"{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Part 2"}}"#,
+        "\n",
+        r#"{"type":"turn.completed","usage":{}}"#,
+        "\n",
     );
     let result = parser.parse(input.as_bytes()).unwrap();
     assert_eq!(result, "Part 1\nPart 2");
@@ -87,12 +94,18 @@ fn codex_parser_skips_non_message_events() {
     let parser = CodexParser;
     // Only tool calls, no agent_message events
     let input = concat!(
-        r#"{"type":"thread.started","thread_id":"abc"}"#, "\n",
-        r#"{"type":"item.completed","item":{"id":"item_0","type":"tool_call","text":"ignored"}}"#, "\n",
-        r#"{"type":"turn.completed","usage":{}}"#, "\n",
+        r#"{"type":"thread.started","thread_id":"abc"}"#,
+        "\n",
+        r#"{"type":"item.completed","item":{"id":"item_0","type":"tool_call","text":"ignored"}}"#,
+        "\n",
+        r#"{"type":"turn.completed","usage":{}}"#,
+        "\n",
     );
     let result = parser.parse(input.as_bytes());
-    assert!(result.is_err(), "Should reject stream with no agent_message events");
+    assert!(
+        result.is_err(),
+        "Should reject stream with no agent_message events"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +176,10 @@ fn process_exit_error_carries_stderr() {
     // user_message now includes stderr preview for debuggability
     let msg = err.user_message();
     assert!(msg.contains("code 1"));
-    assert!(msg.contains("model not found"), "user_message should include stderr preview");
+    assert!(
+        msg.contains("model not found"),
+        "user_message should include stderr preview"
+    );
 }
 
 #[test]
@@ -174,9 +190,16 @@ fn process_exit_stderr_truncated_at_200_chars() {
         stderr: long_stderr,
     };
     let msg = err.user_message();
-    assert!(msg.contains("..."), "Long stderr should be truncated with ellipsis");
+    assert!(
+        msg.contains("..."),
+        "Long stderr should be truncated with ellipsis"
+    );
     // 200 chars of stderr + "..." prefix + "CLI process exited with code 1: " ≈ ~240 chars
-    assert!(msg.len() < 300, "Message should be bounded, got {}", msg.len());
+    assert!(
+        msg.len() < 300,
+        "Message should be bounded, got {}",
+        msg.len()
+    );
 }
 
 #[test]

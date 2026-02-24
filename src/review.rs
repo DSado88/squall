@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static PERSIST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -12,13 +12,13 @@ use tokio_util::sync::CancellationToken;
 /// Maximum number of models per review request (prevents DoS).
 pub const MAX_MODELS: usize = 20;
 
-use crate::dispatch::registry::Registry;
 use crate::dispatch::ProviderRequest;
+use crate::dispatch::registry::Registry;
 use crate::error::SquallError;
 use crate::memory::MemoryStore;
 use crate::tools::review::{
-    ModelStatus, ReviewModelResult, ReviewRequest, ReviewResponse, ReviewSummary,
-    MAX_INVESTIGATION_CONTEXT_BYTES,
+    MAX_INVESTIGATION_CONTEXT_BYTES, ModelStatus, ReviewModelResult, ReviewRequest, ReviewResponse,
+    ReviewSummary,
 };
 
 /// Minimum success rate for a model to pass the hard gate (70%).
@@ -159,7 +159,9 @@ impl ReviewExecutor {
             }
             // Safety: never dispatch to zero models (only if gate actually excluded something)
             if target_models.is_empty() && !gated.is_empty() {
-                let msg = "All requested models below success threshold — proceeding with original list".to_string();
+                let msg =
+                    "All requested models below success threshold — proceeding with original list"
+                        .to_string();
                 tracing::warn!("{msg}");
                 warnings.push(msg);
                 target_models = original;
@@ -197,7 +199,10 @@ impl ReviewExecutor {
         // Warn on unused per_model_system_prompts keys (likely caller typos)
         if let Some(ref per_model) = req.per_model_system_prompts {
             let target_set: HashSet<&String> = model_providers.iter().map(|(m, _)| m).collect();
-            let unused: Vec<&String> = per_model.keys().filter(|k| !target_set.contains(k)).collect();
+            let unused: Vec<&String> = per_model
+                .keys()
+                .filter(|k| !target_set.contains(k))
+                .collect();
             if !unused.is_empty() {
                 let msg = format!(
                     "per_model_system_prompts contains unknown models: {unused:?}. Check listmodels for valid names."
@@ -210,7 +215,10 @@ impl ReviewExecutor {
         // Warn on unused per_model_timeout_secs keys (likely caller typos)
         if let Some(ref per_model) = req.per_model_timeout_secs {
             let target_set: HashSet<&String> = model_providers.iter().map(|(m, _)| m).collect();
-            let unused: Vec<&String> = per_model.keys().filter(|k| !target_set.contains(k)).collect();
+            let unused: Vec<&String> = per_model
+                .keys()
+                .filter(|k| !target_set.contains(k))
+                .collect();
             if !unused.is_empty() {
                 let msg = format!(
                     "per_model_timeout_secs contains unknown models: {unused:?}. Check listmodels for valid names."
@@ -220,7 +228,8 @@ impl ReviewExecutor {
             }
             // Warn on zero-value timeouts — Duration::from_secs(0) causes immediate
             // deadline expiry, which is never the caller's intent.
-            let zeros: Vec<&String> = per_model.iter()
+            let zeros: Vec<&String> = per_model
+                .iter()
                 .filter(|&(_, v)| *v == 0)
                 .map(|(k, _)| k)
                 .collect();
@@ -422,10 +431,22 @@ impl ReviewExecutor {
         let summary = ReviewSummary {
             models_requested: original_model_count,
             models_gated: gated_count,
-            models_succeeded: results.iter().filter(|r| r.status == ModelStatus::Success && !r.partial).count(),
-            models_failed: results.iter().filter(|r| r.status == ModelStatus::Error && r.reason.as_deref() != Some("cutoff")).count(),
-            models_cutoff: results.iter().filter(|r| r.reason.as_deref() == Some("cutoff")).count(),
-            models_partial: results.iter().filter(|r| r.status == ModelStatus::Success && r.partial).count(),
+            models_succeeded: results
+                .iter()
+                .filter(|r| r.status == ModelStatus::Success && !r.partial)
+                .count(),
+            models_failed: results
+                .iter()
+                .filter(|r| r.status == ModelStatus::Error && r.reason.as_deref() != Some("cutoff"))
+                .count(),
+            models_cutoff: results
+                .iter()
+                .filter(|r| r.reason.as_deref() == Some("cutoff"))
+                .count(),
+            models_partial: results
+                .iter()
+                .filter(|r| r.status == ModelStatus::Success && r.partial)
+                .count(),
             models_not_started: not_started.len(),
             auto_selected,
             selection_reasoning,
@@ -503,7 +524,11 @@ pub fn collect_result(
             status: ModelStatus::Success,
             response: Some(pr.text),
             error: None,
-            reason: if pr.partial { Some("partial".to_string()) } else { None },
+            reason: if pr.partial {
+                Some("partial".to_string())
+            } else {
+                None
+            },
             latency_ms,
             partial: pr.partial,
         },
@@ -581,14 +606,12 @@ async fn persist_response(
     let path = reviews_dir.join(&filename);
 
     // Serialize the response, then merge in investigation_context if present.
-    let mut payload = serde_json::to_value(response)
-        .map_err(std::io::Error::other)?;
+    let mut payload = serde_json::to_value(response).map_err(std::io::Error::other)?;
     if let Some(ctx) = investigation_context {
         payload["investigation_context"] = serde_json::Value::String(ctx.to_string());
     }
 
-    let json = serde_json::to_string_pretty(&payload)
-        .map_err(std::io::Error::other)?;
+    let json = serde_json::to_string_pretty(&payload).map_err(std::io::Error::other)?;
 
     // Atomic write: temp file + rename prevents partial reads.
     // Clean up temp file on ANY failure (write or rename).

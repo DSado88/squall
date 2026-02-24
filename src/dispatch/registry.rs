@@ -9,9 +9,9 @@ use crate::dispatch::cli::CliDispatch;
 use crate::dispatch::http::HttpDispatch;
 use crate::dispatch::{ProviderRequest, ProviderResult};
 use crate::error::SquallError;
+use crate::parsers::OutputParser;
 use crate::parsers::codex::CodexParser;
 use crate::parsers::gemini::GeminiParser;
-use crate::parsers::OutputParser;
 
 /// Max concurrent CLI subprocesses per Squall instance.
 const CLI_MAX_CONCURRENT: usize = 4;
@@ -236,16 +236,13 @@ impl Registry {
     }
 
     pub async fn query(&self, req: &ProviderRequest) -> Result<ProviderResult, SquallError> {
-        let entry = self
-            .models
-            .get(&req.model)
-            .ok_or_else(|| {
-                let suggestions = self.suggest_models(&req.model);
-                SquallError::ModelNotFound {
-                    model: req.model.clone(),
-                    suggestions,
-                }
-            })?;
+        let entry = self.models.get(&req.model).ok_or_else(|| {
+            let suggestions = self.suggest_models(&req.model);
+            SquallError::ModelNotFound {
+                model: req.model.clone(),
+                suggestions,
+            }
+        })?;
 
         // Substitute the provider's model_id for the Squall model name.
         // e.g. "kimi-k2.5" → "moonshotai/Kimi-K2.5" for the API request body.
@@ -261,7 +258,8 @@ impl Registry {
                 api_key,
                 api_format,
             } => {
-                let _permit = Self::acquire_with_deadline(&self.http_semaphore, req.deadline).await?;
+                let _permit =
+                    Self::acquire_with_deadline(&self.http_semaphore, req.deadline).await?;
                 self.http
                     .query_model(req, &entry.provider, base_url, api_key, api_format)
                     .await
@@ -271,7 +269,8 @@ impl Registry {
                 args_template,
             } => {
                 let parser = Self::parser_for(&entry.provider)?;
-                let _permit = Self::acquire_with_deadline(&self.cli_semaphore, req.deadline).await?;
+                let _permit =
+                    Self::acquire_with_deadline(&self.cli_semaphore, req.deadline).await?;
                 self.cli
                     .query_model(
                         req,

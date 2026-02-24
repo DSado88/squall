@@ -183,6 +183,7 @@ impl ModelEvent {
     }
 
     /// Create a new ModelEvent, automatically computing the event_uid.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         project_id: String,
         ts: i64,
@@ -404,7 +405,7 @@ mod tests {
 
     #[test]
     fn current_version_is_positive() {
-        assert!(CURRENT_VERSION >= 1);
+        assert_ne!(CURRENT_VERSION, 0, "schema version must be positive");
     }
 
     // ----- DuckDB migration integration tests -----
@@ -418,8 +419,7 @@ mod tests {
         // Verify tables exist by querying them
         conn.execute_batch("SELECT COUNT(*) FROM schema_version")
             .unwrap();
-        conn.execute_batch("SELECT COUNT(*) FROM projects")
-            .unwrap();
+        conn.execute_batch("SELECT COUNT(*) FROM projects").unwrap();
         conn.execute_batch("SELECT COUNT(*) FROM model_events")
             .unwrap();
     }
@@ -432,9 +432,7 @@ mod tests {
         assert_eq!(v1, v2);
 
         // Only one version record
-        let mut stmt = conn
-            .prepare("SELECT COUNT(*) FROM schema_version")
-            .unwrap();
+        let mut stmt = conn.prepare("SELECT COUNT(*) FROM schema_version").unwrap();
         let count: i32 = stmt.query_row([], |row| row.get(0)).unwrap();
         assert_eq!(count, 1);
     }

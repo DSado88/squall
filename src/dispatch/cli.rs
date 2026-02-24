@@ -92,9 +92,18 @@ impl CliDispatch {
         {
             Some(t) => t,
             None => {
-                if matches!(persist_mode, PersistRawOutput::Always | PersistRawOutput::OnFailure) {
+                if matches!(
+                    persist_mode,
+                    PersistRawOutput::Always | PersistRawOutput::OnFailure
+                ) {
                     spawn_persist(
-                        persist_dir, b"", b"", &req.model, provider, -1, 0,
+                        persist_dir,
+                        b"",
+                        b"",
+                        &req.model,
+                        provider,
+                        -1,
+                        0,
                         "pre_spawn_timeout",
                     );
                 }
@@ -126,16 +135,25 @@ impl CliDispatch {
             Ok(c) => c,
             Err(e) => {
                 let elapsed_ms = start.elapsed().as_millis() as u64;
-                if matches!(persist_mode, PersistRawOutput::Always | PersistRawOutput::OnFailure) {
+                if matches!(
+                    persist_mode,
+                    PersistRawOutput::Always | PersistRawOutput::OnFailure
+                ) {
                     let status_msg = format!("spawn_error: {e}");
                     spawn_persist(
-                        persist_dir.clone(), b"", b"", &req.model, provider,
-                        -1, elapsed_ms, &status_msg,
+                        persist_dir.clone(),
+                        b"",
+                        b"",
+                        &req.model,
+                        provider,
+                        -1,
+                        elapsed_ms,
+                        &status_msg,
                     );
                 }
-                return Err(SquallError::Other(
-                    format!("failed to spawn {executable}: {e}"),
-                ));
+                return Err(SquallError::Other(format!(
+                    "failed to spawn {executable}: {e}"
+                )));
             }
         };
 
@@ -214,7 +232,9 @@ impl CliDispatch {
                 if buf.len() > MAX_OUTPUT_BYTES
                     && let Some(pid) = child_pid
                 {
-                    unsafe { libc::kill(-(pid as i32), libc::SIGKILL); }
+                    unsafe {
+                        libc::kill(-(pid as i32), libc::SIGKILL);
+                    }
                 }
             };
 
@@ -238,41 +258,58 @@ impl CliDispatch {
             Ok::<_, std::io::Error>((stdout_buf, stderr_buf, status))
         };
 
-        let (stdout, stderr_raw, status) =
-            match tokio::time::timeout(timeout, read_future).await {
-                Ok(result) => match result {
-                    Ok(data) => data,
-                    Err(e) => {
-                        let elapsed_ms = start.elapsed().as_millis() as u64;
-                        if matches!(persist_mode, PersistRawOutput::Always | PersistRawOutput::OnFailure) {
-                            let status_msg = format!("read_error: {e}");
-                            spawn_persist(
-                                persist_dir, b"", b"", &req.model, provider,
-                                -1, elapsed_ms, &status_msg,
-                            );
-                        }
-                        return Err(SquallError::Other(
-                            format!("failed to read from {executable}: {e}"),
-                        ));
-                    }
-                },
-                Err(_) => {
-                    // Timeout: kill the process group, not just the leader
-                    if let Some(pid) = child_pid {
-                        unsafe {
-                            libc::kill(-(pid as i32), libc::SIGKILL);
-                        }
-                    }
+        let (stdout, stderr_raw, status) = match tokio::time::timeout(timeout, read_future).await {
+            Ok(result) => match result {
+                Ok(data) => data,
+                Err(e) => {
                     let elapsed_ms = start.elapsed().as_millis() as u64;
-                    if matches!(persist_mode, PersistRawOutput::Always | PersistRawOutput::OnFailure) {
+                    if matches!(
+                        persist_mode,
+                        PersistRawOutput::Always | PersistRawOutput::OnFailure
+                    ) {
+                        let status_msg = format!("read_error: {e}");
                         spawn_persist(
-                            persist_dir.clone(), b"", b"", &req.model, provider,
-                            -1, elapsed_ms, "timeout",
+                            persist_dir,
+                            b"",
+                            b"",
+                            &req.model,
+                            provider,
+                            -1,
+                            elapsed_ms,
+                            &status_msg,
                         );
                     }
-                    return Err(SquallError::Timeout(elapsed_ms));
+                    return Err(SquallError::Other(format!(
+                        "failed to read from {executable}: {e}"
+                    )));
                 }
-            };
+            },
+            Err(_) => {
+                // Timeout: kill the process group, not just the leader
+                if let Some(pid) = child_pid {
+                    unsafe {
+                        libc::kill(-(pid as i32), libc::SIGKILL);
+                    }
+                }
+                let elapsed_ms = start.elapsed().as_millis() as u64;
+                if matches!(
+                    persist_mode,
+                    PersistRawOutput::Always | PersistRawOutput::OnFailure
+                ) {
+                    spawn_persist(
+                        persist_dir.clone(),
+                        b"",
+                        b"",
+                        &req.model,
+                        provider,
+                        -1,
+                        elapsed_ms,
+                        "timeout",
+                    );
+                }
+                return Err(SquallError::Timeout(elapsed_ms));
+            }
+        };
 
         // Child has been waited — PID is freed for reuse. Disarm guard so
         // drop() won't send SIGKILL to a potentially recycled PID.
@@ -283,13 +320,22 @@ impl CliDispatch {
         // where the process exits cleanly before kill_on_cap's SIGKILL arrives.
         if stdout.len() > MAX_OUTPUT_BYTES || stderr_raw.len() > MAX_OUTPUT_BYTES {
             let elapsed_ms = start.elapsed().as_millis() as u64;
-            if matches!(persist_mode, PersistRawOutput::Always | PersistRawOutput::OnFailure) {
+            if matches!(
+                persist_mode,
+                PersistRawOutput::Always | PersistRawOutput::OnFailure
+            ) {
                 // Truncate to MAX_OUTPUT_BYTES to avoid persisting oversized data
                 let cap_stdout = &stdout[..stdout.len().min(MAX_OUTPUT_BYTES)];
                 let cap_stderr = &stderr_raw[..stderr_raw.len().min(MAX_OUTPUT_BYTES)];
                 spawn_persist(
-                    persist_dir.clone(), cap_stdout, cap_stderr, &req.model, provider,
-                    -1, elapsed_ms, "output_overflow",
+                    persist_dir.clone(),
+                    cap_stdout,
+                    cap_stderr,
+                    &req.model,
+                    provider,
+                    -1,
+                    elapsed_ms,
+                    "output_overflow",
                 );
             }
             return Err(SquallError::Other(format!(
@@ -302,14 +348,22 @@ impl CliDispatch {
         let exit_code = status.code().unwrap_or(-1);
 
         if !status.success() {
-            tracing::warn!(
-                executable,
-                code = exit_code,
-                "CLI process failed"
-            );
+            tracing::warn!(executable, code = exit_code, "CLI process failed");
             // Persist on failure if mode is Always or OnFailure
-            if matches!(persist_mode, PersistRawOutput::Always | PersistRawOutput::OnFailure) {
-                spawn_persist(persist_dir.clone(), &stdout, &stderr_raw, &req.model, provider, exit_code, elapsed_ms, "process_exit_error");
+            if matches!(
+                persist_mode,
+                PersistRawOutput::Always | PersistRawOutput::OnFailure
+            ) {
+                spawn_persist(
+                    persist_dir.clone(),
+                    &stdout,
+                    &stderr_raw,
+                    &req.model,
+                    provider,
+                    exit_code,
+                    elapsed_ms,
+                    "process_exit_error",
+                );
             }
             return Err(SquallError::ProcessExit {
                 code: exit_code,
@@ -329,14 +383,35 @@ impl CliDispatch {
             Ok(_) => {
                 // Parse succeeded — persist only if mode is Always
                 if persist_mode == PersistRawOutput::Always {
-                    spawn_persist(persist_dir.clone(), &stdout, &stderr_raw, &req.model, provider, exit_code, elapsed_ms, "ok");
+                    spawn_persist(
+                        persist_dir.clone(),
+                        &stdout,
+                        &stderr_raw,
+                        &req.model,
+                        provider,
+                        exit_code,
+                        elapsed_ms,
+                        "ok",
+                    );
                 }
             }
             Err(e) => {
                 // Parse failed — persist if mode is Always or OnFailure
-                if matches!(persist_mode, PersistRawOutput::Always | PersistRawOutput::OnFailure) {
+                if matches!(
+                    persist_mode,
+                    PersistRawOutput::Always | PersistRawOutput::OnFailure
+                ) {
                     let status_msg = format!("parse_error: {e}");
-                    spawn_persist(persist_dir.clone(), &stdout, &stderr_raw, &req.model, provider, exit_code, elapsed_ms, &status_msg);
+                    spawn_persist(
+                        persist_dir.clone(),
+                        &stdout,
+                        &stderr_raw,
+                        &req.model,
+                        provider,
+                        exit_code,
+                        elapsed_ms,
+                        &status_msg,
+                    );
                 }
             }
         }
@@ -372,7 +447,14 @@ fn spawn_persist(
     let parse_status = parse_status.to_string();
     tokio::spawn(async move {
         if let Err(e) = persist_cli_output(
-            &base_dir, &model, &provider, &stdout, &stderr, exit_code, timing_ms, &parse_status,
+            &base_dir,
+            &model,
+            &provider,
+            &stdout,
+            &stderr,
+            exit_code,
+            timing_ms,
+            &parse_status,
         )
         .await
         {
@@ -439,8 +521,7 @@ pub async fn persist_cli_output(
         "parse_status": parse_status,
     });
 
-    let json = serde_json::to_string_pretty(&payload)
-        .map_err(std::io::Error::other)?;
+    let json = serde_json::to_string_pretty(&payload).map_err(std::io::Error::other)?;
 
     // Atomic write: temp file + rename prevents partial reads.
     // Clean up temp file on ANY failure (write or rename).

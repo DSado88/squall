@@ -1,5 +1,5 @@
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -244,10 +244,8 @@ impl MemoryStore {
         let tag_line = tags
             .filter(|t| !t.is_empty())
             .map(|t| {
-                let sanitized: Vec<String> = t
-                    .iter()
-                    .map(|tag| tag.replace(['\n', '\r'], " "))
-                    .collect();
+                let sanitized: Vec<String> =
+                    t.iter().map(|tag| tag.replace(['\n', '\r'], " ")).collect();
                 format!("- Tags: {}", sanitized.join(", "))
             })
             .unwrap_or_default();
@@ -294,9 +292,7 @@ impl MemoryStore {
                     let old = &entries[idx];
                     let old_count = extract_evidence_count(old);
                     let new_count = old_count + 1;
-                    let first_seen = extract_first_seen(old)
-                        .unwrap_or(&timestamp)
-                        .to_string();
+                    let first_seen = extract_first_seen(old).unwrap_or(&timestamp).to_string();
 
                     let confirmed = if new_count >= CONFIRMED_THRESHOLD {
                         " [confirmed]"
@@ -396,7 +392,9 @@ impl MemoryStore {
                 }
 
                 let output = format!("# Recurring Patterns\n\n{}", entries.join("\n"));
-                atomic_write(&path, &output).await.map_err(|e| e.to_string())?;
+                atomic_write(&path, &output)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(format!("{display_dir}/patterns.md"))
             }
             "tactic" | "recommend" => {
@@ -422,7 +420,9 @@ impl MemoryStore {
                 while output.len() > MAX_TACTICS_BYTES {
                     // Find the first `- ` entry line and remove it
                     if let Some(pos) = output.find("\n- ") {
-                        let end = output[pos + 1..].find('\n').map_or(output.len(), |e| pos + 1 + e);
+                        let end = output[pos + 1..]
+                            .find('\n')
+                            .map_or(output.len(), |e| pos + 1 + e);
                         output.replace_range(pos..end, "");
                     } else {
                         break;
@@ -434,7 +434,9 @@ impl MemoryStore {
                     output.pop();
                 }
 
-                atomic_write(&path, &output).await.map_err(|e| e.to_string())?;
+                atomic_write(&path, &output)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(format!("{display_dir}/tactics.md"))
             }
             _ => unreachable!(), // validated above
@@ -457,15 +459,20 @@ impl MemoryStore {
             let path = self.models_path();
             match tokio::fs::read_to_string(&path).await {
                 Ok(content) => {
-                    let recommendation =
-                        generate_recommendations(&content, &self.id_to_key);
+                    let recommendation = generate_recommendations(&content, &self.id_to_key);
                     if !recommendation.is_empty() {
                         return Ok(recommendation);
                     }
-                    return Ok("No model data yet. Run a `review` first to populate model metrics.".to_string());
+                    return Ok(
+                        "No model data yet. Run a `review` first to populate model metrics."
+                            .to_string(),
+                    );
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    return Ok("No model data yet. Run a `review` first to populate model metrics.".to_string());
+                    return Ok(
+                        "No model data yet. Run a `review` first to populate model metrics."
+                            .to_string(),
+                    );
                 }
                 Err(e) => return Err(format!("failed to read models.md: {e}")),
             }
@@ -505,10 +512,8 @@ impl MemoryStore {
                             .map(|s| s.as_str())
                             .collect();
                         if !filtered.is_empty() {
-                            sections.push(format!(
-                                "# Recurring Patterns\n\n{}",
-                                filtered.join("\n")
-                            ));
+                            sections
+                                .push(format!("# Recurring Patterns\n\n{}", filtered.join("\n")));
                         }
                     } else {
                         sections.push(content);
@@ -593,7 +598,11 @@ impl MemoryStore {
             let status = cols[4];
             let partial = cols[5];
             // Detect format: 10+ elements = new (has reason), 9 = old (no reason)
-            let reason = if cols.len() >= 10 { cols[6] } else { "\u{2014}" };
+            let reason = if cols.len() >= 10 {
+                cols[6]
+            } else {
+                "\u{2014}"
+            };
             let event_date = cols[1].get(..10).unwrap_or("").to_string();
 
             let entry = stats.entry(model).or_insert((0.0, 0, 0, 0, String::new()));
@@ -616,26 +625,28 @@ impl MemoryStore {
 
         let result: HashMap<String, ModelGateStats> = stats
             .into_iter()
-            .map(|(model, (total_lat, quality_count, successes, infra_failures, last_seen))| {
-                (
-                    model,
-                    ModelGateStats {
-                        success_rate: if quality_count > 0 {
-                            successes as f64 / quality_count as f64
-                        } else {
-                            0.0
+            .map(
+                |(model, (total_lat, quality_count, successes, infra_failures, last_seen))| {
+                    (
+                        model,
+                        ModelGateStats {
+                            success_rate: if quality_count > 0 {
+                                successes as f64 / quality_count as f64
+                            } else {
+                                0.0
+                            },
+                            avg_latency_secs: if quality_count > 0 {
+                                total_lat / quality_count as f64
+                            } else {
+                                0.0
+                            },
+                            sample_count: quality_count,
+                            infrastructure_failures: infra_failures,
+                            last_seen,
                         },
-                        avg_latency_secs: if quality_count > 0 {
-                            total_lat / quality_count as f64
-                        } else {
-                            0.0
-                        },
-                        sample_count: quality_count,
-                        infrastructure_failures: infra_failures,
-                        last_seen,
-                    },
-                )
-            })
+                    )
+                },
+            )
             .collect();
 
         Some(result)
@@ -670,10 +681,8 @@ impl MemoryStore {
                 let evidence = extract_evidence_count(entry);
                 if evidence >= 3 {
                     // Graduate: change scope to codebase
-                    let updated = entry.replace(
-                        &format!("- Scope: {branch_scope}"),
-                        "- Scope: codebase",
-                    );
+                    let updated =
+                        entry.replace(&format!("- Scope: {branch_scope}"), "- Scope: codebase");
                     kept.push(updated);
                     graduated += 1;
                 } else {
@@ -931,8 +940,12 @@ fn compute_summary(events: &[String], id_to_key: &HashMap<String, String>) -> St
         ));
     }
 
-    let mut table = String::from("| Model | Avg Latency | P95 Latency | Success Rate | Common Failures | Last Updated |\n");
-    table.push_str("|-------|-------------|-------------|--------------|-----------------|--------------|");
+    let mut table = String::from(
+        "| Model | Avg Latency | P95 Latency | Success Rate | Common Failures | Last Updated |\n",
+    );
+    table.push_str(
+        "|-------|-------------|-------------|--------------|-----------------|--------------|",
+    );
     for (_, row) in &rows {
         table.push('\n');
         table.push_str(row);
@@ -946,10 +959,7 @@ fn compute_summary(events: &[String], id_to_key: &HashMap<String, String>) -> St
 /// decay to confidence, and generates actionable recommendations for
 /// model selection.
 /// If `id_to_key` is non-empty, normalizes model names from provider model_ids to config keys.
-fn generate_recommendations(
-    models_content: &str,
-    id_to_key: &HashMap<String, String>,
-) -> String {
+fn generate_recommendations(models_content: &str, id_to_key: &HashMap<String, String>) -> String {
     let (_, events) = parse_models_file(models_content);
     if events.is_empty() {
         return String::new();
@@ -981,12 +991,14 @@ fn generate_recommendations(
         let latency: f64 = cols[3].trim_end_matches('s').parse().unwrap_or(0.0);
         let status = cols[4];
         let partial = cols[5];
-        let reason = if cols.len() >= 10 { cols[6] } else { "\u{2014}" };
+        let reason = if cols.len() >= 10 {
+            cols[6]
+        } else {
+            "\u{2014}"
+        };
         let event_date = cols[1].get(..10).unwrap_or("").to_string();
 
-        let entry = stats
-            .entry(model)
-            .or_insert((0.0, 0, 0, String::new()));
+        let entry = stats.entry(model).or_insert((0.0, 0, 0, String::new()));
 
         // Exclude infrastructure failures from quality stats
         let is_infra = matches!(reason, "auth_failed" | "rate_limited");
@@ -1177,8 +1189,12 @@ fn format_models_file(summary: &str, events: &[String]) -> String {
     output.push_str("## Summary (auto-generated)\n");
     output.push_str(summary);
     output.push_str("\n\n## Recent Events (last 100)\n");
-    output.push_str("| Timestamp | Model | Latency | Status | Partial | Reason | Error | Prompt Len |\n");
-    output.push_str("|-----------|-------|---------|--------|---------|--------|-------|------------|");
+    output.push_str(
+        "| Timestamp | Model | Latency | Status | Partial | Reason | Error | Prompt Len |\n",
+    );
+    output.push_str(
+        "|-----------|-------|---------|--------|---------|--------|-------|------------|",
+    );
     for event in events {
         output.push('\n');
         output.push_str(event);
@@ -1474,7 +1490,8 @@ mod tests {
     fn parse_models_file_roundtrip() {
         let events = vec![
             "| 2026-02-21T14:00:00Z | grok | 22.0s | success | no | \u{2014} | 4200 |".to_string(),
-            "| 2026-02-21T14:00:00Z | gemini | 145.0s | success | no | \u{2014} | 4200 |".to_string(),
+            "| 2026-02-21T14:00:00Z | gemini | 145.0s | success | no | \u{2014} | 4200 |"
+                .to_string(),
         ];
         let summary = compute_summary(&events, &HashMap::new());
         let output = format_models_file(&summary, &events);
@@ -1526,18 +1543,16 @@ mod tests {
     #[tokio::test]
     async fn memory_store_log_metrics() {
         let (store, tmp) = test_store("log-metrics").await;
-        let results = vec![
-            ReviewModelResult {
-                model: "test-model".to_string(),
-                provider: "test".to_string(),
-                status: ModelStatus::Success,
-                response: Some("ok".to_string()),
-                error: None,
-                reason: None,
-                latency_ms: 5000,
-                partial: false,
-            },
-        ];
+        let results = vec![ReviewModelResult {
+            model: "test-model".to_string(),
+            provider: "test".to_string(),
+            status: ModelStatus::Success,
+            response: Some("ok".to_string()),
+            error: None,
+            reason: None,
+            latency_ms: 5000,
+            partial: false,
+        }];
 
         store.log_model_metrics(&results, 1000, None).await;
 
@@ -1549,9 +1564,7 @@ mod tests {
         assert!(content.contains("success"));
 
         // Also verify index.md was created
-        assert!(tokio::fs::try_exists(tmp.join("index.md"))
-            .await
-            .unwrap());
+        assert!(tokio::fs::try_exists(tmp.join("index.md")).await.unwrap());
 
         let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
     }
@@ -1588,7 +1601,14 @@ mod tests {
     async fn memory_store_memorize_tactic() {
         let (store, tmp) = test_store("memorize-tactic").await;
         let result = store
-            .memorize("tactic", "Step-by-step reduces FP", Some("grok"), None, None, None)
+            .memorize(
+                "tactic",
+                "Step-by-step reduces FP",
+                Some("grok"),
+                None,
+                None,
+                None,
+            )
             .await;
 
         assert!(result.is_ok(), "error: {:?}", result.err());
@@ -1603,7 +1623,9 @@ mod tests {
     #[tokio::test]
     async fn memorize_rejects_invalid_category() {
         let store = MemoryStore::new();
-        let result = store.memorize("invalid", "test", None, None, None, None).await;
+        let result = store
+            .memorize("invalid", "test", None, None, None, None)
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("invalid category"));
     }
@@ -1611,7 +1633,9 @@ mod tests {
     #[tokio::test]
     async fn memorize_rejects_empty_content() {
         let store = MemoryStore::new();
-        let result = store.memorize("pattern", "   ", None, None, None, None).await;
+        let result = store
+            .memorize("pattern", "   ", None, None, None, None)
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("must not be empty"));
     }
@@ -1620,7 +1644,9 @@ mod tests {
     async fn memorize_rejects_too_long_content() {
         let store = MemoryStore::new();
         let long_content = "x".repeat(MAX_MEMORIZE_CONTENT_LEN + 1);
-        let result = store.memorize("pattern", &long_content, None, None, None, None).await;
+        let result = store
+            .memorize("pattern", &long_content, None, None, None, None)
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("too long"));
     }
@@ -1640,25 +1666,30 @@ mod tests {
         let (store, tmp) = test_store("read-after-write").await;
 
         // Write some data
-        let results = vec![
-            ReviewModelResult {
-                model: "grok".to_string(),
-                provider: "xai".to_string(),
-                status: ModelStatus::Success,
-                response: Some("review text".to_string()),
-                error: None,
-                reason: None,
-                latency_ms: 25000,
-                partial: false,
-            },
-        ];
+        let results = vec![ReviewModelResult {
+            model: "grok".to_string(),
+            provider: "xai".to_string(),
+            status: ModelStatus::Success,
+            response: Some("review text".to_string()),
+            error: None,
+            reason: None,
+            latency_ms: 25000,
+            partial: false,
+        }];
         store.log_model_metrics(&results, 1000, None).await;
         store
             .memorize("pattern", "Found race condition", None, None, None, None)
             .await
             .unwrap();
         store
-            .memorize("tactic", "Use chain-of-thought", Some("grok"), None, None, None)
+            .memorize(
+                "tactic",
+                "Use chain-of-thought",
+                Some("grok"),
+                None,
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -1669,12 +1700,18 @@ mod tests {
         assert!(all.contains("chain-of-thought"), "all: {all}");
 
         // Read only models
-        let models = store.read_memory(Some("models"), None, 10000, None).await.unwrap();
+        let models = store
+            .read_memory(Some("models"), None, 10000, None)
+            .await
+            .unwrap();
         assert!(models.contains("grok"));
         assert!(!models.contains("race condition"));
 
         // Read tactics filtered by model
-        let tactics = store.read_memory(Some("tactics"), Some("grok"), 10000, None).await.unwrap();
+        let tactics = store
+            .read_memory(Some("tactics"), Some("grok"), 10000, None)
+            .await
+            .unwrap();
         assert!(tactics.contains("[grok]"));
 
         let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
@@ -1687,7 +1724,14 @@ mod tests {
         // Write MAX_PATTERN_ENTRIES + 5 patterns
         for i in 0..MAX_PATTERN_ENTRIES + 5 {
             store
-                .memorize("pattern", &format!("Pattern number {i}"), None, None, None, None)
+                .memorize(
+                    "pattern",
+                    &format!("Pattern number {i}"),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
                 .await
                 .unwrap();
         }
@@ -1696,10 +1740,18 @@ mod tests {
             .await
             .unwrap();
         let entries = parse_pattern_entries(&content);
-        assert_eq!(entries.len(), MAX_PATTERN_ENTRIES, "should be capped at {MAX_PATTERN_ENTRIES}");
+        assert_eq!(
+            entries.len(),
+            MAX_PATTERN_ENTRIES,
+            "should be capped at {MAX_PATTERN_ENTRIES}"
+        );
 
         // Oldest should be pruned — entry 0..4 gone, entry 5 is first
-        assert!(entries[0].contains("Pattern number 5"), "first entry: {}", entries[0]);
+        assert!(
+            entries[0].contains("Pattern number 5"),
+            "first entry: {}",
+            entries[0]
+        );
 
         let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
     }

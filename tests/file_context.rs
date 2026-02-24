@@ -12,17 +12,22 @@ use squall::context::ContextFormat;
 async fn reject_absolute_file_path() {
     let base = std::env::current_dir().unwrap();
     let paths = vec!["/etc/passwd".to_string()];
-    let result = squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
+    let result =
+        squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
     assert!(result.is_err(), "Absolute paths must be rejected");
     let err = format!("{}", result.unwrap_err());
-    assert!(err.contains("absolute") || err.contains("traversal"), "Error: {err}");
+    assert!(
+        err.contains("absolute") || err.contains("traversal"),
+        "Error: {err}"
+    );
 }
 
 #[tokio::test]
 async fn reject_dot_dot_traversal() {
     let base = std::env::current_dir().unwrap();
     let paths = vec!["../../etc/passwd".to_string()];
-    let result = squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
+    let result =
+        squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
     assert!(result.is_err(), "Path traversal with .. must be rejected");
 }
 
@@ -30,8 +35,12 @@ async fn reject_dot_dot_traversal() {
 async fn reject_dot_dot_in_middle() {
     let base = std::env::current_dir().unwrap();
     let paths = vec!["src/../../../etc/passwd".to_string()];
-    let result = squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
-    assert!(result.is_err(), "Path traversal with embedded .. must be rejected");
+    let result =
+        squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
+    assert!(
+        result.is_err(),
+        "Path traversal with embedded .. must be rejected"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -42,7 +51,8 @@ async fn reject_dot_dot_in_middle() {
 async fn valid_relative_path_succeeds() {
     let base = std::env::current_dir().unwrap();
     let paths = vec!["Cargo.toml".to_string()];
-    let result = squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
+    let result =
+        squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
     assert!(result.is_ok(), "Valid relative path should succeed");
     let ctx = result.unwrap().context.expect("Should have content");
     assert!(ctx.contains("Cargo.toml"));
@@ -53,7 +63,8 @@ async fn valid_relative_path_succeeds() {
 async fn valid_nested_relative_path() {
     let base = std::env::current_dir().unwrap();
     let paths = vec!["src/lib.rs".to_string()];
-    let result = squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
+    let result =
+        squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
     assert!(result.is_ok());
     let ctx = result.unwrap().context.expect("Should have content");
     assert!(ctx.contains("src/lib.rs"));
@@ -104,11 +115,12 @@ async fn budget_skips_oversized_file() {
 async fn budget_includes_first_file_skips_second() {
     let base = std::env::current_dir().unwrap();
     let paths = vec![
-        "src/lib.rs".to_string(),   // small
-        "Cargo.lock".to_string(),   // large
+        "src/lib.rs".to_string(), // small
+        "Cargo.lock".to_string(), // large
     ];
     // Budget enough for lib.rs but not Cargo.lock
-    let result = squall::context::resolve_file_context(&paths, &base, 300, ContextFormat::Xml).await;
+    let result =
+        squall::context::resolve_file_context(&paths, &base, 300, ContextFormat::Xml).await;
     assert!(result.is_ok());
     let ctx = result.unwrap().context.expect("Should have content");
     assert!(ctx.contains("src/lib.rs"), "First file should be included");
@@ -118,16 +130,23 @@ async fn budget_includes_first_file_skips_second() {
 async fn budget_skipped_populates_metadata() {
     let base = std::env::current_dir().unwrap();
     let paths = vec![
-        "src/lib.rs".to_string(),   // small — fits
-        "Cargo.lock".to_string(),   // large — skipped
+        "src/lib.rs".to_string(), // small — fits
+        "Cargo.lock".to_string(), // large — skipped
     ];
     // Budget enough for lib.rs but not Cargo.lock
-    let result = squall::context::resolve_file_context(&paths, &base, 300, ContextFormat::Xml).await;
+    let result =
+        squall::context::resolve_file_context(&paths, &base, 300, ContextFormat::Xml).await;
     let file_result = result.unwrap();
     assert!(file_result.context.is_some(), "lib.rs should be included");
-    assert!(!file_result.skipped.is_empty(), "Cargo.lock should be in skipped list");
+    assert!(
+        !file_result.skipped.is_empty(),
+        "Cargo.lock should be in skipped list"
+    );
     assert_eq!(file_result.skipped[0].0, "Cargo.lock");
-    assert!(file_result.skipped[0].1 > 0, "Skipped file size should be > 0");
+    assert!(
+        file_result.skipped[0].1 > 0,
+        "Skipped file size should be > 0"
+    );
 }
 
 #[tokio::test]
@@ -148,9 +167,16 @@ async fn nonexistent_file_is_nonfatal() {
         "Cargo.toml".to_string(),
         "this_file_does_not_exist_xyz.rs".to_string(),
     ];
-    let result = squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
-    assert!(result.is_ok(), "Non-existent file should not fail the whole request");
-    let ctx = result.unwrap().context.expect("Should have content from Cargo.toml");
+    let result =
+        squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
+    assert!(
+        result.is_ok(),
+        "Non-existent file should not fail the whole request"
+    );
+    let ctx = result
+        .unwrap()
+        .context
+        .expect("Should have content from Cargo.toml");
     assert!(ctx.contains("Cargo.toml"));
     assert!(ctx.contains("this_file_does_not_exist_xyz.rs")); // noted in errors
 }
@@ -162,7 +188,8 @@ async fn all_files_nonexistent_returns_error() {
         "nonexistent_a.rs".to_string(),
         "nonexistent_b.rs".to_string(),
     ];
-    let result = squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
+    let result =
+        squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
     // All files unreadable should be an error, not silent None
     assert!(result.is_err(), "All files unreadable should return Err");
 }
@@ -174,7 +201,8 @@ async fn all_files_nonexistent_returns_error() {
 #[tokio::test]
 async fn empty_paths_returns_none() {
     let base = std::env::current_dir().unwrap();
-    let result = squall::context::resolve_file_context(&[], &base, 512_000, ContextFormat::Xml).await;
+    let result =
+        squall::context::resolve_file_context(&[], &base, 512_000, ContextFormat::Xml).await;
     assert!(result.is_ok());
     assert!(result.unwrap().context.is_none());
 }
@@ -190,9 +218,15 @@ async fn cli_manifest_contains_paths_not_content() {
     let result = squall::context::resolve_file_manifest(&paths, &base).await;
     assert!(result.is_ok());
     let manifest = result.unwrap().expect("Should have manifest");
-    assert!(manifest.contains("Cargo.toml"), "Manifest should list file path");
+    assert!(
+        manifest.contains("Cargo.toml"),
+        "Manifest should list file path"
+    );
     // Should NOT contain file content
-    assert!(!manifest.contains("[package]"), "Manifest should NOT contain file content");
+    assert!(
+        !manifest.contains("[package]"),
+        "Manifest should NOT contain file content"
+    );
 }
 
 #[tokio::test]
@@ -200,7 +234,10 @@ async fn cli_manifest_rejects_traversal() {
     let base = std::env::current_dir().unwrap();
     let paths = vec!["../../etc/passwd".to_string()];
     let result = squall::context::resolve_file_manifest(&paths, &base).await;
-    assert!(result.is_err(), "Manifest should also enforce path sandboxing");
+    assert!(
+        result.is_err(),
+        "Manifest should also enforce path sandboxing"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -245,9 +282,13 @@ async fn reject_symlink_escaping_base_dir() {
     symlink("/etc/passwd", dir.join("evil")).unwrap();
 
     let paths = vec!["evil".to_string()];
-    let result = squall::context::resolve_file_context(&paths, &dir, 512_000, ContextFormat::Xml).await;
+    let result =
+        squall::context::resolve_file_context(&paths, &dir, 512_000, ContextFormat::Xml).await;
 
-    assert!(result.is_err(), "Symlink escaping base_dir must be rejected");
+    assert!(
+        result.is_err(),
+        "Symlink escaping base_dir must be rejected"
+    );
     let err = format!("{}", result.unwrap_err());
     assert!(
         err.contains("escapes") || err.contains("outside") || err.contains("traversal"),
@@ -269,9 +310,13 @@ async fn reject_symlink_directory_traversal() {
     symlink("/etc", dir.join("subdir").join("escape")).unwrap();
 
     let paths = vec!["subdir/escape/passwd".to_string()];
-    let result = squall::context::resolve_file_context(&paths, &dir, 512_000, ContextFormat::Xml).await;
+    let result =
+        squall::context::resolve_file_context(&paths, &dir, 512_000, ContextFormat::Xml).await;
 
-    assert!(result.is_err(), "Symlink directory escaping base_dir must be rejected");
+    assert!(
+        result.is_err(),
+        "Symlink directory escaping base_dir must be rejected"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -289,7 +334,8 @@ async fn allow_symlink_within_sandbox() {
     symlink(dir.join("real.txt"), dir.join("link.txt")).unwrap();
 
     let paths = vec!["link.txt".to_string()];
-    let result = squall::context::resolve_file_context(&paths, &dir, 512_000, ContextFormat::Xml).await;
+    let result =
+        squall::context::resolve_file_context(&paths, &dir, 512_000, ContextFormat::Xml).await;
 
     assert!(result.is_ok(), "Symlink within sandbox should be allowed");
     let ctx = result.unwrap().context.expect("Should have content");
@@ -311,7 +357,10 @@ async fn cli_manifest_rejects_symlink_escape() {
     let paths = vec!["evil".to_string()];
     let result = squall::context::resolve_file_manifest(&paths, &dir).await;
 
-    assert!(result.is_err(), "Manifest should reject symlink escapes too");
+    assert!(
+        result.is_err(),
+        "Manifest should reject symlink escapes too"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -381,7 +430,8 @@ fn provider_request_has_working_directory() {
 async fn file_context_uses_xml_tags() {
     let base = std::env::current_dir().unwrap();
     let paths = vec!["Cargo.toml".to_string()];
-    let result = squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
+    let result =
+        squall::context::resolve_file_context(&paths, &base, 512_000, ContextFormat::Xml).await;
     let ctx = result.unwrap().context.unwrap();
     assert!(ctx.contains("<file path="), "Should use XML file tags");
     assert!(ctx.contains("</file>"), "Should close XML file tags");
@@ -430,7 +480,10 @@ fn wrap_diff_escapes_xml_content() {
     let diff = "--- a/test.xml\n+++ b/test.xml\n-<old>value</old>\n+</diff>injection\n";
     let result = squall::context::wrap_diff_context(diff, 10_000).unwrap();
     // The literal </diff> in the diff content must be escaped
-    assert!(!result.contains("+</diff>injection"), "XML in diff must be escaped");
+    assert!(
+        !result.contains("+</diff>injection"),
+        "XML in diff must be escaped"
+    );
     assert!(result.contains("&lt;/diff&gt;"), "Should use XML entities");
 }
 
@@ -446,7 +499,10 @@ fn wrap_diff_multibyte_budget_does_not_panic() {
     let diff = "\u{1F600}\u{1F601}\u{1F602}\n"; // 3 emojis + newline = 13 bytes
     let result = squall::context::wrap_diff_context(diff, 5);
     // Should not panic — should return Some with at least the first emoji
-    assert!(result.is_some(), "Should handle multi-byte chars without panicking");
+    assert!(
+        result.is_some(),
+        "Should handle multi-byte chars without panicking"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -463,8 +519,10 @@ fn wrap_diff_escaped_output_respects_budget() {
     let result = squall::context::wrap_diff_context(&diff, 100).unwrap();
     // Strip the <diff>\n...\n</diff> wrapper to measure content size
     let content = result
-        .strip_prefix("<diff>\n").unwrap_or(&result)
-        .strip_suffix("\n</diff>").unwrap_or(&result);
+        .strip_prefix("<diff>\n")
+        .unwrap_or(&result)
+        .strip_suffix("\n</diff>")
+        .unwrap_or(&result);
     // Content is escaped text + possible truncation comment.
     // Strip truncation comment to measure just the escaped diff content.
     let escaped_content = if let Some(pos) = content.find("\n<!-- diff truncated") {
@@ -490,7 +548,11 @@ fn hashline_format_correct_line_numbers_and_hashes() {
     let result = squall::context::format_hashline(content);
 
     let lines: Vec<&str> = result.lines().collect();
-    assert_eq!(lines.len(), 3, "3 content lines should produce 3 hashline lines");
+    assert_eq!(
+        lines.len(),
+        3,
+        "3 content lines should produce 3 hashline lines"
+    );
 
     // Each line should match pattern: line_num:hex_hash|content
     for (i, line) in lines.iter().enumerate() {
@@ -498,7 +560,9 @@ fn hashline_format_correct_line_numbers_and_hashes() {
         // Split on first ':' to get line number
         let colon_pos = line.find(':').expect("hashline must contain ':'");
         let num_str = &line[..colon_pos];
-        let parsed_num: usize = num_str.parse().expect("line number should be a valid usize");
+        let parsed_num: usize = num_str
+            .parse()
+            .expect("line number should be a valid usize");
         assert_eq!(parsed_num, expected_num, "Line number mismatch at line {i}");
 
         // After colon, next 2 chars should be hex hash, then '|'
@@ -513,13 +577,18 @@ fn hashline_format_correct_line_numbers_and_hashes() {
             "Hash should be 2 hex chars, got: {hex_part}"
         );
         assert_eq!(
-            after_colon.as_bytes()[2], b'|',
+            after_colon.as_bytes()[2],
+            b'|',
             "Third char after colon should be '|'"
         );
     }
 
     // First line should contain the (XML-escaped) content of "fn main() {"
-    assert!(lines[0].contains("fn main() {"), "First line content: {}", lines[0]);
+    assert!(
+        lines[0].contains("fn main() {"),
+        "First line content: {}",
+        lines[0]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -590,7 +659,9 @@ async fn hashline_budget_enforcement() {
     let _ = std::fs::remove_dir_all(&dir);
 
     let file_result = result.unwrap();
-    let ctx = file_result.context.expect("Should have context from small.txt");
+    let ctx = file_result
+        .context
+        .expect("Should have context from small.txt");
 
     // small.txt should be included in hashline format
     assert!(ctx.contains("small.txt"), "small.txt should be included");

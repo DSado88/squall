@@ -1,15 +1,15 @@
 mod local;
 
 #[cfg(feature = "global-memory")]
-pub mod schema;
-#[cfg(feature = "global-memory")]
 pub mod global;
+#[cfg(feature = "global-memory")]
+pub mod schema;
 
 // Re-export public items from local (excluding MemoryStore, which is aliased below).
 pub use local::{
-    content_hash_pub, extract_evidence_count_pub, generate_recommendations_pub, iso_date_pub,
-    ModelGateStats, CONFIRMED_THRESHOLD, MAX_MEMORIZE_CONTENT_LEN, MAX_PATTERN_ENTRIES,
-    MAX_TACTICS_BYTES, VALID_CATEGORIES,
+    CONFIRMED_THRESHOLD, MAX_MEMORIZE_CONTENT_LEN, MAX_PATTERN_ENTRIES, MAX_TACTICS_BYTES,
+    ModelGateStats, VALID_CATEGORIES, content_hash_pub, extract_evidence_count_pub,
+    generate_recommendations_pub, iso_date_pub,
 };
 
 use std::collections::HashMap;
@@ -104,7 +104,9 @@ impl CompositeMemoryStore {
         #[cfg_attr(not(feature = "global-memory"), allow(unused_variables))]
         working_directory: Option<&str>,
     ) {
-        self.local.log_model_metrics(results, prompt_len, id_to_key).await;
+        self.local
+            .log_model_metrics(results, prompt_len, id_to_key)
+            .await;
 
         #[cfg(feature = "global-memory")]
         if let (Some(writer), Some(wd)) = (&self.global, working_directory) {
@@ -129,10 +131,7 @@ impl CompositeMemoryStore {
 
             // Lazy bootstrap: on first call with a real project_id, ingest local
             // models.md history into DuckDB. Runs at most once per process.
-            if !self
-                .bootstrapped
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
+            if !self.bootstrapped.load(std::sync::atomic::Ordering::Relaxed) {
                 let models_path = self.local.models_path();
                 if models_path.exists() {
                     let id_map = id_to_key.cloned().unwrap_or_default();
@@ -154,7 +153,9 @@ impl CompositeMemoryStore {
         scope: Option<&str>,
         metadata: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<String, String> {
-        self.local.memorize(category, content, model, tags, scope, metadata).await
+        self.local
+            .memorize(category, content, model, tags, scope, metadata)
+            .await
     }
 
     /// Read memory files for the read path.
@@ -176,7 +177,9 @@ impl CompositeMemoryStore {
             return self.compose_recommendations(writer, max_chars).await;
         }
 
-        self.local.read_memory(category, model, max_chars, scope).await
+        self.local
+            .read_memory(category, model, max_chars, scope)
+            .await
     }
 
     /// Returns per-model stats parsed from models.md event log.
@@ -253,7 +256,9 @@ impl CompositeMemoryStore {
         all_models.sort();
 
         if all_models.is_empty() {
-            return Ok("No model data yet. Run a `review` first to populate model metrics.".to_string());
+            return Ok(
+                "No model data yet. Run a `review` first to populate model metrics.".to_string(),
+            );
         }
 
         // Build global lookup
@@ -266,10 +271,10 @@ impl CompositeMemoryStore {
         // Score and rank models
         struct CompositeRow {
             model: String,
-            confidence: char,     // H, M, L
-            local_summary: String, // "95% (14) 31s" or "—"
+            confidence: char,       // H, M, L
+            local_summary: String,  // "95% (14) 31s" or "—"
             global_summary: String, // "91% (5k) 30s" or "—"
-            sort_score: f64,       // for ranking
+            sort_score: f64,        // for ranking
             is_exploration: bool,
         }
 
@@ -393,7 +398,9 @@ impl CompositeMemoryStore {
 
         // Exploration slot note
         if let Some(exp) = &exploration_candidate
-            && !rows.iter().any(|r| r.is_exploration && r.model == exp.model)
+            && !rows
+                .iter()
+                .any(|r| r.is_exploration && r.model == exp.model)
         {
             output.push_str(&format!(
                 "\n*Exploration: {} has limited global data — try it to build confidence.*\n",
@@ -405,8 +412,7 @@ impl CompositeMemoryStore {
         if output.len() > max_chars {
             let suffix = "\n\n[truncated]";
             if max_chars > suffix.len() {
-                let boundary =
-                    local::floor_char_boundary(&output, max_chars - suffix.len());
+                let boundary = local::floor_char_boundary(&output, max_chars - suffix.len());
                 output.truncate(boundary);
                 output.push_str(suffix);
             } else {

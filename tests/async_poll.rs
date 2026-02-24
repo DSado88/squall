@@ -19,7 +19,11 @@ fn openai_launch_request_has_required_fields() {
         api.build_launch_request("What is Rust?", "o3-deep-research", "sk-test", None);
 
     assert_eq!(url, "https://api.openai.com/v1/responses");
-    assert!(headers.iter().any(|(k, v)| k == "Authorization" && v == "Bearer sk-test"));
+    assert!(
+        headers
+            .iter()
+            .any(|(k, v)| k == "Authorization" && v == "Bearer sk-test")
+    );
     assert_eq!(body["model"], "o3-deep-research");
     assert_eq!(body["background"], true);
     assert_eq!(body["store"], true);
@@ -123,7 +127,11 @@ fn gemini_launch_request_has_required_fields() {
         url,
         "https://generativelanguage.googleapis.com/v1beta/interactions"
     );
-    assert!(headers.iter().any(|(k, v)| k == "x-goog-api-key" && v == "AIza_testkey"));
+    assert!(
+        headers
+            .iter()
+            .any(|(k, v)| k == "x-goog-api-key" && v == "AIza_testkey")
+    );
     assert_eq!(body["agent"], "deep-research-pro-preview-12-2025");
     assert_eq!(body["input"], "What is quantum computing?");
     assert_eq!(body["background"], true);
@@ -219,10 +227,10 @@ fn backoff_is_exponential() {
     let d2 = AsyncPollDispatch::next_poll_delay(&api, 2);
     let d10 = AsyncPollDispatch::next_poll_delay(&api, 10);
 
-    assert_eq!(d0, std::time::Duration::from_secs(5));                  // 5 * 1.5^0 = 5
-    assert_eq!(d1, std::time::Duration::from_millis(7500));             // 5 * 1.5^1 = 7.5
-    assert_eq!(d2, std::time::Duration::from_millis(11250));            // 5 * 1.5^2 = 11.25
-    assert_eq!(d10, std::time::Duration::from_secs(60));                // capped at max
+    assert_eq!(d0, std::time::Duration::from_secs(5)); // 5 * 1.5^0 = 5
+    assert_eq!(d1, std::time::Duration::from_millis(7500)); // 5 * 1.5^1 = 7.5
+    assert_eq!(d2, std::time::Duration::from_millis(11250)); // 5 * 1.5^2 = 11.25
+    assert_eq!(d10, std::time::Duration::from_secs(60)); // capped at max
 }
 
 #[test]
@@ -233,9 +241,9 @@ fn gemini_backoff_caps_at_120s() {
     let d1 = AsyncPollDispatch::next_poll_delay(&api, 1);
     let d5 = AsyncPollDispatch::next_poll_delay(&api, 5);
 
-    assert_eq!(d0, std::time::Duration::from_secs(45));                 // 45 * 1.5^0 = 45
-    assert_eq!(d1, std::time::Duration::from_millis(67500));            // 45 * 1.5^1 = 67.5
-    assert_eq!(d5, std::time::Duration::from_secs(120));                // capped at max
+    assert_eq!(d0, std::time::Duration::from_secs(45)); // 45 * 1.5^0 = 45
+    assert_eq!(d1, std::time::Duration::from_millis(67500)); // 45 * 1.5^1 = 67.5
+    assert_eq!(d5, std::time::Duration::from_secs(120)); // capped at max
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +260,10 @@ fn sanitize_model_name_preserves_normal_names() {
 
 #[test]
 fn sanitize_model_name_replaces_slashes() {
-    assert_eq!(sanitize_model_name("moonshotai/kimi-k2.5"), "moonshotai_kimi-k2_5");
+    assert_eq!(
+        sanitize_model_name("moonshotai/kimi-k2.5"),
+        "moonshotai_kimi-k2_5"
+    );
 }
 
 #[test]
@@ -303,8 +314,14 @@ fn async_poll_model_entry_debug_redacts_key() {
         precision_tier: "medium".to_string(),
     };
     let debug = format!("{entry:?}");
-    assert!(debug.contains("[REDACTED]"), "API key should be redacted in Debug output");
-    assert!(!debug.contains("sk-super-secret"), "API key must not appear in Debug output");
+    assert!(
+        debug.contains("[REDACTED]"),
+        "API key should be redacted in Debug output"
+    );
+    assert!(
+        !debug.contains("sk-super-secret"),
+        "API key must not appear in Debug output"
+    );
 }
 
 // ---------------------------------------------------------------------------

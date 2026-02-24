@@ -232,8 +232,7 @@ impl HttpDispatch {
                 (body, builder)
             }
             ApiFormat::Anthropic => {
-                let messages =
-                    vec![serde_json::json!({"role": "user", "content": req.prompt})];
+                let messages = vec![serde_json::json!({"role": "user", "content": req.prompt})];
 
                 let mut body = serde_json::json!({
                     "model": req.model,
@@ -277,9 +276,7 @@ impl HttpDispatch {
             });
         }
 
-        if status == reqwest::StatusCode::UNAUTHORIZED
-            || status == reqwest::StatusCode::FORBIDDEN
-        {
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             // Read the error body to capture the actual API error message
             let body_timeout = req
                 .deadline
@@ -324,7 +321,10 @@ impl HttpDispatch {
             let text = String::from_utf8_lossy(&error_body);
             let truncated: String = text.chars().take(500).collect();
             let message = if truncated.len() < text.len() {
-                format!("{status}: {truncated}... [{} bytes total]", error_body.len())
+                format!(
+                    "{status}: {truncated}... [{} bytes total]",
+                    error_body.len()
+                )
             } else {
                 format!("{status}: {truncated}")
             };

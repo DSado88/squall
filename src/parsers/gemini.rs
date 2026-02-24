@@ -17,11 +17,8 @@ impl OutputParser for GeminiParser {
         let output: GeminiOutput = serde_json::from_slice(stdout)
             .map_err(|e| SquallError::SchemaParse(format!("gemini JSON parse failed: {e}")))?;
 
-        output
-            .response
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                SquallError::SchemaParse("gemini response field is empty or missing".to_string())
-            })
+        output.response.filter(|s| !s.is_empty()).ok_or_else(|| {
+            SquallError::SchemaParse("gemini response field is empty or missing".to_string())
+        })
     }
 }

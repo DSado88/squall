@@ -34,7 +34,9 @@ pub struct ReviewRequest {
     /// `listmodels`, value = system prompt. Models not in this map use the shared system_prompt.
     /// Example lenses: security auditor, architecture reviewer, correctness checker.
     /// Check `memory` category "tactics" for proven system prompts.
-    #[schemars(description = "Per-model system prompt overrides for different review lenses. Key = exact model name, value = system prompt. Models not listed fall back to the shared system_prompt. Use different lenses (security, architecture, correctness) for diverse coverage.")]
+    #[schemars(
+        description = "Per-model system prompt overrides for different review lenses. Key = exact model name, value = system prompt. Models not listed fall back to the shared system_prompt. Use different lenses (security, architecture, correctness) for diverse coverage."
+    )]
     pub per_model_system_prompts: Option<HashMap<String, String>>,
     /// Per-model timeout overrides in seconds. Key = model name, value = timeout.
     /// Each model's task deadline is min(per_model_timeout, global cutoff).
@@ -50,7 +52,9 @@ pub struct ReviewRequest {
     /// Pre-review investigation context (code structure notes, hypotheses, areas of concern).
     /// Persist-only — NOT injected into model prompts. Models get context via per_model_system_prompts.
     /// Clamped to 32KB to prevent oversized persistence payloads.
-    #[schemars(description = "Pre-review investigation notes for traceability. Persisted alongside results but not sent to models. Max 32KB.")]
+    #[schemars(
+        description = "Pre-review investigation notes for traceability. Persisted alongside results but not sent to models. Max 32KB."
+    )]
     pub investigation_context: Option<String>,
 }
 

@@ -88,21 +88,18 @@ impl GlobalWriter {
     /// - DuckDB fails to open
     /// - Worker thread fails to spawn
     pub fn new(db_path: PathBuf) -> Option<Self> {
-        let events_dir = db_path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join("events");
+        let events_dir = db_path.parent().unwrap_or(Path::new(".")).join("events");
 
         // Ensure directories exist
         if let Err(e) = std::fs::create_dir_all(&events_dir) {
             tracing::warn!("global memory: cannot create events dir: {e}");
             return None;
         }
-        if let Some(parent) = db_path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                tracing::warn!("global memory: cannot create db dir: {e}");
-                return None;
-            }
+        if let Some(parent) = db_path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            tracing::warn!("global memory: cannot create db dir: {e}");
+            return None;
         }
 
         // Bounded channel: prevents unbounded memory growth if worker is slow/stuck.
@@ -184,7 +181,10 @@ impl GlobalWriter {
             last_seen_ts: now_ms as i64,
         };
 
-        if let Err(e) = self.tx.try_send(DbCommand::WriteParquet { events, project }) {
+        if let Err(e) = self
+            .tx
+            .try_send(DbCommand::WriteParquet { events, project })
+        {
             tracing::warn!("global memory: failed to send WriteParquet command: {e}");
         }
     }
@@ -364,7 +364,7 @@ impl DbWorker {
         self.write_count += 1;
 
         // Auto-merge every MERGE_INTERVAL writes
-        if self.write_count % MERGE_INTERVAL == 0 {
+        if self.write_count.is_multiple_of(MERGE_INTERVAL) {
             self.do_merge();
         }
     }
@@ -710,9 +710,7 @@ fn write_parquet_file(path: &Path, events: &[ModelEvent]) -> Result<(), String> 
 
     // Insert events
     let mut stmt = conn
-        .prepare(
-            "INSERT INTO tmp_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
+        .prepare("INSERT INTO tmp_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .map_err(|e| format!("prepare insert failed: {e}"))?;
 
     for ev in events {
@@ -992,7 +990,9 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(500));
 
         // Query recommendations
-        let rx = writer.query_recommendations(None).expect("send should succeed");
+        let rx = writer
+            .query_recommendations(None)
+            .expect("send should succeed");
         let rt = tokio::runtime::Runtime::new().unwrap();
         let recs = rt.block_on(async {
             tokio::time::timeout(std::time::Duration::from_secs(10), rx)
@@ -1001,10 +1001,7 @@ mod tests {
                 .expect("worker should reply")
                 .expect("query should succeed")
         });
-        assert!(
-            !recs.models.is_empty(),
-            "should have model recommendations"
-        );
+        assert!(!recs.models.is_empty(), "should have model recommendations");
 
         drop(writer);
         let _ = std::fs::remove_dir_all(&dir);

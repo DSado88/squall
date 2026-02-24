@@ -15,8 +15,7 @@ use squall::error::SquallError;
 fn gemini_args_template_does_not_contain_prompt() {
     let config = squall::config::Config::from_env();
     if let Some(entry) = config.models.get("gemini")
-        && let squall::dispatch::registry::BackendConfig::Cli { args_template, .. } =
-            &entry.backend
+        && let squall::dispatch::registry::BackendConfig::Cli { args_template, .. } = &entry.backend
     {
         assert!(
             !args_template.iter().any(|a| a.contains("{prompt}")),
@@ -29,8 +28,7 @@ fn gemini_args_template_does_not_contain_prompt() {
 fn codex_args_template_does_not_contain_prompt() {
     let config = squall::config::Config::from_env();
     if let Some(entry) = config.models.get("codex")
-        && let squall::dispatch::registry::BackendConfig::Cli { args_template, .. } =
-            &entry.backend
+        && let squall::dispatch::registry::BackendConfig::Cli { args_template, .. } = &entry.backend
     {
         assert!(
             !args_template.iter().any(|a| a.contains("{prompt}")),
@@ -79,8 +77,8 @@ fn cli_dispatch_has_output_size_limit() {
 #[tokio::test]
 async fn semaphore_acquire_respects_deadline() {
     use squall::config::Config;
-    use squall::dispatch::registry::Registry;
     use squall::dispatch::ProviderRequest;
+    use squall::dispatch::registry::Registry;
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
@@ -102,7 +100,10 @@ async fn semaphore_acquire_respects_deadline() {
             precision_tier: "medium".to_string(),
         },
     );
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Registry::from_config(config);
 
     // Request with a tight deadline — should not block forever on semaphore
@@ -234,8 +235,8 @@ fn registry_has_http_concurrency_limit() {
 
 #[tokio::test]
 async fn cli_oversized_output_completes_without_deadlock() {
-    use squall::dispatch::cli::CliDispatch;
     use squall::dispatch::ProviderRequest;
+    use squall::dispatch::cli::CliDispatch;
     use squall::parsers::gemini::GeminiParser;
     use std::time::{Duration, Instant};
 
@@ -258,7 +259,14 @@ async fn cli_oversized_output_completes_without_deadlock() {
     // `yes` outputs infinite "y\n" — guaranteed to exceed MAX_OUTPUT_BYTES.
     // Parser will fail (not JSON), but we're testing timing, not parsing.
     let _result = dispatch
-        .query_model(&req, "test", "yes", &[], &GeminiParser, PersistRawOutput::Never)
+        .query_model(
+            &req,
+            "test",
+            "yes",
+            &[],
+            &GeminiParser,
+            PersistRawOutput::Never,
+        )
         .await;
 
     let elapsed = start.elapsed();
@@ -282,8 +290,8 @@ async fn cli_oversized_output_completes_without_deadlock() {
 
 #[tokio::test]
 async fn cli_oversized_stderr_completes_without_deadlock() {
-    use squall::dispatch::cli::CliDispatch;
     use squall::dispatch::ProviderRequest;
+    use squall::dispatch::cli::CliDispatch;
     use squall::parsers::gemini::GeminiParser;
     use std::time::{Duration, Instant};
 
@@ -342,8 +350,8 @@ async fn cli_oversized_stderr_completes_without_deadlock() {
 
 #[tokio::test]
 async fn cli_cap_kills_process_group_not_just_leader() {
-    use squall::dispatch::cli::CliDispatch;
     use squall::dispatch::ProviderRequest;
+    use squall::dispatch::cli::CliDispatch;
     use squall::parsers::gemini::GeminiParser;
     use std::time::{Duration, Instant};
 
@@ -401,9 +409,9 @@ async fn cli_cap_kills_process_group_not_just_leader() {
 
 #[tokio::test]
 async fn http_oversized_response_gives_clear_error() {
+    use squall::dispatch::ProviderRequest;
     use squall::dispatch::http::HttpDispatch;
     use squall::dispatch::registry::ApiFormat;
-    use squall::dispatch::ProviderRequest;
     use std::time::{Duration, Instant};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -484,8 +492,8 @@ async fn http_oversized_response_gives_clear_error() {
 
 #[tokio::test]
 async fn cli_large_prompt_does_not_deadlock() {
-    use squall::dispatch::cli::CliDispatch;
     use squall::dispatch::ProviderRequest;
+    use squall::dispatch::cli::CliDispatch;
     use squall::parsers::gemini::GeminiParser;
     use std::time::{Duration, Instant};
 
@@ -517,7 +525,14 @@ async fn cli_large_prompt_does_not_deadlock() {
     // which happens BEFORE the internal timeout wrapper — it hangs forever.
     let result = tokio::time::timeout(
         Duration::from_secs(8),
-        dispatch.query_model(&req, "test", "cat", &[], &GeminiParser, PersistRawOutput::Never),
+        dispatch.query_model(
+            &req,
+            "test",
+            "cat",
+            &[],
+            &GeminiParser,
+            PersistRawOutput::Never,
+        ),
     )
     .await;
     let elapsed = start.elapsed();
@@ -529,10 +544,7 @@ async fn cli_large_prompt_does_not_deadlock() {
         "CLI dispatch deadlocked on large prompt. Took {:?} (expected < 5s)",
         elapsed
     );
-    assert!(
-        result.is_ok(),
-        "Outer timeout should not fire: {result:?}"
-    );
+    assert!(result.is_ok(), "Outer timeout should not fire: {result:?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -542,8 +554,8 @@ async fn cli_large_prompt_does_not_deadlock() {
 
 #[tokio::test]
 async fn cli_prompt_delivered_via_stdin() {
-    use squall::dispatch::cli::CliDispatch;
     use squall::dispatch::ProviderRequest;
+    use squall::dispatch::cli::CliDispatch;
     use squall::parsers::gemini::GeminiParser;
     use std::time::{Duration, Instant};
 
@@ -567,7 +579,14 @@ async fn cli_prompt_delivered_via_stdin() {
     // RED: stdin is /dev/null → cat outputs nothing → GeminiParser fails
     // GREEN: stdin piped with prompt → cat echoes it → GeminiParser succeeds
     let result = dispatch
-        .query_model(&req, "test", "cat", &[], &GeminiParser, PersistRawOutput::Never)
+        .query_model(
+            &req,
+            "test",
+            "cat",
+            &[],
+            &GeminiParser,
+            PersistRawOutput::Never,
+        )
         .await;
 
     let text = result.expect("cat should echo prompt from stdin").text;
@@ -581,9 +600,9 @@ async fn cli_prompt_delivered_via_stdin() {
 
 #[tokio::test]
 async fn http_chunk_error_not_silently_swallowed() {
+    use squall::dispatch::ProviderRequest;
     use squall::dispatch::http::HttpDispatch;
     use squall::dispatch::registry::ApiFormat;
-    use squall::dispatch::ProviderRequest;
     use std::time::{Duration, Instant};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -599,9 +618,7 @@ async fn http_chunk_error_not_silently_swallowed() {
             // Chunked response: declare 256-byte chunk but send only 4 bytes,
             // then drop connection. This is an incomplete chunk — definite error.
             let _ = socket
-                .write_all(
-                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n100\r\nAAAA",
-                )
+                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n100\r\nAAAA")
                 .await;
             // Drop socket — incomplete chunk (promised 256 bytes, sent 4)
         }
@@ -721,9 +738,16 @@ fn upstream_error_message_bounded() {
     // Simulate what http.rs does: if the body is >500 chars, truncate
     let long_body = "x".repeat(2000);
     let truncated: String = long_body.chars().take(500).collect();
-    let message = format!("400 Bad Request: {truncated}... [{} bytes total]", long_body.len());
+    let message = format!(
+        "400 Bad Request: {truncated}... [{} bytes total]",
+        long_body.len()
+    );
     // Message should be bounded: 500 chars of body + status + suffix
-    assert!(message.len() < 600, "Error message should be bounded, got {}", message.len());
+    assert!(
+        message.len() < 600,
+        "Error message should be bounded, got {}",
+        message.len()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -898,13 +922,9 @@ async fn filename_containing_escapes_not_misclassified() {
     let filename = "escapes_plan.txt";
     std::fs::write(dir.join(filename), "harmless content").unwrap();
 
-    let result = context::resolve_file_context(
-        &[filename.to_string()],
-        &dir,
-        10_000,
-        ContextFormat::Xml,
-    )
-    .await;
+    let result =
+        context::resolve_file_context(&[filename.to_string()], &dir, 10_000, ContextFormat::Xml)
+            .await;
 
     let _ = std::fs::remove_dir_all(&dir);
 
@@ -959,8 +979,8 @@ async fn nonexistent_file_with_escapes_in_name_is_soft_error() {
 
 #[tokio::test]
 async fn cli_cross_stream_cap_kills_process() {
-    use squall::dispatch::cli::CliDispatch;
     use squall::dispatch::ProviderRequest;
+    use squall::dispatch::cli::CliDispatch;
     use squall::parsers::gemini::GeminiParser;
     use std::time::{Duration, Instant};
 
@@ -1032,9 +1052,7 @@ fn floor_entity_boundary_no_panic_on_multibyte() {
     //           saturating_sub(4) = 3 which is INSIDE the 4-byte emoji → PANIC
     let diff = "🦀<\n";
     // Budget 7 triggers the panic path
-    let result = std::panic::catch_unwind(|| {
-        squall::context::wrap_diff_context(diff, 7)
-    });
+    let result = std::panic::catch_unwind(|| squall::context::wrap_diff_context(diff, 7));
     assert!(
         result.is_ok(),
         "floor_entity_boundary panicked on multibyte char: {result:?}"
@@ -1096,8 +1114,8 @@ fn wrap_diff_entity_not_split_mid_entity() {
 
 #[tokio::test]
 async fn cli_overflow_by_one_byte_is_rejected() {
-    use squall::dispatch::cli::{CliDispatch, MAX_OUTPUT_BYTES};
     use squall::dispatch::ProviderRequest;
+    use squall::dispatch::cli::{CliDispatch, MAX_OUTPUT_BYTES};
     use squall::error::SquallError;
     use squall::parsers::gemini::GeminiParser;
     use std::time::{Duration, Instant};
@@ -1158,8 +1176,8 @@ async fn cli_overflow_by_one_byte_is_rejected() {
 
 #[tokio::test]
 async fn cli_stderr_overflow_is_rejected() {
-    use squall::dispatch::cli::{CliDispatch, MAX_OUTPUT_BYTES};
     use squall::dispatch::ProviderRequest;
+    use squall::dispatch::cli::{CliDispatch, MAX_OUTPUT_BYTES};
     use squall::error::SquallError;
     use squall::parsers::gemini::GeminiParser;
     use std::time::{Duration, Instant};
@@ -1213,32 +1231,48 @@ async fn cli_stderr_overflow_is_rejected() {
 
 #[test]
 fn suggest_models_substring_match() {
-    use std::collections::HashMap;
     use squall::config::Config;
     use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
+    use std::collections::HashMap;
 
     let mut models = HashMap::new();
-    models.insert("grok-4-1-fast-reasoning".to_string(), ModelEntry {
-        model_id: "grok-4-1-fast-reasoning".to_string(),
-        provider: "xai".to_string(),
-        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string(), api_format: ApiFormat::OpenAi },
-        description: String::new(),
-        strengths: vec![],
-        weaknesses: vec![],
-        speed_tier: "fast".to_string(),
-        precision_tier: "medium".to_string(),
+    models.insert(
+        "grok-4-1-fast-reasoning".to_string(),
+        ModelEntry {
+            model_id: "grok-4-1-fast-reasoning".to_string(),
+            provider: "xai".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://test".to_string(),
+                api_key: "k".to_string(),
+                api_format: ApiFormat::OpenAi,
+            },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        },
+    );
+    models.insert(
+        "gemini".to_string(),
+        ModelEntry {
+            model_id: "gemini".to_string(),
+            provider: "gemini".to_string(),
+            backend: BackendConfig::Cli {
+                executable: "echo".to_string(),
+                args_template: vec![],
+            },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        },
+    );
+    let registry = Registry::from_config(Config {
+        models,
+        ..Default::default()
     });
-    models.insert("gemini".to_string(), ModelEntry {
-        model_id: "gemini".to_string(),
-        provider: "gemini".to_string(),
-        backend: BackendConfig::Cli { executable: "echo".to_string(), args_template: vec![] },
-        description: String::new(),
-        strengths: vec![],
-        weaknesses: vec![],
-        speed_tier: "fast".to_string(),
-        precision_tier: "medium".to_string(),
-    });
-    let registry = Registry::from_config(Config { models, ..Default::default() });
 
     let suggestions = registry.suggest_models("grok");
     assert!(
@@ -1253,22 +1287,32 @@ fn suggest_models_substring_match() {
 
 #[test]
 fn suggest_models_reverse_match() {
-    use std::collections::HashMap;
     use squall::config::Config;
     use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
+    use std::collections::HashMap;
 
     let mut models = HashMap::new();
-    models.insert("grok-4-1-fast-reasoning".to_string(), ModelEntry {
-        model_id: "grok-4-1-fast-reasoning".to_string(),
-        provider: "xai".to_string(),
-        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string(), api_format: ApiFormat::OpenAi },
-        description: String::new(),
-        strengths: vec![],
-        weaknesses: vec![],
-        speed_tier: "fast".to_string(),
-        precision_tier: "medium".to_string(),
+    models.insert(
+        "grok-4-1-fast-reasoning".to_string(),
+        ModelEntry {
+            model_id: "grok-4-1-fast-reasoning".to_string(),
+            provider: "xai".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://test".to_string(),
+                api_key: "k".to_string(),
+                api_format: ApiFormat::OpenAi,
+            },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        },
+    );
+    let registry = Registry::from_config(Config {
+        models,
+        ..Default::default()
     });
-    let registry = Registry::from_config(Config { models, ..Default::default() });
 
     // Query longer than model name — reverse contains should match
     let suggestions = registry.suggest_models("grok-4-1-fast-reasoning-turbo");
@@ -1280,22 +1324,32 @@ fn suggest_models_reverse_match() {
 
 #[test]
 fn suggest_models_no_match() {
-    use std::collections::HashMap;
     use squall::config::Config;
     use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
+    use std::collections::HashMap;
 
     let mut models = HashMap::new();
-    models.insert("grok-4-1-fast-reasoning".to_string(), ModelEntry {
-        model_id: "grok-4-1-fast-reasoning".to_string(),
-        provider: "xai".to_string(),
-        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string(), api_format: ApiFormat::OpenAi },
-        description: String::new(),
-        strengths: vec![],
-        weaknesses: vec![],
-        speed_tier: "fast".to_string(),
-        precision_tier: "medium".to_string(),
+    models.insert(
+        "grok-4-1-fast-reasoning".to_string(),
+        ModelEntry {
+            model_id: "grok-4-1-fast-reasoning".to_string(),
+            provider: "xai".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://test".to_string(),
+                api_key: "k".to_string(),
+                api_format: ApiFormat::OpenAi,
+            },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        },
+    );
+    let registry = Registry::from_config(Config {
+        models,
+        ..Default::default()
     });
-    let registry = Registry::from_config(Config { models, ..Default::default() });
 
     let suggestions = registry.suggest_models("zzz-nonexistent-model");
     assert!(
@@ -1306,22 +1360,32 @@ fn suggest_models_no_match() {
 
 #[test]
 fn suggest_models_empty_query() {
-    use std::collections::HashMap;
     use squall::config::Config;
     use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
+    use std::collections::HashMap;
 
     let mut models = HashMap::new();
-    models.insert("grok-4-1-fast-reasoning".to_string(), ModelEntry {
-        model_id: "grok-4-1-fast-reasoning".to_string(),
-        provider: "xai".to_string(),
-        backend: BackendConfig::Http { base_url: "http://test".to_string(), api_key: "k".to_string(), api_format: ApiFormat::OpenAi },
-        description: String::new(),
-        strengths: vec![],
-        weaknesses: vec![],
-        speed_tier: "fast".to_string(),
-        precision_tier: "medium".to_string(),
+    models.insert(
+        "grok-4-1-fast-reasoning".to_string(),
+        ModelEntry {
+            model_id: "grok-4-1-fast-reasoning".to_string(),
+            provider: "xai".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://test".to_string(),
+                api_key: "k".to_string(),
+                api_format: ApiFormat::OpenAi,
+            },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        },
+    );
+    let registry = Registry::from_config(Config {
+        models,
+        ..Default::default()
     });
-    let registry = Registry::from_config(Config { models, ..Default::default() });
 
     let suggestions = registry.suggest_models("");
     assert!(
@@ -1338,9 +1402,9 @@ fn suggest_models_empty_query() {
 
 #[test]
 fn suggest_models_sorted_and_capped() {
-    use std::collections::HashMap;
-    use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
     use squall::config::Config;
+    use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
+    use std::collections::HashMap;
 
     // Create a registry with 10 models all containing "test"
     let mut models = HashMap::new();
@@ -1364,7 +1428,10 @@ fn suggest_models_sorted_and_capped() {
             },
         );
     }
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Registry::from_config(config);
 
     let suggestions = registry.suggest_models("test");
@@ -1424,8 +1491,8 @@ fn model_not_found_no_suggestion() {
 
 #[tokio::test]
 async fn cli_exact_limit_output_not_killed() {
-    use squall::dispatch::cli::{CliDispatch, MAX_OUTPUT_BYTES};
     use squall::dispatch::ProviderRequest;
+    use squall::dispatch::cli::{CliDispatch, MAX_OUTPUT_BYTES};
     use squall::error::SquallError;
     use squall::parsers::gemini::GeminiParser;
     use std::time::{Duration, Instant};
@@ -1480,12 +1547,12 @@ async fn cli_exact_limit_output_not_killed() {
 
 #[tokio::test]
 async fn review_none_branch_model_selection_is_sorted() {
-    use std::collections::HashMap;
     use squall::config::Config;
     use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
     use squall::memory::MemoryStore;
     use squall::review::ReviewExecutor;
     use squall::tools::review::ReviewRequest;
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     // Create more than MAX_MODELS (20) models
@@ -1511,7 +1578,10 @@ async fn review_none_branch_model_selection_is_sorted() {
             },
         );
     }
-    let config = Config { models, ..Default::default() };
+    let config = Config {
+        models,
+        ..Default::default()
+    };
     let registry = Arc::new(Registry::from_config(config));
     let executor = ReviewExecutor::new(registry);
 
@@ -1533,7 +1603,17 @@ async fn review_none_branch_model_selection_is_sorted() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None, None).await;
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
     // Collect all models that were attempted (results + not_started won't
     // include not_started here since all models exist in registry)
     let mut selected: Vec<String> = resp.results.iter().map(|r| r.model.clone()).collect();

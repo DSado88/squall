@@ -15,7 +15,10 @@ fn parser_for_unknown_provider_returns_error() {
     // An unknown CLI provider like "aider" should produce an error,
     // not silently use GeminiParser (which would give confusing SchemaParse errors).
     let result = Registry::parser_for("aider");
-    assert!(result.is_err(), "Unknown provider should return Err, not fallback to GeminiParser");
+    assert!(
+        result.is_err(),
+        "Unknown provider should return Err, not fallback to GeminiParser"
+    );
     if let Err(e) = result {
         assert!(
             matches!(e, SquallError::ModelNotFound { .. }),
@@ -26,8 +29,14 @@ fn parser_for_unknown_provider_returns_error() {
 
 #[test]
 fn parser_for_known_providers_still_works() {
-    assert!(Registry::parser_for("gemini").is_ok(), "gemini parser should resolve");
-    assert!(Registry::parser_for("codex").is_ok(), "codex parser should resolve");
+    assert!(
+        Registry::parser_for("gemini").is_ok(),
+        "gemini parser should resolve"
+    );
+    assert!(
+        Registry::parser_for("codex").is_ok(),
+        "codex parser should resolve"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +88,10 @@ fn error_is_not_retryable_for_auth_failed() {
 
 #[test]
 fn error_is_not_retryable_for_model_not_found() {
-    let err = SquallError::ModelNotFound { model: "foo".to_string(), suggestions: vec![] };
+    let err = SquallError::ModelNotFound {
+        model: "foo".to_string(),
+        suggestions: vec![],
+    };
     assert!(!err.is_retryable(), "ModelNotFound should NOT be retryable");
 }
 

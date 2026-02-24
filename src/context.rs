@@ -321,9 +321,9 @@ async fn validate_no_symlink_escape(
     base_dir: &Path,
     rel_path: &str,
 ) -> Result<PathBuf, SquallError> {
-    let canonical = tokio::fs::canonicalize(full_path).await.map_err(|e| {
-        SquallError::FileContext(format!("{rel_path}: {e}"))
-    })?;
+    let canonical = tokio::fs::canonicalize(full_path)
+        .await
+        .map_err(|e| SquallError::FileContext(format!("{rel_path}: {e}")))?;
 
     if !canonical.starts_with(base_dir) {
         return Err(SquallError::SymlinkEscape(rel_path.to_string()));
@@ -379,9 +379,9 @@ pub async fn resolve_file_context(
 
     // Canonicalize base_dir for symlink checks (e.g., /tmp → /private/tmp on macOS).
     // In production this is a no-op (validate_working_directory already canonicalizes).
-    let base_dir = &tokio::fs::canonicalize(base_dir).await.map_err(|e| {
-        SquallError::FileContext(format!("cannot resolve base directory: {e}"))
-    })?;
+    let base_dir = &tokio::fs::canonicalize(base_dir)
+        .await
+        .map_err(|e| SquallError::FileContext(format!("cannot resolve base directory: {e}")))?;
 
     let mut output = String::new();
     let mut used = 0usize;
@@ -480,7 +480,11 @@ pub async fn resolve_file_context(
     }
 
     Ok(FileContextResult {
-        context: if output.is_empty() { None } else { Some(output) },
+        context: if output.is_empty() {
+            None
+        } else {
+            Some(output)
+        },
         skipped,
         errors,
     })
@@ -508,9 +512,9 @@ pub async fn resolve_file_manifest(
         validate_path(p)?;
     }
 
-    let base_dir = &tokio::fs::canonicalize(base_dir).await.map_err(|e| {
-        SquallError::FileContext(format!("cannot resolve base directory: {e}"))
-    })?;
+    let base_dir = &tokio::fs::canonicalize(base_dir)
+        .await
+        .map_err(|e| SquallError::FileContext(format!("cannot resolve base directory: {e}")))?;
 
     let mut lines = Vec::new();
     for rel_path in paths {
@@ -622,9 +626,7 @@ pub fn validate_temperature(temp: Option<f64>) -> Result<(), String> {
     if let Some(t) = temp
         && (t.is_nan() || t.is_infinite() || !(0.0..=2.0).contains(&t))
     {
-        return Err(format!(
-            "temperature must be between 0.0 and 2.0, got {t}"
-        ));
+        return Err(format!("temperature must be between 0.0 and 2.0, got {t}"));
     }
     Ok(())
 }
@@ -717,7 +719,10 @@ mod project_id_tests {
     fn normalize_git_suffix_with_trailing_slash() {
         // Bug: .git stripped before trailing slash → "repo.git/" becomes "repo.git" not "repo"
         let url = normalize_git_url("https://github.com/user/repo.git/");
-        assert_eq!(url, "github.com/user/repo", "trailing slash after .git should normalize correctly");
+        assert_eq!(
+            url, "github.com/user/repo",
+            "trailing slash after .git should normalize correctly"
+        );
     }
 
     #[test]
@@ -725,7 +730,10 @@ mod project_id_tests {
         // ssh://git@host/path should normalize the same as git@host:path
         let ssh_scheme = normalize_git_url("ssh://git@github.com/user/repo.git");
         let ssh_shorthand = normalize_git_url("git@github.com:user/repo.git");
-        assert_eq!(ssh_scheme, ssh_shorthand, "ssh:// scheme and git@ shorthand should normalize identically");
+        assert_eq!(
+            ssh_scheme, ssh_shorthand,
+            "ssh:// scheme and git@ shorthand should normalize identically"
+        );
         assert_eq!(ssh_scheme, "github.com/user/repo");
     }
 
@@ -734,7 +742,10 @@ mod project_id_tests {
         let tmp = std::env::temp_dir().join("squall-test-project-id-no-git");
         let _ = tokio::fs::create_dir_all(&tmp).await;
         let id = compute_project_id(&tmp).await;
-        assert!(id.starts_with("path:"), "Non-git dir should use path: prefix, got: {id}");
+        assert!(
+            id.starts_with("path:"),
+            "Non-git dir should use path: prefix, got: {id}"
+        );
         assert_eq!(id.len(), 5 + 16, "path: prefix + 16 hex chars, got: {id}");
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
@@ -742,7 +753,10 @@ mod project_id_tests {
     #[tokio::test]
     async fn compute_project_id_git_repo_uses_git_prefix() {
         let id = compute_project_id(std::path::Path::new(".")).await;
-        assert!(id.starts_with("git:"), "Git repo should use git: prefix, got: {id}");
+        assert!(
+            id.starts_with("git:"),
+            "Git repo should use git: prefix, got: {id}"
+        );
         assert_eq!(id.len(), 4 + 16, "git: prefix + 16 hex chars, got: {id}");
     }
 

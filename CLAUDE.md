@@ -143,6 +143,22 @@ Task Completion (100%):     Technical + commit + push + skills updated
 
 **If code isn't in git, it doesn't exist.** The session can crash at any moment.
 
+## Pre-commit & Linting
+
+Run `./scripts/pre-commit.sh` before every commit. It checks:
+1. `cargo fmt --check` — formatting (`.rustfmt.toml`)
+2. `cargo clippy --all-targets -- -D warnings` — lints with and without default features
+3. `cargo test` — all tests with and without default features
+
+Lint config lives in:
+- `Cargo.toml` `[lints.clippy]` — `all = deny`, `too_many_arguments = allow`
+- `.rustfmt.toml` — edition 2024, 100 char width
+- `clippy.toml` — argument/complexity/line thresholds
+
+CI (`.github/workflows/ci.yml`) runs the same checks on push/PR to `main`, plus `cargo audit`.
+
+**Do not commit code that fails pre-commit checks.** Fix issues first.
+
 ## Session Closing Protocol
 
 Before ending ANY non-trivial session:

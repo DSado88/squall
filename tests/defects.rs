@@ -2,7 +2,7 @@
 //! Each test targets a specific finding and should be RED before the fix.
 
 use std::collections::HashMap;
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
 
 use rmcp::ServerHandler;
@@ -11,8 +11,8 @@ use rmcp::ServerHandler;
 static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 use squall::config::Config;
+use squall::dispatch::ProviderResult;
 use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry};
-use squall::dispatch::{ProviderResult};
 use squall::error::SquallError;
 use squall::response::{PalMetadata, PalToolResponse};
 use squall::review::collect_result;
@@ -25,7 +25,10 @@ use squall::tools::chat::ChatRequest;
 
 #[test]
 fn p0_1_server_name_is_squall() {
-    let config = Config { models: HashMap::new(), ..Default::default() };
+    let config = Config {
+        models: HashMap::new(),
+        ..Default::default()
+    };
     let server = SquallServer::new(config);
     let info = server.get_info();
     assert_eq!(
@@ -37,7 +40,10 @@ fn p0_1_server_name_is_squall() {
 
 #[test]
 fn p0_1_server_version_matches_cargo() {
-    let config = Config { models: HashMap::new(), ..Default::default() };
+    let config = Config {
+        models: HashMap::new(),
+        ..Default::default()
+    };
     let server = SquallServer::new(config);
     let info = server.get_info();
     assert_eq!(
@@ -134,10 +140,11 @@ fn p1_4_into_content_nan_does_not_panic() {
             duration_seconds: f64::NAN,
         },
     );
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        response.into_call_tool_result()
-    }));
-    assert!(result.is_ok(), "into_call_tool_result() panicked on NaN duration");
+    let result = catch_unwind(AssertUnwindSafe(|| response.into_call_tool_result()));
+    assert!(
+        result.is_ok(),
+        "into_call_tool_result() panicked on NaN duration"
+    );
 }
 
 #[test]
@@ -151,10 +158,11 @@ fn p1_4_into_content_infinity_does_not_panic() {
             duration_seconds: f64::INFINITY,
         },
     );
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        response.into_call_tool_result()
-    }));
-    assert!(result.is_ok(), "into_call_tool_result() panicked on Infinity duration");
+    let result = catch_unwind(AssertUnwindSafe(|| response.into_call_tool_result()));
+    assert!(
+        result.is_ok(),
+        "into_call_tool_result() panicked on Infinity duration"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +198,10 @@ fn p1_6_error_exposes_provider_for_auth_failed() {
 
 #[test]
 fn p1_6_error_returns_none_for_model_not_found() {
-    let err = SquallError::ModelNotFound { model: "foo".to_string(), suggestions: vec![] };
+    let err = SquallError::ModelNotFound {
+        model: "foo".to_string(),
+        suggestions: vec![],
+    };
     assert_eq!(err.provider(), None);
 }
 
@@ -283,15 +294,24 @@ fn p0_4_rate_limited_user_message_is_clean() {
         provider: "xai".to_string(),
     };
     let msg = err.user_message();
-    assert!(msg.contains("rate limited"), "Should mention rate limiting. Got: {msg}");
+    assert!(
+        msg.contains("rate limited"),
+        "Should mention rate limiting. Got: {msg}"
+    );
     assert!(msg.contains("xai"), "Should mention provider. Got: {msg}");
 }
 
 #[test]
 fn p0_4_model_not_found_user_message_is_clean() {
-    let err = SquallError::ModelNotFound { model: "bad-model".to_string(), suggestions: vec![] };
+    let err = SquallError::ModelNotFound {
+        model: "bad-model".to_string(),
+        suggestions: vec![],
+    };
     let msg = err.user_message();
-    assert!(msg.contains("bad-model"), "Should mention the model. Got: {msg}");
+    assert!(
+        msg.contains("bad-model"),
+        "Should mention the model. Got: {msg}"
+    );
 }
 
 // ===========================================================================
@@ -315,7 +335,7 @@ fn p0_3_collect_result_success_uses_display_name() {
     };
     let result = collect_result(
         Ok(provider_result),
-        "deepseek-r1".to_string(),   // original display name
+        "deepseek-r1".to_string(), // original display name
         "deepseek".to_string(),
         1000,
     );
@@ -393,7 +413,11 @@ fn p1_5_async_poll_filename_includes_pid() {
 
     let path = tokio::runtime::Runtime::new().unwrap().block_on(async {
         squall::dispatch::async_poll::persist_research_result(
-            "test-model", "test-provider", "test text", "job-123", 1000,
+            "test-model",
+            "test-provider",
+            "test text",
+            "job-123",
+            1000,
         )
         .await
         .unwrap()
@@ -444,7 +468,9 @@ fn p1_6_memory_read_respects_max_chars_after_truncation() {
     let max_chars: usize = 500;
 
     let result = tokio::runtime::Runtime::new().unwrap().block_on(async {
-        store.read_memory(Some("patterns"), None, max_chars, None).await
+        store
+            .read_memory(Some("patterns"), None, max_chars, None)
+            .await
     });
 
     std::env::set_current_dir(&original).unwrap();

@@ -42,11 +42,7 @@ pub trait AsyncPollApi: Send + Sync {
     ) -> (String, Vec<(String, String)>, serde_json::Value);
 
     /// Build the poll request. Returns (url, headers).
-    fn build_poll_request(
-        &self,
-        job_id: &str,
-        api_key: &str,
-    ) -> (String, Vec<(String, String)>);
+    fn build_poll_request(&self, job_id: &str, api_key: &str) -> (String, Vec<(String, String)>);
 
     /// Parse the launch response to extract job ID.
     fn parse_launch_response(&self, body: &[u8]) -> Result<String, SquallError>;
@@ -98,15 +94,9 @@ impl AsyncPollApi for OpenAiResponsesApi {
         (url, headers, body)
     }
 
-    fn build_poll_request(
-        &self,
-        job_id: &str,
-        api_key: &str,
-    ) -> (String, Vec<(String, String)>) {
+    fn build_poll_request(&self, job_id: &str, api_key: &str) -> (String, Vec<(String, String)>) {
         let url = format!("https://api.openai.com/v1/responses/{job_id}");
-        let headers = vec![
-            ("Authorization".to_string(), format!("Bearer {api_key}")),
-        ];
+        let headers = vec![("Authorization".to_string(), format!("Bearer {api_key}"))];
         (url, headers)
     }
 
@@ -126,10 +116,7 @@ impl AsyncPollApi for OpenAiResponsesApi {
         match v["status"].as_str() {
             Some("queued" | "in_progress") => Ok(PollStatus::InProgress),
             Some("completed") => {
-                let text = v["output_text"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
+                let text = v["output_text"].as_str().unwrap_or("").to_string();
                 Ok(PollStatus::Completed(text))
             }
             Some(status @ ("failed" | "incomplete" | "cancelled")) => {
@@ -185,17 +172,9 @@ impl AsyncPollApi for GeminiInteractionsApi {
         (url, headers, body)
     }
 
-    fn build_poll_request(
-        &self,
-        job_id: &str,
-        api_key: &str,
-    ) -> (String, Vec<(String, String)>) {
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/interactions/{job_id}"
-        );
-        let headers = vec![
-            ("x-goog-api-key".to_string(), api_key.to_string()),
-        ];
+    fn build_poll_request(&self, job_id: &str, api_key: &str) -> (String, Vec<(String, String)>) {
+        let url = format!("https://generativelanguage.googleapis.com/v1beta/interactions/{job_id}");
+        let headers = vec![("x-goog-api-key".to_string(), api_key.to_string())];
         (url, headers)
     }
 
@@ -304,8 +283,12 @@ impl AsyncPollDispatch {
         }
 
         // 1. Launch the job
-        let (launch_url, launch_headers, launch_body) =
-            api.build_launch_request(&req.prompt, &req.model, api_key, req.system_prompt.as_deref());
+        let (launch_url, launch_headers, launch_body) = api.build_launch_request(
+            &req.prompt,
+            &req.model,
+            api_key,
+            req.system_prompt.as_deref(),
+        );
 
         let mut launch_req = self.client.post(&launch_url);
         for (k, v) in &launch_headers {
@@ -481,8 +464,7 @@ impl AsyncPollDispatch {
             // Reset failure counter on successful response
             consecutive_failures = 0;
 
-            let poll_body =
-                read_body_capped(poll_resp, MAX_POLL_RESPONSE_BYTES, provider).await?;
+            let poll_body = read_body_capped(poll_resp, MAX_POLL_RESPONSE_BYTES, provider).await?;
 
             match api.parse_poll_response(&poll_body)? {
                 PollStatus::InProgress => {
@@ -506,14 +488,9 @@ impl AsyncPollDispatch {
                     );
 
                     // Persist to disk
-                    let file_path = persist_research_result(
-                        &req.model,
-                        provider,
-                        &text,
-                        &job_id,
-                        elapsed_ms,
-                    )
-                    .await;
+                    let file_path =
+                        persist_research_result(&req.model, provider, &text, &job_id, elapsed_ms)
+                            .await;
 
                     let response_text = match file_path {
                         Ok(path) => format!("{text}\n\n---\nFull result persisted to: {path}"),
@@ -557,9 +534,7 @@ async fn read_body_capped(
                 if remaining == 0 {
                     return Err(SquallError::Upstream {
                         provider: provider.to_string(),
-                        message: format!(
-                            "response body too large (cap {max_bytes})"
-                        ),
+                        message: format!("response body too large (cap {max_bytes})"),
                         status: None,
                     });
                 }
@@ -628,8 +603,7 @@ pub async fn persist_research_result(
         "text": text,
     });
 
-    let json = serde_json::to_string_pretty(&payload)
-        .map_err(std::io::Error::other)?;
+    let json = serde_json::to_string_pretty(&payload).map_err(std::io::Error::other)?;
 
     // Atomic write: temp file + rename prevents partial reads.
     // Clean up temp file on ANY failure (write or rename).
