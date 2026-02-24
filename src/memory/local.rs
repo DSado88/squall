@@ -784,8 +784,9 @@ impl MemoryStore {
 }
 
 /// Atomic write: write to temp file, then rename.
+/// Temp filename includes PID to avoid cross-process collisions.
 async fn atomic_write(path: &PathBuf, content: &str) -> Result<(), std::io::Error> {
-    let tmp_path = path.with_extension("tmp");
+    let tmp_path = path.with_extension(format!("tmp.{}", std::process::id()));
     tokio::fs::write(&tmp_path, content.as_bytes()).await?;
     if let Err(e) = tokio::fs::rename(&tmp_path, path).await {
         let _ = tokio::fs::remove_file(&tmp_path).await;
@@ -1116,7 +1117,7 @@ fn generate_recommendations(models_content: &str, id_to_key: &HashMap<String, St
 }
 
 /// Parse a YYYY-MM-DD date string to days since Unix epoch.
-/// Returns None for malformed or out-of-range dates (year < 1, month/day = 0).
+/// Returns None for malformed or out-of-range dates (year < 1970, month/day = 0).
 fn date_to_days(date: &str) -> Option<u64> {
     if date.len() < 10 {
         return None;
@@ -1124,8 +1125,8 @@ fn date_to_days(date: &str) -> Option<u64> {
     let year: u64 = date[..4].parse().ok()?;
     let month: u64 = date[5..7].parse().ok()?;
     let day: u64 = date[8..10].parse().ok()?;
-    // Guard against underflow in ymd_to_days
-    if year == 0 || month == 0 || day == 0 || month > 12 || day > 31 {
+    // Guard against underflow in ymd_to_days (u64 arithmetic wraps for pre-epoch dates)
+    if year < 1970 || month == 0 || day == 0 || month > 12 || day > 31 {
         return None;
     }
     Some(ymd_to_days(year, month, day))
@@ -1160,8 +1161,8 @@ pub(crate) fn parse_iso_to_epoch_ms(s: &str) -> Option<i64> {
     let month: u64 = s.get(5..7)?.parse().ok()?;
     let day: u64 = s.get(8..10)?.parse().ok()?;
 
-    // Validate date parts
-    if year == 0 || month == 0 || day == 0 || month > 12 || day > 31 {
+    // Validate date parts (year < 1970 would underflow u64 in ymd_to_days)
+    if year < 1970 || month == 0 || day == 0 || month > 12 || day > 31 {
         return None;
     }
 
@@ -1799,5 +1800,54 @@ mod tests {
     fn parse_iso_trims_whitespace() {
         let ms = parse_iso_to_epoch_ms("  2026-02-23T15:14:14Z  ").unwrap();
         assert_eq!(ms, 1_771_859_654_000);
+    }
+
+    // ---- Bug fix tests: pre-epoch date underflow ----
+
+    #[test]
+    fn date_to_days_rejects_pre_epoch() {
+        // Year 1 would underflow u64 in ymd_to_days → should return None
+        assert!(date_to_days("0001-01-01").is_none());
+        // Year 1969 is pre-epoch → should return None
+        assert!(date_to_days("1969-12-31").is_none());
+    }
+
+    #[test]
+    fn date_to_days_accepts_epoch() {
+        // 1970-01-01 should be 0 days since epoch
+        assert_eq!(date_to_days("1970-01-01"), Some(0));
+    }
+
+    #[test]
+    fn date_to_days_accepts_modern_date() {
+        // 2026-02-23 should produce a reasonable day count
+        let days = date_to_days("2026-02-23").unwrap();
+        assert!(days > 20000, "expected >20000 days since epoch, got {days}");
+    }
+
+    #[test]
+    fn parse_iso_rejects_pre_epoch() {
+        assert!(parse_iso_to_epoch_ms("0001-01-01T00:00:00Z").is_none());
+        assert!(parse_iso_to_epoch_ms("1969-12-31T23:59:59Z").is_none());
+    }
+
+    #[test]
+    fn parse_iso_accepts_epoch() {
+        let ms = parse_iso_to_epoch_ms("1970-01-01T00:00:00Z").unwrap();
+        assert_eq!(ms, 0);
+    }
+
+    // ---- Bug fix test: pre-epoch date gives min confidence, not max ----
+
+    #[test]
+    fn pre_epoch_date_gets_minimum_confidence() {
+        // If date_to_days returns None, unwrap_or(90) → days_since=90 → confidence=0.1
+        // This test verifies the fallback path gives minimum confidence
+        let days_since = date_to_days("0001-01-01").unwrap_or(90);
+        let confidence = (1.0 - days_since as f64 / 90.0).max(0.1);
+        assert!(
+            (confidence - 0.1).abs() < f64::EPSILON,
+            "pre-epoch should get min confidence 0.1, got {confidence}"
+        );
     }
 }
