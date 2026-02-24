@@ -8,6 +8,8 @@ No single model finds everything. Different models have different strengths, dif
 
 The overlap gives confidence. The divergence gives coverage. One model consistently finds resource leaks while another catches configuration gaps neither would find alone. The redundancy isn't waste — it's the point.
 
+Squall tracks every model's performance — latency, success rate, failure modes — and Claude uses those metrics to pick the best ensemble for each review. A model that keeps timing out gets benched. A model that shines on security-sensitive code gets picked when auth files change. The selection adapts over time.
+
 ## Quick start
 
 ### Build
@@ -160,33 +162,49 @@ Override in your user or project config to change the default ensemble.
 
 ## Memory
 
-Squall learns from past reviews. Three files in `.squall/memory/`:
+Squall learns from every review and uses what it learns to make better decisions next time.
 
-- **models.md** — Per-model performance stats (latency, success rate, common failures). Updated automatically after every review. Used by the hard gate to auto-exclude underperforming models.
+Three files in `.squall/memory/`:
+
+- **models.md** — Per-model performance stats (latency, success rate, common failures). Updated automatically after every review. Claude reads this before each review to pick models, and Squall's hard gate uses it to auto-exclude models below 70% success rate.
 
 - **patterns.md** — Recurring findings across reviews with evidence counting. Patterns found by multiple models in multiple reviews get confirmed status. Capped at 50 entries with automatic pruning.
 
-- **tactics.md** — Proven system prompts and model+lens combinations that consistently produce good results.
+- **tactics.md** — Proven system prompts and model+lens combinations. Claude reads this to assign the right expertise lens to each model — e.g., "Kimi performs best with a security-focused lens on Rust code."
 
 ### The learning loop
 
-1. **Before review** — call `memory` to read past stats and patterns. Informs model selection and lens assignment.
-2. **After review** — call `memorize` to save new findings, effective tactics, and model observations.
+1. **Before review** — Claude calls `memory` to check which models are performing well, which lenses work, and what patterns keep recurring. This drives model selection and prompt assignment.
+2. **After review** — Claude calls `memorize` to record what worked: which model found what, which lens was effective, which model missed obvious things.
 3. **After PR merge** — call `flush` with the branch name. Graduates high-evidence patterns to codebase scope, archives the rest.
 
-Patterns are scoped — branch-level findings stay isolated until merge, preventing noise from experimental branches.
+The result: reviews get better over time. Models that consistently fail get excluded. Lens assignments that produce good results get reused. The system adapts without manual tuning.
 
 ## Skills
 
-Squall ships with [Claude Code skills](https://docs.anthropic.com/en/docs/claude-code/skills) — prompt templates that teach Claude how to use the tools effectively.
+Squall ships with [Claude Code skills](https://docs.anthropic.com/en/docs/claude-code/skills) — prompt templates that teach Claude how to orchestrate the tools. You trigger them with natural language or slash commands:
 
-| Skill | What it does |
-|-------|-------------|
-| `squall-unified-review` | Auto-depth code review (QUICK / STANDARD / DEEP) with per-model expertise lenses and optional Opus agent for local investigation |
-| `squall-research` | Team swarm — multiple agents investigating different research vectors in parallel |
-| `squall-deep-research` | Web-sourced research via Codex and Gemini CLI |
+| You say | Skill | What happens |
+|---------|-------|-------------|
+| "review", "review this diff", "code review" | `squall-unified-review` | Auto-depth code review — Claude scores the diff and picks the right depth |
+| "deep review", "thorough review" | `squall-unified-review` | Forces DEEP depth — full investigation + more models + longer timeouts |
+| "quick review", "quick check" | `squall-unified-review` | Forces QUICK depth — single fast model, instant triage |
+| "research [topic]" | `squall-research` | Team swarm — multiple agents investigating different vectors in parallel |
+| "deep research [question]" | `squall-deep-research` | Web-sourced research via Codex and Gemini deep research |
 
-Skills are markdown files in `.claude/skills/`. They teach Claude how to orchestrate the tools — they don't change the server.
+### Auto-depth review
+
+Claude automatically picks the right review intensity based on what changed:
+
+| Depth | When | Models | What's different |
+|-------|------|--------|-----------------|
+| **QUICK** | Small non-critical changes | 1 (grok) | Fast triage, no parallel dispatch |
+| **STANDARD** | Normal PRs | 5 (3 core + 2 picked by memory stats) | Per-model lenses, Opus agent for local investigation |
+| **DEEP** | Security, auth, critical infra | 5+ models, deep mode | Claude investigates first, forms hypotheses, then models + Opus validate in parallel |
+
+Claude reads `memory` before each review to check model success rates, proven tactics, and recurring patterns — then picks the best ensemble for this specific diff. You can always override: "deep review" forces DEEP, "quick review" forces QUICK.
+
+Skills are markdown files in `.claude/skills/`. They teach Claude how to use the tools — they don't change the server.
 
 Team swarms require Claude Code's experimental agent teams feature:
 
