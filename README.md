@@ -199,8 +199,10 @@ Claude automatically picks the right review intensity based on what changed:
 | Depth | When | Models | What's different |
 |-------|------|--------|-----------------|
 | **QUICK** | Small non-critical changes | 1 (grok) | Fast triage, no parallel dispatch |
-| **STANDARD** | Normal PRs | 5 (3 core + 2 picked by memory stats) | Per-model lenses, Opus agent for local investigation |
-| **DEEP** | Security, auth, critical infra | 5+ models, deep mode | Claude investigates first, forms hypotheses, then models + Opus validate in parallel |
+| **STANDARD** | Normal PRs | 5 (3 core + 2 picked by memory stats) | Per-model lenses, Claude agent for local investigation |
+| **DEEP** | Security, auth, critical infra | 5+ models, deep mode | Claude investigates first, forms hypotheses, then models + agent validate in parallel |
+
+For STANDARD and DEEP, Claude spawns a background agent alongside the external model dispatch. The external models only see what's in the prompt — the agent has full access to your codebase. It reads changed files, traces callers, checks test coverage, runs `git blame`, and greps for related patterns. This is the perspective that static text analysis can't provide: cross-file interactions, test gaps, and git history context.
 
 Claude reads `memory` before each review to check model success rates, proven tactics, and recurring patterns — then picks the best ensemble for this specific diff. You can always override: "deep review" forces DEEP, "quick review" forces QUICK.
 
