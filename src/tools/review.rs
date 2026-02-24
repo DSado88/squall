@@ -128,8 +128,10 @@ pub enum ModelStatus {
 /// Counts of model outcomes for quick quality assessment.
 #[derive(Debug, Serialize, Default)]
 pub struct ReviewSummary {
-    /// Number of models attempted (post-dedup, post-MAX_MODELS truncation).
+    /// Number of models attempted (pre-gate, post-dedup, post-MAX_MODELS truncation).
     pub models_requested: usize,
+    /// Models excluded by hard gate (success rate below threshold).
+    pub models_gated: usize,
     /// Full successful responses (Success + not partial).
     pub models_succeeded: usize,
     /// Models that returned errors (excluding cutoff — timeout, auth, parse, etc.).

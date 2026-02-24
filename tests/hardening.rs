@@ -1483,6 +1483,7 @@ async fn review_none_branch_model_selection_is_sorted() {
     use std::collections::HashMap;
     use squall::config::Config;
     use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
+    use squall::memory::MemoryStore;
     use squall::review::ReviewExecutor;
     use squall::tools::review::ReviewRequest;
     use std::sync::Arc;
@@ -1532,7 +1533,7 @@ async fn review_none_branch_model_selection_is_sorted() {
         investigation_context: None,
     };
 
-    let resp = executor.execute(&req, req.prompt.clone(), None, None, None).await;
+    let resp = executor.execute(&req, req.prompt.clone(), &MemoryStore::new(), None, None, None).await;
     // Collect all models that were attempted (results + not_started won't
     // include not_started here since all models exist in registry)
     let mut selected: Vec<String> = resp.results.iter().map(|r| r.model.clone()).collect();

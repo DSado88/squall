@@ -339,13 +339,14 @@ impl SquallServer {
 
         let executor = ReviewExecutor::new(self.registry.clone());
         let prompt_len = prompt.len();
-        let review_response = executor.execute(&req, prompt, working_directory, files_skipped, files_errors).await;
+        let review_response = executor.execute(&req, prompt, &self.memory, working_directory, files_skipped, files_errors).await;
 
         // Log model metrics to memory (non-blocking, fire-and-forget)
         let memory = self.memory.clone();
         let results_for_memory = review_response.results.clone();
+        let id_to_key = self.registry.model_id_to_key();
         tokio::spawn(async move {
-            memory.log_model_metrics(&results_for_memory, prompt_len).await;
+            memory.log_model_metrics(&results_for_memory, prompt_len, Some(&id_to_key)).await;
         });
 
         // Serialize the full review response as the MCP content

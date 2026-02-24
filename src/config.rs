@@ -434,10 +434,10 @@ strengths = ["clear architectural analysis", "structured output"]
 weaknesses = ["rarely finds real bugs", "surface-level findings"]
 
 [models.deepseek-r1]
-model_id = "deepseek-reasoner"
-provider = "deepseek"
+model_id = "deepseek-ai/DeepSeek-R1"
+provider = "together"
 backend = "http"
-description = "DeepSeek R1 reasoning model, strong at logic-heavy analysis"
+description = "DeepSeek R1 reasoning model via Together (US-hosted), strong at logic-heavy analysis"
 speed_tier = "medium"
 precision_tier = "medium"
 strengths = ["deep reasoning chains", "logic analysis"]
@@ -464,10 +464,10 @@ strengths = ["contrarian perspective", "edge case detection"]
 weaknesses = ["inconsistent quality"]
 
 [models."deepseek-v3.1"]
-model_id = "deepseek-ai/DeepSeek-V3.1"
+model_id = "deepseek-ai/DeepSeek-V3.2-Exp"
 provider = "together"
 backend = "http"
-description = "DeepSeek V3.1 via Together (US-hosted), strong open-source coder"
+description = "DeepSeek V3.2 via Together (US-hosted), strong open-source coder"
 speed_tier = "medium"
 precision_tier = "high"
 strengths = ["strong reasoning", "finds real bugs"]
@@ -482,6 +482,16 @@ speed_tier = "medium"
 precision_tier = "medium"
 strengths = ["multilingual understanding", "good at pattern matching"]
 weaknesses = ["sometimes misses context"]
+
+[models.qwen3-coder]
+model_id = "Qwen/Qwen3-Coder-480B-A35B-Instruct"
+provider = "together"
+backend = "http"
+description = "Qwen3 Coder 480B via Together, purpose-built for code review and generation"
+speed_tier = "medium"
+precision_tier = "high"
+strengths = ["purpose-built for code", "strong at code review", "large context"]
+weaknesses = ["new model, limited benchmarks"]
 
 # --- CLI models ---
 
@@ -610,7 +620,7 @@ mod tests {
         assert!(config.providers.contains_key("mistral"));
         assert!(config.providers.contains_key("openrouter"));
         assert_eq!(config.providers.len(), 5);
-        assert_eq!(config.models.len(), 12);
+        assert_eq!(config.models.len(), 13);
         assert!(config.models.contains_key("grok"));
         assert!(config.models.contains_key("gemini"));
         assert!(config.models.contains_key("codex"));

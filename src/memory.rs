@@ -1,4 +1,5 @@
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -6,6 +7,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 
 use crate::tools::review::ReviewModelResult;
+
+/// Per-model performance stats for hard gate decisions.
+#[derive(Debug, Clone)]
+pub struct ModelGateStats {
+    pub success_rate: f64,
+    pub avg_latency_secs: f64,
+    pub sample_count: usize,
+    /// Auth failures, rate limits, etc. excluded from success_rate.
+    pub infrastructure_failures: usize,
+    pub last_seen: String,
+}
 
 /// Maximum entries in the models.md event log before compaction.
 const MAX_EVENT_LOG_ENTRIES: usize = 100;
@@ -111,6 +123,7 @@ impl MemoryStore {
         &self,
         results: &[ReviewModelResult],
         prompt_len: usize,
+        id_to_key: Option<&HashMap<String, String>>,
     ) {
         let _lock = self.write_lock.lock().await;
 
@@ -134,10 +147,17 @@ impl MemoryStore {
             let latency_s = format!("{:.1}s", r.latency_ms as f64 / 1000.0);
             let status = format!("{:?}", r.status).to_lowercase();
             let partial = if r.partial { "yes" } else { "no" };
+            let reason = escape_pipes(r.reason.as_deref().unwrap_or("\u{2014}"));
             let error = escape_pipes(r.error.as_deref().unwrap_or("\u{2014}"));
-            let model = escape_pipes(&r.model);
+            // Normalize model_id → config key if map provided
+            let raw_model = &r.model;
+            let normalized = id_to_key
+                .and_then(|map| map.get(raw_model.as_str()))
+                .map(|s| s.as_str())
+                .unwrap_or(raw_model.as_str());
+            let model = escape_pipes(normalized);
             new_events.push(format!(
-                "| {timestamp} | {model} | {latency_s} | {status} | {partial} | {error} | {prompt_len} |",
+                "| {timestamp} | {model} | {latency_s} | {status} | {partial} | {reason} | {error} | {prompt_len} |",
             ));
         }
 
@@ -528,6 +548,85 @@ impl MemoryStore {
         Ok(result)
     }
 
+    /// Returns per-model stats parsed from models.md event log.
+    /// Used by hard gates in ReviewExecutor to exclude underperforming models.
+    /// Returns None if models.md doesn't exist or has no events.
+    /// If `id_to_key` is provided, normalizes model_ids to config keys.
+    pub async fn get_model_stats(
+        &self,
+        id_to_key: Option<&HashMap<String, String>>,
+    ) -> Option<HashMap<String, ModelGateStats>> {
+        let content = tokio::fs::read_to_string(self.models_path()).await.ok()?;
+        let (_, events) = parse_models_file(&content);
+        if events.is_empty() {
+            return None;
+        }
+
+        // (total_latency, quality_count, successes, infra_failures, last_seen)
+        let mut stats: HashMap<String, (f64, usize, usize, usize, String)> = HashMap::new();
+        for line in &events {
+            let cols: Vec<&str> = line.split('|').map(|s| s.trim()).collect();
+            if cols.len() < 8 {
+                continue;
+            }
+            let raw_model = cols[2];
+            // Normalize model_id → config key if map provided
+            let model = id_to_key
+                .and_then(|map| map.get(raw_model))
+                .cloned()
+                .unwrap_or_else(|| raw_model.to_string());
+            let latency: f64 = cols[3].trim_end_matches('s').parse().unwrap_or(0.0);
+            let status = cols[4];
+            let partial = cols[5];
+            // Detect format: 10+ elements = new (has reason), 9 = old (no reason)
+            let reason = if cols.len() >= 10 { cols[6] } else { "\u{2014}" };
+            let event_date = cols[1].get(..10).unwrap_or("").to_string();
+
+            let entry = stats.entry(model).or_insert((0.0, 0, 0, 0, String::new()));
+
+            // Exclude infrastructure failures from quality stats
+            let is_infra = matches!(reason, "auth_failed" | "rate_limited");
+            if is_infra {
+                entry.3 += 1; // infrastructure_failures
+            } else {
+                entry.0 += latency;
+                entry.1 += 1; // quality_count
+                if status == "success" && partial != "yes" {
+                    entry.2 += 1; // successes
+                }
+            }
+            if event_date > entry.4 {
+                entry.4 = event_date;
+            }
+        }
+
+        let result: HashMap<String, ModelGateStats> = stats
+            .into_iter()
+            .map(|(model, (total_lat, quality_count, successes, infra_failures, last_seen))| {
+                (
+                    model,
+                    ModelGateStats {
+                        success_rate: if quality_count > 0 {
+                            successes as f64 / quality_count as f64
+                        } else {
+                            0.0
+                        },
+                        avg_latency_secs: if quality_count > 0 {
+                            total_lat / quality_count as f64
+                        } else {
+                            0.0
+                        },
+                        sample_count: quality_count,
+                        infrastructure_failures: infra_failures,
+                        last_seen,
+                    },
+                )
+            })
+            .collect();
+
+        Some(result)
+    }
+
     /// Flush branch-scoped memory after PR merge.
     /// - Patterns with evidence >= 3 scoped to this branch: graduate to "codebase"
     /// - Patterns with evidence < 3 scoped to this branch: move to archive.md
@@ -732,8 +831,8 @@ fn compute_summary(events: &[String]) -> String {
 
     for line in events {
         let cols: Vec<&str> = line.split('|').map(|s| s.trim()).collect();
-        // Format: | timestamp | model | latency | status | partial | error | prompt_len |
-        // After split: ["", timestamp, model, latency, status, partial, error, prompt_len, ""]
+        // New format (10 elements): | timestamp | model | latency | status | partial | reason | error | prompt_len |
+        // Old format (9 elements):  | timestamp | model | latency | status | partial | error | prompt_len |
         if cols.len() < 8 {
             continue;
         }
@@ -741,7 +840,13 @@ fn compute_summary(events: &[String]) -> String {
         let latency_str = cols[3].trim_end_matches('s');
         let latency: f64 = latency_str.parse().unwrap_or(0.0);
         let status = cols[4];
-        let error = cols[6];
+        let partial = cols[5];
+        // Detect format by column count: 10+ = new (has reason), 9 = old (no reason)
+        let (reason, error) = if cols.len() >= 10 {
+            (cols[6], cols[7])
+        } else {
+            ("\u{2014}", cols[6])
+        };
 
         let entry = stats.entry(model).or_insert_with(|| ModelStats {
             total_latency: 0.0,
@@ -751,11 +856,15 @@ fn compute_summary(events: &[String]) -> String {
             common_errors: HashMap::new(),
         });
 
-        entry.total_latency += latency;
-        entry.count += 1;
-        entry.latencies.push(latency);
-        if status == "success" {
-            entry.successes += 1;
+        // Exclude infrastructure failures from quality stats
+        let is_infra = matches!(reason, "auth_failed" | "rate_limited");
+        if !is_infra {
+            entry.total_latency += latency;
+            entry.count += 1;
+            entry.latencies.push(latency);
+            if status == "success" && partial != "yes" {
+                entry.successes += 1;
+            }
         }
         if error != "\u{2014}" && !error.is_empty() {
             *entry.common_errors.entry(error.to_string()).or_insert(0) += 1;
@@ -848,15 +957,22 @@ fn generate_recommendations(models_content: &str) -> String {
         let model = cols[2].to_string();
         let latency: f64 = cols[3].trim_end_matches('s').parse().unwrap_or(0.0);
         let status = cols[4];
+        let partial = cols[5];
+        let reason = if cols.len() >= 10 { cols[6] } else { "\u{2014}" };
         let event_date = cols[1].get(..10).unwrap_or("").to_string();
 
         let entry = stats
             .entry(model)
             .or_insert((0.0, 0, 0, String::new()));
-        entry.0 += latency;
-        entry.1 += 1;
-        if status == "success" {
-            entry.2 += 1;
+
+        // Exclude infrastructure failures from quality stats
+        let is_infra = matches!(reason, "auth_failed" | "rate_limited");
+        if !is_infra {
+            entry.0 += latency;
+            entry.1 += 1;
+            if status == "success" && partial != "yes" {
+                entry.2 += 1;
+            }
         }
         if event_date > entry.3 {
             entry.3 = event_date;
@@ -999,8 +1115,8 @@ fn format_models_file(summary: &str, events: &[String]) -> String {
     output.push_str("## Summary (auto-generated)\n");
     output.push_str(summary);
     output.push_str("\n\n## Recent Events (last 100)\n");
-    output.push_str("| Timestamp | Model | Latency | Status | Partial | Error | Prompt Len |\n");
-    output.push_str("|-----------|-------|---------|--------|---------|-------|------------|");
+    output.push_str("| Timestamp | Model | Latency | Status | Partial | Reason | Error | Prompt Len |\n");
+    output.push_str("|-----------|-------|---------|--------|---------|--------|-------|------------|");
     for event in events {
         output.push('\n');
         output.push_str(event);
@@ -1074,11 +1190,11 @@ fn extract_entry_hash(entry: &str) -> Option<&str> {
 /// Returns 0 if a `[x...]` marker is present but contains an invalid number (e.g. `[xNaN]`).
 fn extract_evidence_count(entry: &str) -> usize {
     let first_line = entry.lines().next().unwrap_or("");
-    if let Some(bracket_start) = first_line.rfind("[x") {
-        if let Some(end) = first_line[bracket_start + 2..].find(']') {
-            let num_str = &first_line[bracket_start + 2..][..end];
-            return num_str.parse::<usize>().unwrap_or(0);
-        }
+    if let Some(bracket_start) = first_line.rfind("[x")
+        && let Some(end) = first_line[bracket_start + 2..].find(']')
+    {
+        let num_str = &first_line[bracket_start + 2..][..end];
+        return num_str.parse::<usize>().unwrap_or(0);
     }
     // No [xN] marker at all → genuinely first occurrence.
     1
@@ -1361,7 +1477,7 @@ mod tests {
             },
         ];
 
-        store.log_model_metrics(&results, 1000).await;
+        store.log_model_metrics(&results, 1000, None).await;
 
         let content = tokio::fs::read_to_string(tmp.join("models.md"))
             .await
@@ -1474,7 +1590,7 @@ mod tests {
                 partial: false,
             },
         ];
-        store.log_model_metrics(&results, 1000).await;
+        store.log_model_metrics(&results, 1000, None).await;
         store
             .memorize("pattern", "Found race condition", None, None, None, None)
             .await

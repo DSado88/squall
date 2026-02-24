@@ -623,20 +623,18 @@ fn parse_anthropic_event(data: &str) -> ParsedChunk {
         "content_block_delta" => {
             if let Some(delta) = &event.delta {
                 // Handle text_delta (regular content)
-                if delta.delta_type.as_deref() == Some("text_delta") {
-                    if let Some(text) = &delta.text {
-                        if !text.is_empty() {
-                            return ParsedChunk::Text(text.clone());
-                        }
-                    }
+                if delta.delta_type.as_deref() == Some("text_delta")
+                    && let Some(text) = &delta.text
+                    && !text.is_empty()
+                {
+                    return ParsedChunk::Text(text.clone());
                 }
                 // Handle thinking_delta (extended thinking)
-                if delta.delta_type.as_deref() == Some("thinking_delta") {
-                    if let Some(thinking) = &delta.thinking {
-                        if !thinking.is_empty() {
-                            return ParsedChunk::Text(thinking.clone());
-                        }
-                    }
+                if delta.delta_type.as_deref() == Some("thinking_delta")
+                    && let Some(thinking) = &delta.thinking
+                    && !thinking.is_empty()
+                {
+                    return ParsedChunk::Text(thinking.clone());
                 }
             }
             ParsedChunk::Skip

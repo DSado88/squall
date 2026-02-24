@@ -15,10 +15,18 @@ pub const MAX_MODELS: usize = 20;
 use crate::dispatch::registry::Registry;
 use crate::dispatch::ProviderRequest;
 use crate::error::SquallError;
+use crate::memory::MemoryStore;
 use crate::tools::review::{
     ModelStatus, ReviewModelResult, ReviewRequest, ReviewResponse, ReviewSummary,
     MAX_INVESTIGATION_CONTEXT_BYTES,
 };
+
+/// Minimum success rate for a model to pass the hard gate (70%).
+pub const MIN_SUCCESS_RATE: f64 = 0.70;
+
+/// Minimum sample count before hard gate applies.
+/// Models with fewer samples are allowed through (insufficient data to judge).
+pub const MIN_GATE_SAMPLES: usize = 5;
 
 /// Maximum allowed timeout to prevent Instant overflow from untrusted input.
 /// 600s matches Claude Code's MCP tool timeout ceiling.
@@ -44,6 +52,7 @@ impl ReviewExecutor {
         &self,
         req: &ReviewRequest,
         prompt: String,
+        memory: &MemoryStore,
         working_directory: Option<String>,
         files_skipped: Option<Vec<String>>,
         files_errors: Option<Vec<String>>,
@@ -97,6 +106,53 @@ impl ReviewExecutor {
             }
             all
         };
+
+        // Capture pre-gate count for accurate API accounting (Bug #4).
+        let mut target_models = target_models;
+        let original_model_count = target_models.len();
+
+        // Hard gate: exclude models below success threshold.
+        // Models with insufficient samples pass through (can't judge on tiny data).
+        // If ALL models would be gated, restore the original list (never dispatch to zero).
+        let mut gated_count = 0usize;
+        let id_to_key = self.registry.model_id_to_key();
+        if let Some(stats) = memory.get_model_stats(Some(&id_to_key)).await {
+            let original = target_models.clone();
+            let mut gated = Vec::new();
+            target_models.retain(|model| {
+                if let Some(s) = stats.get(model)
+                    && s.sample_count >= MIN_GATE_SAMPLES
+                    && s.success_rate < MIN_SUCCESS_RATE
+                {
+                    gated.push(format!(
+                        "{model}: {:.1}% success ({} samples)",
+                        s.success_rate * 100.0,
+                        s.sample_count
+                    ));
+                    return false;
+                }
+                true
+            });
+            gated_count = gated.len();
+            if !gated.is_empty() {
+                let msg = format!(
+                    "Models excluded by hard gate (<{:.1}% success, >={} samples): {}",
+                    MIN_SUCCESS_RATE * 100.0,
+                    MIN_GATE_SAMPLES,
+                    gated.join("; ")
+                );
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+            }
+            // Safety: never dispatch to zero models (only if gate actually excluded something)
+            if target_models.is_empty() && !gated.is_empty() {
+                let msg = "All requested models below success threshold — proceeding with original list".to_string();
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+                target_models = original;
+                gated_count = 0; // reset: gate was overridden
+            }
+        }
 
         // Build model→provider map for cutoff reporting
         let mut not_started = Vec::new();
@@ -343,7 +399,8 @@ impl ReviewExecutor {
 
         // Build summary from collected results.
         let summary = ReviewSummary {
-            models_requested: target_models.len(),
+            models_requested: original_model_count,
+            models_gated: gated_count,
             models_succeeded: results.iter().filter(|r| r.status == ModelStatus::Success && !r.partial).count(),
             models_failed: results.iter().filter(|r| r.status == ModelStatus::Error && r.reason.as_deref() != Some("cutoff")).count(),
             models_cutoff: results.iter().filter(|r| r.reason.as_deref() == Some("cutoff")).count(),

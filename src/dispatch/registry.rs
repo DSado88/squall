@@ -175,6 +175,16 @@ impl Registry {
         self.models.iter().collect()
     }
 
+    /// Returns a map of model_id → config_key for model identity normalization.
+    /// Used by memory subsystem to normalize event log entries that may use
+    /// provider model_ids instead of config keys.
+    pub fn model_id_to_key(&self) -> HashMap<String, String> {
+        self.models
+            .iter()
+            .map(|(key, entry)| (entry.model_id.clone(), key.clone()))
+            .collect()
+    }
+
     /// Suggest similar model names for a failed lookup (substring match).
     /// Sorted alphabetically, capped at 5 to keep error messages readable.
     pub fn suggest_models(&self, query: &str) -> Vec<String> {
