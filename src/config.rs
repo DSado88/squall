@@ -505,10 +505,10 @@ strengths = ["contrarian perspective", "edge case detection"]
 weaknesses = ["inconsistent quality"]
 
 [models."deepseek-v3.1"]
-model_id = "deepseek-ai/DeepSeek-V3.2-Exp"
+model_id = "deepseek-ai/DeepSeek-V3.1"
 provider = "together"
 backend = "http"
-description = "DeepSeek V3.2 via Together (US-hosted), strong open-source coder"
+description = "DeepSeek V3.1 via Together (US-hosted), strong open-source coder"
 speed_tier = "medium"
 precision_tier = "high"
 strengths = ["strong reasoning", "finds real bugs"]
