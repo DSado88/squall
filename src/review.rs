@@ -13,6 +13,35 @@ use tokio_util::sync::CancellationToken;
 pub const MAX_MODELS: usize = 20;
 
 use crate::dispatch::ProviderRequest;
+
+/// Resolve a per-model key using fuzzy matching against target model names.
+///
+/// Resolution order:
+/// 1. Exact match on config key (e.g., "grok")
+/// 2. Case-insensitive match (e.g., "Grok" → "grok")
+/// 3. Reverse lookup via provider model_id (e.g., "grok-4-1-fast-reasoning" → "grok")
+fn resolve_per_model_key<'a>(
+    key: &str,
+    target_set: &HashSet<&'a String>,
+    id_to_key: &HashMap<String, String>,
+) -> Option<&'a String> {
+    // 1. Exact match
+    if let Some(m) = target_set.iter().find(|k| **k == key) {
+        return Some(m);
+    }
+    // 2. Case-insensitive
+    let key_lower = key.to_lowercase();
+    if let Some(m) = target_set.iter().find(|k| k.to_lowercase() == key_lower) {
+        return Some(m);
+    }
+    // 3. Reverse lookup: caller used provider model_id
+    if let Some(config_key) = id_to_key.get(key)
+        && let Some(m) = target_set.iter().find(|k| **k == config_key)
+    {
+        return Some(m);
+    }
+    None
+}
 use crate::dispatch::registry::Registry;
 use crate::error::SquallError;
 use crate::memory::MemoryStore;
@@ -196,51 +225,76 @@ impl ReviewExecutor {
         // partial results instead of being hard-aborted.
         let cancel_token = CancellationToken::new();
 
-        // Warn on unused per_model_system_prompts keys (likely caller typos)
-        if let Some(ref per_model) = req.per_model_system_prompts {
-            let target_set: HashSet<&String> = model_providers.iter().map(|(m, _)| m).collect();
-            let unused: Vec<&String> = per_model
-                .keys()
-                .filter(|k| !target_set.contains(k))
-                .collect();
-            if !unused.is_empty() {
-                let msg = format!(
-                    "per_model_system_prompts contains unknown models: {unused:?}. Check listmodels for valid names."
-                );
-                tracing::warn!("{msg}");
-                warnings.push(msg);
-            }
-        }
+        // Resolve per_model_system_prompts keys with fuzzy matching.
+        // Builds a normalized map keyed by exact config keys.
+        let target_set: HashSet<&String> = model_providers.iter().map(|(m, _)| m).collect();
+        let id_to_key = self.registry.model_id_to_key();
 
-        // Warn on unused per_model_timeout_secs keys (likely caller typos)
-        if let Some(ref per_model) = req.per_model_timeout_secs {
-            let target_set: HashSet<&String> = model_providers.iter().map(|(m, _)| m).collect();
-            let unused: Vec<&String> = per_model
-                .keys()
-                .filter(|k| !target_set.contains(k))
-                .collect();
-            if !unused.is_empty() {
-                let msg = format!(
-                    "per_model_timeout_secs contains unknown models: {unused:?}. Check listmodels for valid names."
-                );
-                tracing::warn!("{msg}");
-                warnings.push(msg);
-            }
-            // Warn on zero-value timeouts — Duration::from_secs(0) causes immediate
-            // deadline expiry, which is never the caller's intent.
-            let zeros: Vec<&String> = per_model
-                .iter()
-                .filter(|&(_, v)| *v == 0)
-                .map(|(k, _)| k)
-                .collect();
-            if !zeros.is_empty() {
-                let msg = format!(
-                    "per_model_timeout_secs has 0 for {zeros:?} — this causes immediate timeout. Use at least 1."
-                );
-                tracing::warn!("{msg}");
-                warnings.push(msg);
-            }
-        }
+        let resolved_per_model_prompts: Option<HashMap<String, String>> =
+            req.per_model_system_prompts.as_ref().map(|per_model| {
+                let mut resolved = HashMap::new();
+                let mut unresolved: Vec<&String> = Vec::new();
+                for (key, prompt) in per_model {
+                    if let Some(matched) = resolve_per_model_key(key, &target_set, &id_to_key) {
+                        if key != matched.as_str() {
+                            warnings.push(format!(
+                                "per_model_system_prompts key '{key}' resolved to '{matched}'"
+                            ));
+                        }
+                        resolved.insert(matched.clone(), prompt.clone());
+                    } else {
+                        unresolved.push(key);
+                    }
+                }
+                if !unresolved.is_empty() {
+                    let msg = format!(
+                        "per_model_system_prompts contains unknown models: {unresolved:?}. Check listmodels for valid names."
+                    );
+                    tracing::warn!("{msg}");
+                    warnings.push(msg);
+                }
+                resolved
+            });
+
+        // Resolve per_model_timeout_secs keys with fuzzy matching.
+        let resolved_per_model_timeouts: Option<HashMap<String, u64>> =
+            req.per_model_timeout_secs.as_ref().map(|per_model| {
+                let mut resolved = HashMap::new();
+                let mut unresolved: Vec<&String> = Vec::new();
+                for (key, timeout) in per_model {
+                    if let Some(matched) = resolve_per_model_key(key, &target_set, &id_to_key) {
+                        if key != matched.as_str() {
+                            warnings.push(format!(
+                                "per_model_timeout_secs key '{key}' resolved to '{matched}'"
+                            ));
+                        }
+                        resolved.insert(matched.clone(), *timeout);
+                    } else {
+                        unresolved.push(key);
+                    }
+                }
+                if !unresolved.is_empty() {
+                    let msg = format!(
+                        "per_model_timeout_secs contains unknown models: {unresolved:?}. Check listmodels for valid names."
+                    );
+                    tracing::warn!("{msg}");
+                    warnings.push(msg);
+                }
+                // Warn on zero-value timeouts
+                let zeros: Vec<&String> = resolved
+                    .iter()
+                    .filter(|&(_, v)| *v == 0)
+                    .map(|(k, _)| k)
+                    .collect();
+                if !zeros.is_empty() {
+                    let msg = format!(
+                        "per_model_timeout_secs has 0 for {zeros:?} — this causes immediate timeout. Use at least 1."
+                    );
+                    tracing::warn!("{msg}");
+                    warnings.push(msg);
+                }
+                resolved
+            });
 
         // Pin base timestamp before spawn loop to avoid per-model time skew.
         let base_now = Instant::now();
@@ -250,9 +304,8 @@ impl ReviewExecutor {
             let model_id = model_id.clone();
             let provider = provider.clone();
             let prompt = prompt.clone();
-            // Per-model system prompt: check per_model map first, fall back to shared
-            let system_prompt = req
-                .per_model_system_prompts
+            // Per-model system prompt: use fuzzy-resolved map, fall back to shared
+            let system_prompt = resolved_per_model_prompts
                 .as_ref()
                 .and_then(|map| map.get(&model_id).cloned())
                 .or_else(|| req.system_prompt.clone());
@@ -264,8 +317,7 @@ impl ReviewExecutor {
 
             // Per-model deadline: min(per_model_timeout, internal_deadline).
             // Per-model timeouts are clamped to MAX_TIMEOUT_SECS.
-            let per_model_deadline = req
-                .per_model_timeout_secs
+            let per_model_deadline = resolved_per_model_timeouts
                 .as_ref()
                 .and_then(|map| map.get(&model_id))
                 .map(|secs| {

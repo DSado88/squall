@@ -2297,3 +2297,216 @@ async fn persisted_json_contains_files_errors() {
         let _ = tokio::fs::remove_file(path).await;
     }
 }
+
+// ---------------------------------------------------------------------------
+// Fuzzy per_model_system_prompts key resolution
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn per_model_system_prompt_case_insensitive_resolution() {
+    let mut models = HashMap::new();
+    models.insert(
+        "grok".to_string(),
+        ModelEntry {
+            model_id: "grok-4-1-fast-reasoning".to_string(),
+            provider: "test".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://127.0.0.1:1/v1/chat".to_string(),
+                api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
+            },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        },
+    );
+    let config = Config {
+        models,
+        ..Default::default()
+    };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["grok".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: Some(HashMap::from([(
+            "Grok".to_string(),
+            "security lens".to_string(),
+        )])),
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        context_format: None,
+        investigation_context: None,
+    };
+
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+    // Should warn about resolution, not about unknown key
+    assert!(
+        resp.warnings
+            .iter()
+            .any(|w| w.contains("resolved to 'grok'")),
+        "Should warn about fuzzy resolution. Warnings: {:?}",
+        resp.warnings,
+    );
+    assert!(
+        !resp.warnings.iter().any(|w| w.contains("unknown models")),
+        "Should NOT warn about unknown models. Warnings: {:?}",
+        resp.warnings,
+    );
+}
+
+#[tokio::test]
+async fn per_model_system_prompt_resolves_provider_model_id() {
+    let mut models = HashMap::new();
+    models.insert(
+        "grok".to_string(),
+        ModelEntry {
+            model_id: "grok-4-1-fast-reasoning".to_string(),
+            provider: "test".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://127.0.0.1:1/v1/chat".to_string(),
+                api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
+            },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        },
+    );
+    let config = Config {
+        models,
+        ..Default::default()
+    };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["grok".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: Some(HashMap::from([(
+            "grok-4-1-fast-reasoning".to_string(),
+            "architecture lens".to_string(),
+        )])),
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        context_format: None,
+        investigation_context: None,
+    };
+
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+    assert!(
+        resp.warnings
+            .iter()
+            .any(|w| w.contains("resolved to 'grok'")),
+        "Should resolve provider model_id to config key. Warnings: {:?}",
+        resp.warnings,
+    );
+}
+
+#[tokio::test]
+async fn per_model_system_prompt_exact_match_no_warning() {
+    let mut models = HashMap::new();
+    models.insert(
+        "grok".to_string(),
+        ModelEntry {
+            model_id: "grok-4-1-fast-reasoning".to_string(),
+            provider: "test".to_string(),
+            backend: BackendConfig::Http {
+                base_url: "http://127.0.0.1:1/v1/chat".to_string(),
+                api_key: "fake".to_string(),
+                api_format: ApiFormat::OpenAi,
+            },
+            description: String::new(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        },
+    );
+    let config = Config {
+        models,
+        ..Default::default()
+    };
+    let registry = Arc::new(Registry::from_config(config));
+    let executor = ReviewExecutor::new(registry);
+
+    let req = ReviewRequest {
+        prompt: "hello".to_string(),
+        models: Some(vec!["grok".to_string()]),
+        timeout_secs: Some(5),
+        system_prompt: None,
+        temperature: None,
+        file_paths: None,
+        working_directory: None,
+        diff: None,
+        per_model_system_prompts: Some(HashMap::from([(
+            "grok".to_string(),
+            "exact lens".to_string(),
+        )])),
+        per_model_timeout_secs: None,
+        deep: None,
+        max_tokens: None,
+        reasoning_effort: None,
+        context_format: None,
+        investigation_context: None,
+    };
+
+    let resp = executor
+        .execute(
+            &req,
+            req.prompt.clone(),
+            &MemoryStore::new(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+    // Exact match should produce no resolution warnings
+    assert!(
+        !resp.warnings.iter().any(|w| w.contains("resolved to")),
+        "Exact match should NOT produce resolution warning. Warnings: {:?}",
+        resp.warnings,
+    );
+}

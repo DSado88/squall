@@ -3,6 +3,8 @@ set -euo pipefail
 
 # Squall installer — builds binary, registers global MCP server, installs global skills.
 #
+# Prerequisites: cp .env.example .env && fill in your API keys
+#
 # Usage:
 #   ./install.sh              # full install
 #   ./install.sh --skills     # skills only (skip build + MCP registration)
@@ -21,6 +23,30 @@ elif [[ "${1:-}" == "--build" ]]; then
     DO_SKILLS=false
 fi
 
+# ── Prerequisite: .env must exist with API keys ───────────────────────────────
+
+ENV_FILE="${SQUALL_DIR}/.env"
+if [ ! -f "$ENV_FILE" ]; then
+    echo "Error: No .env file found."
+    echo ""
+    echo "  cp .env.example .env"
+    echo "  # Then fill in your API keys. See .env.example for signup links."
+    echo ""
+    exit 1
+fi
+
+# Count non-empty API keys
+KEY_COUNT=$(grep -cE '^[A-Z_]+_API_KEY=.+' "$ENV_FILE" 2>/dev/null || echo "0")
+if [ "$KEY_COUNT" -eq 0 ]; then
+    echo "Error: .env exists but has no API keys set."
+    echo ""
+    echo "  Fill in at least one *_API_KEY in .env"
+    echo "  See .env.example for required keys and signup links."
+    echo ""
+    exit 1
+fi
+echo "Found $KEY_COUNT API key(s) in .env"
+
 # ── Build ──────────────────────────────────────────────────────────────────────
 
 if $DO_BUILD; then
@@ -35,26 +61,45 @@ if $DO_BUILD; then
     echo "Installed binary to $INSTALL_BIN"
 
     # Register as global MCP server (user scope → ~/.claude.json)
-    # This is idempotent — overwrites existing squall entry.
-    #
-    # API keys: The installer preserves any keys already set in ~/.claude.json.
-    # If squall is not yet registered, you'll need to set env vars manually:
-    #   claude mcp update squall -e XAI_API_KEY=your_key -e OPENROUTER_API_KEY=your_key
-    #
-    # Check if squall is already registered (preserve env vars)
+    # Merges API keys from .env with any existing keys in ~/.claude.json.
     if command -v claude &>/dev/null; then
-        EXISTING_ENV=""
-        if command -v python3 &>/dev/null && [ -f "${HOME}/.claude.json" ]; then
-            EXISTING_ENV=$(python3 -c "
-import json, sys
-try:
-    with open('${HOME}/.claude.json') as f:
-        cfg = json.load(f)
-    env = cfg.get('mcpServers', {}).get('squall', {}).get('env', {})
-    for k, v in env.items():
-        print(f'-e {k}={v}')
-except:
-    pass
+        MERGED_ENV=""
+        if command -v python3 &>/dev/null; then
+            MERGED_ENV=$(python3 -c "
+import json, os
+
+# Read .env
+env_keys = {}
+with open('${ENV_FILE}') as f:
+    for line in f:
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        k, v = line.split('=', 1)
+        k, v = k.strip(), v.strip()
+        if k.endswith('_API_KEY') and v:
+            env_keys[k] = v
+
+# Read existing keys from ~/.claude.json
+existing = {}
+claude_cfg = os.path.expanduser('~/.claude.json')
+if os.path.exists(claude_cfg):
+    try:
+        with open(claude_cfg) as f:
+            cfg = json.load(f)
+        existing = cfg.get('mcpServers', {}).get('squall', {}).get('env', {})
+    except Exception:
+        pass
+
+# Merge: .env wins (canonical source), preserve non-API-key vars from existing
+merged = {}
+for k, v in existing.items():
+    if not k.endswith('_API_KEY'):
+        merged[k] = v  # preserve non-key vars (e.g. custom settings)
+merged.update(env_keys)  # .env API keys take precedence
+
+for k, v in sorted(merged.items()):
+    print(f'-e {k}={v}')
 " 2>/dev/null || true)
         fi
 
@@ -62,8 +107,8 @@ except:
         # Remove existing entry first (claude mcp add fails if it exists)
         claude mcp remove squall 2>/dev/null || true
         # shellcheck disable=SC2086
-        claude mcp add --scope user --transport stdio squall "$INSTALL_BIN" $EXISTING_ENV
-        echo "Registered squall in ~/.claude.json"
+        claude mcp add --scope user --transport stdio squall "$INSTALL_BIN" $MERGED_ENV
+        echo "Registered squall in ~/.claude.json ($KEY_COUNT API keys injected)"
     else
         echo "Warning: 'claude' CLI not found — skipping MCP registration."
         echo "Run manually: claude mcp add --scope user --transport stdio squall $INSTALL_BIN"
@@ -105,10 +150,11 @@ echo ""
 echo "Done. Squall is ready."
 if $DO_BUILD; then
     echo "  Binary:  $INSTALL_BIN"
-    echo "  MCP:     ~/.claude.json (user scope)"
+    echo "  MCP:     ~/.claude.json (user scope, $KEY_COUNT API keys)"
 fi
 if $DO_SKILLS; then
     echo "  Skills:  $SKILLS_DIR/squall-*"
 fi
 echo ""
 echo "Verify: claude mcp list | grep squall"
+echo "Restart Claude Code to pick up the new binary."

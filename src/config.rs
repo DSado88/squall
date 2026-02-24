@@ -558,7 +558,7 @@ strengths = ["multilingual understanding", "good at pattern matching"]
 weaknesses = ["sometimes misses context"]
 
 [models.qwen3-coder]
-model_id = "Qwen/Qwen3-Coder-480B-A35B-Instruct"
+model_id = "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
 provider = "together"
 backend = "http"
 description = "Qwen3 Coder 480B via Together, purpose-built for code review and generation"
