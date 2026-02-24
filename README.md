@@ -1,97 +1,22 @@
 # Squall
 
-MCP server for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that dispatches prompts to multiple AI models in parallel. ~2000 lines of Rust.
+MCP server that dispatches prompts to multiple AI models in parallel. Built in Rust for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
 ## Why multiple models
 
-No single model finds everything. Different models have different strengths, different blind spots, and different failure modes. When you send the same question to Grok, Gemini, Kimi, Codex, and GLM, you get additive signal — each one catches things the others miss.
+No single model finds everything. Different models have different strengths, different blind spots, and different failure modes. When you send the same review to five models, you get additive signal — one catches concurrency bugs, another spots auth gaps, a third finds edge cases in error handling.
 
-This showed up concretely during Squall's own development. A multi-model review of the implementation plan caught three critical gaps: all models flagged the need for path sandboxing, Codex alone caught that 512KB of file context would hit the OS `ARG_MAX` limit on CLI subprocess spawn, and the group identified XML injection risks. No single model raised all three.
+The overlap gives confidence. The divergence gives coverage. One model consistently finds resource leaks while another catches configuration gaps neither would find alone. The redundancy isn't waste — it's the point.
 
-Later, we pointed Squall at its own source code. Gemini found three unbounded-buffering bugs — places where the server would read an entire HTTP response or subprocess output into memory before checking size limits. Grok and Kimi then found a symlink traversal vulnerability in the path sandboxing. Different models, different findings, all real bugs.
+## Quick start
 
-The pattern held across every review round:
-
-| Model | Strength | Speed |
-|-------|----------|-------|
-| Gemini | Systems-level bugs, concurrency, resource leaks | 55–184s |
-| Codex | Highest precision (0 false positives), exact line refs | 50–300s |
-| Grok | Fast triage, obvious bugs | 20–65s |
-| GLM | Architectural framing, API design | 75–93s |
-| Kimi | Contrarian edge cases, adversarial scenarios | 60–300s |
-
-The redundancy isn't waste — it's the point.
-
-## What it does
-
-Squall is an [MCP](https://modelcontextprotocol.io/) server built for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). It exposes four tools:
-
-- **chat** — Send a prompt to any HTTP model (OpenAI-compatible API). Optionally attach source files that Squall reads server-side and injects into the prompt as XML.
-- **clink** — Invoke a CLI agent (Gemini, Codex). Passes the working directory as subprocess cwd so the agent can read code itself, plus a manifest of relevant file paths.
-- **review** — Fan out a prompt to multiple models in parallel with a straggler cutoff. Supports per-model system prompts so each model gets a different expertise lens (security, architecture, correctness, etc.). Results persist to `.squall/reviews/` so they survive context compaction.
-- **listmodels** — List all registered models with provider and backend info.
-
-All tools support `system_prompt` and `temperature` parameters. The `review` tool additionally supports `per_model_system_prompts` — a map of model name to system prompt that overrides the shared `system_prompt` per model.
-
-The dispatch layer is intentionally simple. Claude Code is the orchestrator — it decides what to ask, which models to query, and how to synthesize the results. Squall handles authenticated transport, file context injection, and parallel fan-out.
-
-### The HTTP blindness problem
-
-HTTP models are stateless text-in/text-out endpoints. They can't see your filesystem. When you ask Grok to review a file, it only sees what you paste into the prompt. CLI models (Gemini, Codex) have filesystem access but need to know where to look.
-
-Squall bridges both gaps. Pass `file_paths` and `working_directory`, and:
-- HTTP models get file content injected as XML (budget-capped at 512KB)
-- CLI models get the working directory as their subprocess cwd and a manifest of paths to examine
-
-## Models
-
-Squall has three dispatch backends: **HTTP** (OpenAI-compatible chat completions), **CLI** (subprocess), and **async-poll** (launch-then-poll for deep research). Each uses separate auth — CLI models use OAuth/consumer auth at zero cost, HTTP models use API keys, and async-poll models use their own paid API keys.
-
-| Model | Provider | Backend | Auth |
-|-------|----------|---------|------|
-| `grok-4-1-fast-reasoning` | xAI | HTTP | `XAI_API_KEY` |
-| `moonshotai/kimi-k2.5` | OpenRouter | HTTP | `OPENROUTER_API_KEY` |
-| `z-ai/glm-5` | OpenRouter | HTTP | `OPENROUTER_API_KEY` |
-| `gemini` | Google | CLI | Google OAuth (free) |
-| `codex` | OpenAI | CLI | OpenAI auth (free) |
-| `o3-deep-research` | OpenAI | async-poll | `OPENAI_API_KEY` |
-| `o4-mini-deep-research` | OpenAI | async-poll | `OPENAI_API_KEY` |
-| `deep-research-pro` | Google | async-poll | `GOOGLE_API_KEY` |
-
-CLI models are auto-detected from PATH. If a model name is misspelled, the error includes "Did you mean: ..." suggestions.
-
-### Deep research
-
-OpenAI and Google deep research models use async launch-then-poll APIs (not standard chat completions). Squall's async-poll backend handles the full lifecycle: launch a background job, poll for completion with exponential backoff, extract the result, and persist it to `.squall/research/`.
-
-| Model | API | Poll interval | Typical duration |
-|-------|-----|---------------|------------------|
-| `o3-deep-research` | OpenAI Responses API | 5s base | 5–10 min |
-| `o4-mini-deep-research` | OpenAI Responses API | 5s base | 3–8 min |
-| `deep-research-pro` | Gemini Interactions API | 45s base | 10–60 min |
-
-Deep research models work with `chat` and `review` — no special tool needed. They get a 600s deadline (the MCP ceiling) instead of the standard 300s. Results persist to `.squall/research/` regardless of whether the MCP call completes.
-
-Auth is fully isolated: `OPENAI_API_KEY` is for the Responses API (paid), separate from the `codex` CLI which uses consumer auth. `GOOGLE_API_KEY` is for the Interactions API (paid), separate from the `gemini` CLI which uses OAuth.
-
-## Setup
+### Build
 
 ```bash
 cargo build --release
 ```
 
-### Environment variables
-
-| Variable | Models |
-|----------|--------|
-| `XAI_API_KEY` | Grok |
-| `OPENROUTER_API_KEY` | Kimi, GLM (any OpenRouter model) |
-| `OPENAI_API_KEY` | o3-deep-research, o4-mini-deep-research |
-| `GOOGLE_API_KEY` | deep-research-pro |
-
-CLI models (gemini, codex) need their respective CLIs installed and authenticated. Deep research models are optional — they only appear in `listmodels` when their API key is set.
-
-### Claude Code MCP config
+### Configure Claude Code
 
 Add to `~/.claude.json`:
 
@@ -101,70 +26,169 @@ Add to `~/.claude.json`:
     "squall": {
       "command": "/path/to/squall/target/release/squall",
       "env": {
-        "XAI_API_KEY": "...",
-        "OPENROUTER_API_KEY": "...",
-        "OPENAI_API_KEY": "...",
-        "GOOGLE_API_KEY": "..."
+        "TOGETHER_API_KEY": "...",
+        "XAI_API_KEY": "..."
       }
     }
   }
 }
 ```
 
-## Safety
+### API keys
 
-- **Path sandboxing** — Rejects absolute paths, `..` traversal, and symlink escapes (canonicalize + starts_with)
-- **No shell** — CLI dispatch uses `Command::new` + discrete args, no shell interpolation
-- **Process group kill** — Timeouts SIGKILL the entire process tree via `libc::kill(-pgid, SIGKILL)`, not just the leader
-- **Capped reads** — HTTP responses streamed with 2MB cap. CLI stdout/stderr capped via `take()`. File context pre-checked via metadata before reading
-- **Concurrency limits** — Semaphores cap CLI (4), HTTP (8), and async-poll (4) concurrent requests
-- **No cascade** — MCP results never set `is_error: true`, preventing Claude Code sibling tool call failures
-- **Error sanitization** — User-facing messages never leak internal URLs or connection details
+| Variable | Unlocks |
+|----------|---------|
+| `TOGETHER_API_KEY` | Kimi K2.5, DeepSeek R1, DeepSeek V3, Qwen 3.5, Qwen3 Coder |
+| `XAI_API_KEY` | Grok |
+| `OPENROUTER_API_KEY` | GLM-5 |
+| `MISTRAL_API_KEY` | Mistral Large |
+| `OPENAI_API_KEY` | o3-deep-research, o4-mini-deep-research |
+| `GOOGLE_API_KEY` | deep-research-pro |
 
-## Architecture
+CLI models (gemini, codex) use their own OAuth — no API key needed. Install and authenticate the [Gemini CLI](https://github.com/google-gemini/gemini-cli) and [Codex CLI](https://github.com/openai/codex) separately.
 
+Models only appear in `listmodels` when their API key is set (HTTP) or their CLI is installed (CLI). Set what you have, skip what you don't.
+
+### Verify
+
+Ask Claude Code: *"list the available squall models"*. If Squall is connected, it will call `listmodels` and show what's available.
+
+## Tools
+
+Squall exposes seven tools to Claude Code.
+
+### review
+
+The flagship tool. Fan out a prompt to multiple models in parallel. Each model can get a different expertise lens via `per_model_system_prompts` — one focused on security, another on correctness, another on architecture.
+
+Returns when all models finish or the straggler cutoff fires (default 180s). Models that don't finish in time return partial results. Results persist to `.squall/reviews/` so they survive context compaction — if Claude's context window resets, the `results_file` path still works.
+
+Key parameters:
+- `models` — which models to query (defaults to config if omitted)
+- `per_model_system_prompts` — map of model name to expertise lens
+- `deep: true` — raises timeout to 600s, reasoning effort to high, max tokens to 16384
+- `diff` — unified diff text to include in the prompt
+- `file_paths` + `working_directory` — source files injected as context
+
+Models with less than 70% success rate (over 5+ reviews) are automatically excluded by a hard gate. This prevents known-broken models from wasting dispatch slots.
+
+### chat
+
+Query a single model via HTTP (OpenAI-compatible API). Pass `file_paths` and `working_directory` to inject source files as context. Good for one-off questions to a specific model.
+
+### clink
+
+Query a single CLI model (gemini, codex) as a subprocess. The model gets filesystem access via its native CLI — it can read your code directly. Useful when you need a model that can see the full project, not just the files you pass.
+
+### listmodels
+
+List all available models with metadata: provider, backend, speed tier, precision tier, strengths, and weaknesses. Call this before `review` to see what's available.
+
+### memorize
+
+Save a learning to persistent memory. Three categories:
+
+- **pattern** — a recurring finding across reviews (e.g., "JoinError after abort silently drops panics")
+- **tactic** — a prompt strategy that works (e.g., "Kimi needs a security lens to find real bugs")
+- **recommend** — a model recommendation (e.g., "deepseek-v3.1 is fastest for Rust reviews")
+
+Duplicate patterns auto-merge with evidence counting. Patterns reaching 5 occurrences get confirmed status. Scoped to branch or codebase, auto-detected from git context.
+
+### memory
+
+Read persistent memory. Returns model performance stats, recurring patterns, proven prompt tactics, or model recommendations with recency-weighted confidence scores. Call this before reviews to inform model selection and lens assignment.
+
+### flush
+
+Clean up branch-scoped memory after a PR merge. Graduates high-evidence patterns to codebase scope, archives the rest, and prunes model events older than 30 days.
+
+## Models
+
+Three dispatch backends: **HTTP** (OpenAI-compatible), **CLI** (subprocess, free), and **async-poll** (deep research, launch-then-poll).
+
+| Model | Provider | Backend | Speed | Best for |
+|-------|----------|---------|-------|----------|
+| `grok` | xAI | HTTP | fast | Quick triage, broad coverage |
+| `gemini` | Google | CLI (free) | medium | Systems-level bugs, concurrency |
+| `codex` | OpenAI | CLI (free) | medium | Highest precision, zero false positives |
+| `kimi-k2.5` | Together | HTTP | medium | Edge cases, adversarial scenarios |
+| `deepseek-v3.1` | Together | HTTP | medium | Strong coder, finds real bugs |
+| `deepseek-r1` | Together | HTTP | medium | Deep reasoning, logic-heavy analysis |
+| `qwen-3.5` | Together | HTTP | medium | Pattern matching, multilingual |
+| `qwen3-coder` | Together | HTTP | medium | Purpose-built for code review |
+| `z-ai/glm-5` | OpenRouter | HTTP | medium | Architectural framing |
+| `mistral-large` | Mistral | HTTP | fast | Efficient, multilingual |
+| `o3-deep-research` | OpenAI | async-poll | minutes | Deep web research |
+| `o4-mini-deep-research` | OpenAI | async-poll | minutes | Faster deep research |
+| `deep-research-pro` | Google | async-poll | minutes | Google-powered deep research |
+
+All models are configurable via TOML. Add your own models, swap providers, or override defaults.
+
+## Configuration
+
+Squall uses a three-layer TOML config system. Later layers override earlier ones:
+
+1. **Built-in defaults** — 13 models, 5 providers, shipped with the binary
+2. **User config** (`~/.config/squall/config.toml`) — personal overrides
+3. **Project config** (`.squall/config.toml`) — project-specific settings
+
+### Adding a custom model
+
+```toml
+[providers.custom]
+base_url = "https://my-api.example.com/v1/chat/completions"
+api_key_env = "CUSTOM_API_KEY"
+
+[models.my-model]
+provider = "custom"
+backend = "http"
+description = "My custom model"
+speed_tier = "fast"
+strengths = ["domain expertise"]
 ```
-Claude Code
-    │
-    ├─► chat(prompt, model, system_prompt?, temperature?, file_paths?)
-    │       │
-    │       ├─► HTTP backend: file content injected as XML into prompt
-    │       └─► Registry → HttpDispatch → OpenAI-compatible API
-    │
-    ├─► clink(prompt, cli_name, system_prompt?, temperature?, file_paths?)
-    │       │
-    │       ├─► CLI backend: path manifest prepended, working_directory as cwd
-    │       └─► Registry → CliDispatch → subprocess (gemini/codex)
-    │
-    ├─► review(prompt, models?, timeout_secs?, per_model_system_prompts?, ...)
-    │       │
-    │       ├─► Parallel fan-out to N models (HTTP + CLI + async-poll mixed)
-    │       ├─► Straggler cutoff: returns when all finish or timeout expires
-    │       └─► Results persisted to .squall/reviews/ and returned inline
-    │
-    ├─► chat/clink with deep research model
-    │       │
-    │       └─► Registry → AsyncPollDispatch → POST launch → poll loop → result
-    │           └─► Results persisted to .squall/research/
-    │
-    └─► listmodels()
+
+### Review defaults
+
+When `models` is omitted from a `review` call, Squall dispatches to these defaults:
+
+```toml
+[review]
+default_models = ["gemini", "codex", "grok"]
 ```
+
+Override in your user or project config to change the default ensemble.
+
+## Memory
+
+Squall learns from past reviews. Three files in `.squall/memory/`:
+
+- **models.md** — Per-model performance stats (latency, success rate, common failures). Updated automatically after every review. Used by the hard gate to auto-exclude underperforming models.
+
+- **patterns.md** — Recurring findings across reviews with evidence counting. Patterns found by multiple models in multiple reviews get confirmed status. Capped at 50 entries with automatic pruning.
+
+- **tactics.md** — Proven system prompts and model+lens combinations that consistently produce good results.
+
+### The learning loop
+
+1. **Before review** — call `memory` to read past stats and patterns. Informs model selection and lens assignment.
+2. **After review** — call `memorize` to save new findings, effective tactics, and model observations.
+3. **After PR merge** — call `flush` with the branch name. Graduates high-evidence patterns to codebase scope, archives the rest.
+
+Patterns are scoped — branch-level findings stay isolated until merge, preventing noise from experimental branches.
 
 ## Skills
 
-Squall ships with [Claude Code skills](https://docs.anthropic.com/en/docs/claude-code/skills) — prompt templates that teach Claude how to use the tools effectively:
+Squall ships with [Claude Code skills](https://docs.anthropic.com/en/docs/claude-code/skills) — prompt templates that teach Claude how to use the tools effectively.
 
 | Skill | What it does |
 |-------|-------------|
-| `/squall-review` | Multi-model code review with per-model expertise lenses |
-| `/squall-research` | Team-based research swarm — N agents × WebSearch × Squall review |
-| `/squall-deep-research` | Deep sourced research via Codex web search |
+| `squall-unified-review` | Auto-depth code review (QUICK / STANDARD / DEEP) with per-model expertise lenses and optional Opus agent for local investigation |
+| `squall-research` | Team swarm — multiple agents investigating different research vectors in parallel |
+| `squall-deep-research` | Web-sourced research via Codex and Gemini CLI |
 
-Skills are markdown files in `.claude/skills/`. They don't change the Rust server — they teach the caller how to wire up tools that already exist.
+Skills are markdown files in `.claude/skills/`. They teach Claude how to orchestrate the tools — they don't change the server.
 
-### Team swarms
-
-The `/squall-research` skill spawns a team of parallel agents, each investigating a different research vector. This requires Claude Code's experimental agent teams feature. To enable it, add to `~/.claude/settings.json`:
+Team swarms require Claude Code's experimental agent teams feature:
 
 ```json
 {
@@ -174,11 +198,55 @@ The `/squall-research` skill spawns a team of parallel agents, each investigatin
 }
 ```
 
-Each team member gets full MCP tool access — they can call `listmodels`, `review`, `chat`, and `clink` directly via `ToolSearch`.
+## How it works
 
-## Tests
+```
+Claude Code (orchestrator)
+    |
+    +-- review -----> fan out to N models in parallel
+    |                   |-- HTTP models get file content injected as context
+    |                   |-- CLI models get filesystem access via subprocess
+    |                   +-- straggler cutoff returns partial results for slow models
+    |
+    +-- memory/memorize/flush --> .squall/memory/ (learning loop)
+    |
+    +-- chat/clink --> single model query
+    |
+    +-- listmodels --> model discovery with metadata
+```
+
+Claude is the intelligence. Squall is transport + memory. Claude decides what to ask, which models to query, and how to synthesize results. Squall handles authenticated dispatch, file context injection, parallel fan-out, and persistent learning.
+
+## Safety
+
+- **Path sandboxing** — rejects absolute paths, `..` traversal, and symlink escapes
+- **No shell** — CLI dispatch uses direct exec with discrete args, no shell interpolation
+- **Process group kill** — timeouts kill the entire process tree, not just the leader
+- **Capped reads** — HTTP responses: 2MB. CLI output: capped. File context: pre-checked via metadata
+- **Concurrency limits** — semaphores: 8 HTTP, 4 CLI, 4 async-poll
+- **No cascade errors** — MCP results never set `is_error: true`, preventing Claude Code sibling tool failures
+- **Error sanitization** — user-facing messages never leak internal URLs or credentials
+
+## Contributing
+
+### Setup
 
 ```bash
-cargo test        # 182 tests
-cargo clippy      # zero warnings
+cargo build
+cargo test
+cargo clippy --all-targets
 ```
+
+All tests must pass. Zero clippy warnings.
+
+### Adding a model
+
+**To the built-in defaults** — add a `[models.name]` entry to `BUILTIN_DEFAULTS` in `src/config.rs`. HTTP models need a provider with `base_url` and `api_key_env`. CLI models need a parser in `src/dispatch/cli.rs`.
+
+**For personal use** — add to `~/.config/squall/config.toml`. Same TOML format, no code changes needed.
+
+### Pull requests
+
+- One feature per PR
+- Tests for new behavior
+- `cargo test && cargo clippy --all-targets` clean before submitting
