@@ -123,6 +123,122 @@ pub fn default_scope_from_git(ctx: Option<&GitContext>) -> String {
     }
 }
 
+/// Get the normalized git remote URL for the given working directory.
+/// Runs `git remote get-url origin` and normalizes SSH/HTTPS URLs to a canonical form.
+/// Returns None if not a git repo, no `origin` remote, or git is not available.
+#[cfg(feature = "global-memory")]
+async fn detect_git_remote_url(working_directory: &Path) -> Option<String> {
+    let output = tokio::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(working_directory)
+        .output()
+        .await
+        .ok()
+        .filter(|o| o.status.success())?;
+
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+
+    Some(normalize_git_url(&raw))
+}
+
+/// Normalize a git remote URL to a canonical form for project identification.
+///
+/// Handles SSH (`git@github.com:user/repo.git`) and HTTPS (`https://github.com/user/repo.git`)
+/// formats, producing identical output for the same repo regardless of access method.
+///
+/// Rules:
+/// 1. Strip `.git` suffix
+/// 2. Lowercase the host
+/// 3. Convert SSH `git@host:path` to `host/path`
+/// 4. Strip `https://` or `http://` prefix
+/// 5. Strip trailing slashes
+#[cfg(feature = "global-memory")]
+pub fn normalize_git_url(url: &str) -> String {
+    let mut s = url.trim().to_string();
+
+    // Strip trailing slashes FIRST (before .git check, so "repo.git/" → "repo.git" → "repo")
+    while s.ends_with('/') {
+        s.pop();
+    }
+
+    // Strip .git suffix
+    if s.ends_with(".git") {
+        s.truncate(s.len() - 4);
+    }
+
+    // Strip ssh:// scheme (before git@ check, so "ssh://git@host/path" → "git@host/path")
+    if let Some(rest) = s.strip_prefix("ssh://") {
+        s = rest.to_string();
+    }
+
+    // SSH format: git@host:user/repo → host/user/repo
+    // Also handles git@host/user/repo (from ssh:// stripping above)
+    if let Some(rest) = s.strip_prefix("git@") {
+        // Find separator: colon for shorthand (git@host:path), slash for ssh:// (git@host/path)
+        if let Some(sep_pos) = rest.find(':').or_else(|| rest.find('/')) {
+            let host = rest[..sep_pos].to_lowercase();
+            let path = &rest[sep_pos + 1..];
+            s = format!("{host}/{path}");
+        }
+    }
+
+    // HTTPS/HTTP: strip scheme
+    if let Some(rest) = s.strip_prefix("https://") {
+        s = rest.to_string();
+    } else if let Some(rest) = s.strip_prefix("http://") {
+        s = rest.to_string();
+    }
+
+    // Lowercase the host portion (everything before the first /)
+    if let Some(slash_pos) = s.find('/') {
+        let host = s[..slash_pos].to_lowercase();
+        s = format!("{host}{}", &s[slash_pos..]);
+    } else {
+        s = s.to_lowercase();
+    }
+
+    // Strip any remaining trailing slashes (after scheme stripping)
+    while s.ends_with('/') {
+        s.pop();
+    }
+
+    s
+}
+
+/// Compute a stable project identifier from a working directory.
+///
+/// Strategy:
+/// 1. Try `git remote get-url origin` → normalize → sha256 hash with "git:" prefix
+/// 2. Fallback: canonicalize the path → sha256 hash with "path:" prefix
+///
+/// Returns a string like `git:a1b2c3d4e5f6a1b2` or `path:f6e5d4c3b2a1f6e5`.
+/// The 16-char hex suffix is the first 8 bytes of SHA-256, ensuring stability across
+/// Rust versions (unlike DefaultHasher/SipHash which is not guaranteed stable).
+#[cfg(feature = "global-memory")]
+pub async fn compute_project_id(working_directory: &Path) -> String {
+    use sha2::{Digest, Sha256};
+
+    // Try git remote first
+    if let Some(normalized_url) = detect_git_remote_url(working_directory).await {
+        let digest = Sha256::digest(normalized_url.as_bytes());
+        let hash_hex = hex::encode(&digest[..8]);
+        return format!("git:{hash_hex}");
+    }
+
+    // Fallback: canonical path
+    let canonical = tokio::fs::canonicalize(working_directory)
+        .await
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| working_directory.to_string_lossy().to_string());
+
+    let digest = Sha256::digest(canonical.as_bytes());
+    let hash_hex = hex::encode(&digest[..8]);
+    format!("path:{hash_hex}")
+}
+
 /// Maximum bytes of file content to inject into model prompts.
 /// 2 MB ≈ 500K–700K tokens — well within frontier model context windows.
 /// Models with smaller windows will reject at the provider level, which is
@@ -538,4 +654,102 @@ pub async fn validate_working_directory(path: &str) -> Result<PathBuf, SquallErr
     }
 
     Ok(canonical)
+}
+
+#[cfg(test)]
+#[cfg(feature = "global-memory")]
+mod project_id_tests {
+    use super::*;
+
+    #[test]
+    fn normalize_ssh_and_https_match() {
+        let ssh = normalize_git_url("git@github.com:user/repo.git");
+        let https = normalize_git_url("https://github.com/user/repo.git");
+        assert_eq!(ssh, https);
+        assert_eq!(ssh, "github.com/user/repo");
+    }
+
+    #[test]
+    fn normalize_strips_git_suffix() {
+        let with = normalize_git_url("https://github.com/user/repo.git");
+        let without = normalize_git_url("https://github.com/user/repo");
+        assert_eq!(with, without);
+    }
+
+    #[test]
+    fn normalize_lowercases_host() {
+        let upper = normalize_git_url("https://GitHub.COM/user/repo");
+        assert_eq!(upper, "github.com/user/repo");
+    }
+
+    #[test]
+    fn normalize_preserves_path_case() {
+        let url = normalize_git_url("https://github.com/User/Repo-Name.git");
+        assert_eq!(url, "github.com/User/Repo-Name");
+    }
+
+    #[test]
+    fn normalize_strips_trailing_slashes() {
+        let url = normalize_git_url("https://github.com/user/repo///");
+        assert_eq!(url, "github.com/user/repo");
+    }
+
+    #[test]
+    fn normalize_handles_http() {
+        let url = normalize_git_url("http://gitlab.com/user/repo.git");
+        assert_eq!(url, "gitlab.com/user/repo");
+    }
+
+    #[test]
+    fn normalize_ssh_custom_host() {
+        let url = normalize_git_url("git@gitlab.company.com:team/project.git");
+        assert_eq!(url, "gitlab.company.com/team/project");
+    }
+
+    #[test]
+    fn normalize_different_repos_differ() {
+        let a = normalize_git_url("https://github.com/user/repo-a.git");
+        let b = normalize_git_url("https://github.com/user/repo-b.git");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn normalize_git_suffix_with_trailing_slash() {
+        // Bug: .git stripped before trailing slash → "repo.git/" becomes "repo.git" not "repo"
+        let url = normalize_git_url("https://github.com/user/repo.git/");
+        assert_eq!(url, "github.com/user/repo", "trailing slash after .git should normalize correctly");
+    }
+
+    #[test]
+    fn normalize_ssh_scheme_matches_ssh_shorthand() {
+        // ssh://git@host/path should normalize the same as git@host:path
+        let ssh_scheme = normalize_git_url("ssh://git@github.com/user/repo.git");
+        let ssh_shorthand = normalize_git_url("git@github.com:user/repo.git");
+        assert_eq!(ssh_scheme, ssh_shorthand, "ssh:// scheme and git@ shorthand should normalize identically");
+        assert_eq!(ssh_scheme, "github.com/user/repo");
+    }
+
+    #[tokio::test]
+    async fn compute_project_id_non_git_uses_path_prefix() {
+        let tmp = std::env::temp_dir().join("squall-test-project-id-no-git");
+        let _ = tokio::fs::create_dir_all(&tmp).await;
+        let id = compute_project_id(&tmp).await;
+        assert!(id.starts_with("path:"), "Non-git dir should use path: prefix, got: {id}");
+        assert_eq!(id.len(), 5 + 16, "path: prefix + 16 hex chars, got: {id}");
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+    }
+
+    #[tokio::test]
+    async fn compute_project_id_git_repo_uses_git_prefix() {
+        let id = compute_project_id(std::path::Path::new(".")).await;
+        assert!(id.starts_with("git:"), "Git repo should use git: prefix, got: {id}");
+        assert_eq!(id.len(), 4 + 16, "git: prefix + 16 hex chars, got: {id}");
+    }
+
+    #[tokio::test]
+    async fn compute_project_id_deterministic() {
+        let id1 = compute_project_id(std::path::Path::new(".")).await;
+        let id2 = compute_project_id(std::path::Path::new(".")).await;
+        assert_eq!(id1, id2, "Same directory should produce same project ID");
+    }
 }

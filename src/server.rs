@@ -35,8 +35,30 @@ pub struct SquallServer {
 impl SquallServer {
     pub fn new(config: Config) -> Self {
         let review_config = config.review.clone(); // Clone BEFORE from_config() move
+
+        // Build global writer before config is moved into Registry.
+        #[cfg(feature = "global-memory")]
+        let global_memory_config = config.global_memory.clone();
+
         let registry = Arc::new(Registry::from_config(config));
-        let memory = Arc::new(MemoryStore::new().with_id_to_key(registry.model_id_to_key()));
+
+        #[cfg_attr(not(feature = "global-memory"), allow(unused_mut))]
+        let mut store = MemoryStore::new().with_id_to_key(registry.model_id_to_key());
+
+        #[cfg(feature = "global-memory")]
+        if global_memory_config.enabled {
+            match crate::memory::global::GlobalWriter::new(global_memory_config.db_path.into()) {
+                Some(writer) => {
+                    tracing::info!("global memory: enabled");
+                    store = store.with_global(writer);
+                }
+                None => {
+                    tracing::warn!("global memory: failed to initialize, continuing with local only");
+                }
+            }
+        }
+
+        let memory = Arc::new(store);
         let git_cache = Arc::new(GitContextCache::new());
         Self {
             registry,
@@ -342,6 +364,7 @@ impl SquallServer {
 
         let executor = ReviewExecutor::new(self.registry.clone());
         let prompt_len = prompt.len();
+        let wd_for_memory = working_directory.clone();
         let review_response = executor.execute(&req, prompt, &self.memory, working_directory, files_skipped, files_errors, Some(&self.review_config)).await;
 
         // Log model metrics to memory (non-blocking, fire-and-forget)
@@ -349,7 +372,7 @@ impl SquallServer {
         let results_for_memory = review_response.results.clone();
         let id_to_key = self.registry.model_id_to_key();
         tokio::spawn(async move {
-            memory.log_model_metrics(&results_for_memory, prompt_len, Some(&id_to_key)).await;
+            memory.log_model_metrics(&results_for_memory, prompt_len, Some(&id_to_key), wd_for_memory.as_deref()).await;
         });
 
         // Serialize the full review response as the MCP content

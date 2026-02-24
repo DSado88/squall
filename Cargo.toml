@@ -20,6 +20,12 @@ tokio-util = "0.7"
 futures-util = "0.3"
 dotenvy = "0.15"
 toml = "0.8"
+duckdb = { version = "1.4", optional = true, features = ["bundled"] }
+sha2 = { version = "0.10", optional = true }
+hex = { version = "0.4", optional = true }
+
+[features]
+global-memory = ["duckdb", "sha2", "hex"]
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -20,6 +20,9 @@ struct TomlConfig {
     settings: TomlSettings,
     #[serde(default)]
     review: TomlReviewConfig,
+    #[cfg(feature = "global-memory")]
+    #[serde(default)]
+    global_memory: TomlGlobalMemoryConfig,
 }
 
 #[derive(Deserialize, Clone, Default)]
@@ -33,6 +36,15 @@ struct TomlReviewConfig {
     /// Models dispatched when caller omits `models`. Claude adds more via the skill.
     #[serde(default)]
     default_models: Option<Vec<String>>,
+}
+
+#[cfg(feature = "global-memory")]
+#[derive(Deserialize, Clone, Default)]
+struct TomlGlobalMemoryConfig {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    db_path: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -91,6 +103,16 @@ impl TomlConfig {
         // Review config: later layer overrides if explicitly set
         if other.review.default_models.is_some() {
             self.review.default_models = other.review.default_models;
+        }
+        // Global memory config: later layer overrides if explicitly set
+        #[cfg(feature = "global-memory")]
+        {
+            if other.global_memory.enabled.is_some() {
+                self.global_memory.enabled = other.global_memory.enabled;
+            }
+            if other.global_memory.db_path.is_some() {
+                self.global_memory.db_path = other.global_memory.db_path;
+            }
         }
     }
 
@@ -278,11 +300,23 @@ impl TomlConfig {
                 .unwrap_or_else(|| ReviewConfig::default().default_models),
         };
 
+        // Parse global memory config
+        #[cfg(feature = "global-memory")]
+        let global_memory = {
+            let defaults = GlobalMemoryConfig::default();
+            GlobalMemoryConfig {
+                enabled: self.global_memory.enabled.unwrap_or(defaults.enabled),
+                db_path: self.global_memory.db_path.unwrap_or(defaults.db_path),
+            }
+        };
+
         Config {
             models,
             skipped,
             persist_raw_output,
             review,
+            #[cfg(feature = "global-memory")]
+            global_memory,
         }
     }
 }
@@ -331,6 +365,30 @@ impl Default for ReviewConfig {
     }
 }
 
+/// Cross-project global memory configuration.
+#[cfg(feature = "global-memory")]
+#[derive(Debug, Clone)]
+pub struct GlobalMemoryConfig {
+    /// Whether global memory is enabled. Default: true when feature is compiled in.
+    pub enabled: bool,
+    /// Path to the DuckDB database file.
+    /// Default: `~/.squall/memory/global/global.duckdb`.
+    pub db_path: String,
+}
+
+#[cfg(feature = "global-memory")]
+impl Default for GlobalMemoryConfig {
+    fn default() -> Self {
+        let db_path = std::env::var("HOME")
+            .map(|home| format!("{home}/.squall/memory/global/global.duckdb"))
+            .unwrap_or_else(|_| ".squall/memory/global/global.duckdb".to_string());
+        Self {
+            enabled: true,
+            db_path,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Config {
     pub models: HashMap<String, ModelEntry>,
@@ -341,6 +399,9 @@ pub struct Config {
     pub persist_raw_output: PersistRawOutput,
     /// Tiered model selection for automatic review dispatch.
     pub review: ReviewConfig,
+    /// Cross-project global memory settings (DuckDB-backed).
+    #[cfg(feature = "global-memory")]
+    pub global_memory: GlobalMemoryConfig,
 }
 
 impl Config {

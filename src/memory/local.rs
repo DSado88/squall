@@ -90,7 +90,7 @@ impl MemoryStore {
         self
     }
 
-    fn models_path(&self) -> PathBuf {
+    pub(crate) fn models_path(&self) -> PathBuf {
         self.base_dir.join("models.md")
     }
 
@@ -786,7 +786,7 @@ async fn atomic_write(path: &PathBuf, content: &str) -> Result<(), std::io::Erro
 }
 
 /// Parse models.md into (summary_section, event_log_lines).
-fn parse_models_file(content: &str) -> (String, Vec<String>) {
+pub(crate) fn parse_models_file(content: &str) -> (String, Vec<String>) {
     if content.is_empty() {
         return (String::new(), Vec::new());
     }
@@ -1132,6 +1132,45 @@ fn ymd_to_days(year: u64, month: u64, day: u64) -> u64 {
     era * 146097 + doe - 719468
 }
 
+/// Parse an ISO 8601 timestamp like `"2026-02-23T15:14:14Z"` into Unix epoch milliseconds.
+///
+/// Uses the existing `ymd_to_days` for the date portion and manually parses HMS.
+/// Returns `None` for malformed input.
+#[cfg_attr(not(feature = "global-memory"), allow(dead_code))]
+pub(crate) fn parse_iso_to_epoch_ms(s: &str) -> Option<i64> {
+    // Minimum: "YYYY-MM-DDTHH:MM:SSZ" = 20 chars
+    let s = s.trim();
+    if s.len() < 19 {
+        return None;
+    }
+
+    let year: u64 = s.get(..4)?.parse().ok()?;
+    let month: u64 = s.get(5..7)?.parse().ok()?;
+    let day: u64 = s.get(8..10)?.parse().ok()?;
+
+    // Validate date parts
+    if year == 0 || month == 0 || day == 0 || month > 12 || day > 31 {
+        return None;
+    }
+
+    // Check separator
+    if s.as_bytes().get(10)? != &b'T' {
+        return None;
+    }
+
+    let hour: u64 = s.get(11..13)?.parse().ok()?;
+    let min: u64 = s.get(14..16)?.parse().ok()?;
+    let sec: u64 = s.get(17..19)?.parse().ok()?;
+
+    if hour > 23 || min > 59 || sec > 59 {
+        return None;
+    }
+
+    let days = ymd_to_days(year, month, day);
+    let epoch_secs = days * 86400 + hour * 3600 + min * 60 + sec;
+    Some(epoch_secs as i64 * 1000)
+}
+
 /// Format the full models.md file.
 fn format_models_file(summary: &str, events: &[String]) -> String {
     let mut output = String::from("# Model Performance Profiles\n\n");
@@ -1331,7 +1370,7 @@ fn escape_pipes(s: &str) -> String {
 }
 
 /// Find the largest valid char boundary <= `max`.
-fn floor_char_boundary(s: &str, max: usize) -> usize {
+pub(crate) fn floor_char_boundary(s: &str, max: usize) -> usize {
     if max >= s.len() {
         return s.len();
     }
@@ -1663,5 +1702,50 @@ mod tests {
         assert!(entries[0].contains("Pattern number 5"), "first entry: {}", entries[0]);
 
         let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
+    }
+
+    // --- parse_iso_to_epoch_ms tests ---
+
+    #[test]
+    fn parse_iso_known_timestamp() {
+        // 2026-02-23T15:14:14Z → manually computed epoch ms
+        let ms = parse_iso_to_epoch_ms("2026-02-23T15:14:14Z").unwrap();
+        // 2026-02-23 = day 20507 from epoch. 20507*86400 = 1771804800
+        // +15*3600 + 14*60 + 14 = 54000 + 840 + 14 = 54854
+        // Total secs = 1771804800 + 54854 = 1771859654
+        // ms = 1771859654000
+        assert_eq!(ms, 1_771_859_654_000);
+    }
+
+    #[test]
+    fn parse_iso_unix_epoch() {
+        let ms = parse_iso_to_epoch_ms("1970-01-01T00:00:00Z").unwrap();
+        assert_eq!(ms, 0);
+    }
+
+    #[test]
+    fn parse_iso_rejects_short_input() {
+        assert!(parse_iso_to_epoch_ms("2026-02-23").is_none());
+    }
+
+    #[test]
+    fn parse_iso_rejects_bad_month() {
+        assert!(parse_iso_to_epoch_ms("2026-13-01T00:00:00Z").is_none());
+    }
+
+    #[test]
+    fn parse_iso_rejects_bad_hour() {
+        assert!(parse_iso_to_epoch_ms("2026-02-23T25:00:00Z").is_none());
+    }
+
+    #[test]
+    fn parse_iso_no_t_separator() {
+        assert!(parse_iso_to_epoch_ms("2026-02-23 15:14:14Z").is_none());
+    }
+
+    #[test]
+    fn parse_iso_trims_whitespace() {
+        let ms = parse_iso_to_epoch_ms("  2026-02-23T15:14:14Z  ").unwrap();
+        assert_eq!(ms, 1_771_859_654_000);
     }
 }

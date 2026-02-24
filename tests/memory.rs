@@ -103,7 +103,7 @@ fn write_log_metrics_creates_models_md() {
             make_result("grok", 22000, ModelStatus::Success),
             make_result("gemini", 145000, ModelStatus::Success),
         ];
-        store.log_model_metrics(&results, 4200, None).await;
+        store.log_model_metrics(&results, 4200, None, None).await;
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("models.md"))
             .await
@@ -127,10 +127,10 @@ fn write_log_metrics_appends_events() {
     run_async(async {
         let store = MemoryStore::new();
         store
-            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None)
+            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None, None)
             .await;
         store
-            .log_model_metrics(&[make_result("grok", 30000, ModelStatus::Success)], 2000, None)
+            .log_model_metrics(&[make_result("grok", 30000, ModelStatus::Success)], 2000, None, None)
             .await;
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("models.md"))
@@ -152,7 +152,7 @@ fn write_log_metrics_records_errors() {
     run_async(async {
         let store = MemoryStore::new();
         store
-            .log_model_metrics(&[make_result("kimi", 300000, ModelStatus::Error)], 5000, None)
+            .log_model_metrics(&[make_result("kimi", 300000, ModelStatus::Error)], 5000, None, None)
             .await;
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("models.md"))
@@ -170,7 +170,7 @@ fn write_creates_index_md() {
     run_async(async {
         let store = MemoryStore::new();
         store
-            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None)
+            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None, None)
             .await;
 
         let index = tokio::fs::read_to_string(memory_dir(&dir).join("index.md"))
@@ -188,7 +188,7 @@ fn write_no_tmp_files_remain() {
     run_async(async {
         let store = MemoryStore::new();
         store
-            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None)
+            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None, None)
             .await;
 
         let tmp_files: Vec<_> = std::fs::read_dir(memory_dir(&dir))
@@ -214,6 +214,7 @@ fn write_concurrent_metrics_safe() {
                 s.log_model_metrics(
                     &[make_result("grok", (20 + i) * 1000, ModelStatus::Success)],
                     1000,
+                    None,
                     None,
                 )
                 .await;
@@ -248,6 +249,7 @@ fn write_event_log_truncates_at_100() {
                     &[make_result("grok", i * 1000, ModelStatus::Success)],
                     1000,
                     None,
+                    None,
                 )
                 .await;
         }
@@ -273,7 +275,7 @@ fn write_empty_results() {
     let (dir, orig, _guard) = setup_test_env("w-empty-results");
     run_async(async {
         let store = MemoryStore::new();
-        store.log_model_metrics(&[], 0, None).await;
+        store.log_model_metrics(&[], 0, None, None).await;
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("models.md"))
             .await
@@ -438,7 +440,7 @@ fn read_all_categories() {
         let store = MemoryStore::new();
 
         store
-            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None)
+            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None, None)
             .await;
         store
             .memorize("pattern", "test pattern", None, None, None, None)
@@ -464,7 +466,7 @@ fn read_filters_by_category() {
         let store = MemoryStore::new();
 
         store
-            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None)
+            .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None, None)
             .await;
         store
             .memorize("pattern", "test pattern", None, None, None, None)
@@ -492,6 +494,7 @@ fn read_models_returns_summary_only() {
                 .log_model_metrics(
                     &[make_result("grok", (20 + i) * 1000, ModelStatus::Success)],
                     1000,
+                    None,
                     None,
                 )
                 .await;
@@ -591,6 +594,7 @@ fn integration_full_cycle() {
                 ],
                 4200,
                 None,
+                None,
             )
             .await;
 
@@ -628,7 +632,7 @@ fn integration_survives_restart() {
         {
             let store = MemoryStore::new();
             store
-                .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None)
+                .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 1000, None, None)
                 .await;
             store
                 .memorize("pattern", "Persisted finding", None, None, None, None)
@@ -841,7 +845,7 @@ fn bug2_pipe_in_model_name_does_not_corrupt_summary() {
 
         // Write 10 events to force summary computation (COMPACTION_INTERVAL=10)
         for _ in 0..10 {
-            store.log_model_metrics(&results, 1000, None).await;
+            store.log_model_metrics(&results, 1000, None, None).await;
         }
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("models.md"))
@@ -878,7 +882,7 @@ fn bug2b_pipe_in_error_does_not_corrupt_summary() {
             partial: false,
         }];
 
-        store.log_model_metrics(&results, 1000, None).await;
+        store.log_model_metrics(&results, 1000, None, None).await;
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("models.md"))
             .await
@@ -915,14 +919,14 @@ fn bug5_summary_recomputed_on_truncation() {
         // Write 105 events for model "old" — this will truncate to 100
         for _ in 0..105 {
             store
-                .log_model_metrics(&[make_result("old-model", 10000, ModelStatus::Success)], 100, None)
+                .log_model_metrics(&[make_result("old-model", 10000, ModelStatus::Success)], 100, None, None)
                 .await;
         }
 
         // Now write 1 event for "new" — this should trigger truncation of "old" events
         // and summary should reflect current window, not stale data
         store
-            .log_model_metrics(&[make_result("new-model", 50000, ModelStatus::Success)], 100, None)
+            .log_model_metrics(&[make_result("new-model", 50000, ModelStatus::Success)], 100, None, None)
             .await;
 
         let content = tokio::fs::read_to_string(memory_dir(&dir).join("models.md"))
@@ -993,7 +997,7 @@ fn bug7_compaction_counter_is_per_store() {
         // Write 10 events for "alpha" — should trigger compaction on write #10
         for _ in 0..10 {
             store
-                .log_model_metrics(&[make_result("alpha", 20000, ModelStatus::Success)], 100, None)
+                .log_model_metrics(&[make_result("alpha", 20000, ModelStatus::Success)], 100, None, None)
                 .await;
         }
 
@@ -1008,7 +1012,7 @@ fn bug7_compaction_counter_is_per_store() {
         // Now write 10 events for "beta" — should trigger compaction again on write #20
         for _ in 0..10 {
             store
-                .log_model_metrics(&[make_result("beta", 30000, ModelStatus::Success)], 100, None)
+                .log_model_metrics(&[make_result("beta", 30000, ModelStatus::Success)], 100, None, None)
                 .await;
         }
 
@@ -1164,7 +1168,7 @@ fn bug3_read_failure_preserves_existing_data() {
         // Write 5 events to build up models.md
         for _ in 0..5 {
             store
-                .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 100, None)
+                .log_model_metrics(&[make_result("grok", 20000, ModelStatus::Success)], 100, None, None)
                 .await;
         }
 
@@ -1182,7 +1186,7 @@ fn bug3_read_failure_preserves_existing_data() {
 
         // Log one more event — with the bug, unwrap_or_default() drops ALL prior data
         store
-            .log_model_metrics(&[make_result("gemini", 50000, ModelStatus::Success)], 100, None)
+            .log_model_metrics(&[make_result("gemini", 50000, ModelStatus::Success)], 100, None, None)
             .await;
 
         let after = tokio::fs::read_to_string(&models_path).await.unwrap();
@@ -1450,7 +1454,7 @@ async fn read_memory_recommend_returns_recommendations() {
             partial: false,
         },
     ];
-    store.log_model_metrics(&results, 1000, None).await;
+    store.log_model_metrics(&results, 1000, None, None).await;
 
     let rec = store
         .read_memory(Some("recommend"), None, 10000, None)
@@ -1522,6 +1526,7 @@ async fn recommend_quick_triage_prefers_fastest() {
                     },
                 ],
                 500,
+                None,
                 None,
             )
             .await;
