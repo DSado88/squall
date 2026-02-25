@@ -2188,7 +2188,7 @@ async fn defect_sse_keepalive_must_reset_stall_timer() {
     let http = HttpDispatch::new();
     let req = ProviderRequest {
         model: "test".to_string(),
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         system_prompt: None,
         deadline: Instant::now() + Duration::from_secs(30),
         working_directory: None,

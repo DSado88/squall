@@ -3,6 +3,7 @@ pub mod cli;
 pub mod http;
 pub mod registry;
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use tokio_util::sync::CancellationToken;
@@ -10,7 +11,8 @@ use tokio_util::sync::CancellationToken;
 /// Internal request type — both HTTP and CLI backends accept this.
 #[derive(Clone)]
 pub struct ProviderRequest {
-    pub prompt: String,
+    /// Shared prompt buffer — `Arc<str>` avoids cloning MB-scale prompts per model.
+    pub prompt: Arc<str>,
     pub model: String,
     pub deadline: Instant,
     /// Working directory for CLI subprocess cwd (None for HTTP backends).

@@ -409,7 +409,7 @@ fn provider_request_has_working_directory() {
     use squall::dispatch::ProviderRequest;
     use std::time::{Duration, Instant};
     let _req = ProviderRequest {
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         model: "test".to_string(),
         deadline: Instant::now() + Duration::from_secs(10),
         working_directory: Some("/tmp".to_string()),

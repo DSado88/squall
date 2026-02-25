@@ -299,11 +299,14 @@ impl ReviewExecutor {
         // Pin base timestamp before spawn loop to avoid per-model time skew.
         let base_now = Instant::now();
 
+        // Share prompt across models via Arc — avoids cloning MB-scale buffers per model.
+        let prompt: Arc<str> = Arc::from(prompt);
+
         for (model_id, provider) in &model_providers {
             let registry = self.registry.clone();
             let model_id = model_id.clone();
             let provider = provider.clone();
-            let prompt = prompt.clone();
+            let prompt = prompt.clone(); // Arc refcount bump, not a buffer copy
             // Per-model system prompt: use fuzzy-resolved map, fall back to shared
             let system_prompt = resolved_per_model_prompts
                 .as_ref()

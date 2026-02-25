@@ -60,13 +60,25 @@ if $DO_BUILD; then
     chmod +x "$INSTALL_BIN"
     echo "Installed binary to $INSTALL_BIN"
 
-    # Register as global MCP server (user scope → ~/.claude.json)
-    # Merges API keys from .env with any existing keys in ~/.claude.json.
+    # Register as global MCP server (user scope → ~/.claude.json).
+    # SECURITY: API keys are written directly to the JSON config file, never
+    # passed as CLI args (which would be visible in `ps aux`).
     if command -v claude &>/dev/null; then
-        MERGED_ENV=""
+        echo "Registering squall as global MCP server..."
+        # Remove existing entry first (claude mcp add fails if it exists)
+        claude mcp remove squall 2>/dev/null || true
+        # Register binary path only — no -e flags (keys injected below)
+        claude mcp add --scope user --transport stdio squall "$INSTALL_BIN"
+
+        # Inject API keys directly into ~/.claude.json (avoids process-list leakage)
         if command -v python3 &>/dev/null; then
-            MERGED_ENV=$(python3 -c "
-import json, os
+            python3 -c "
+import json, os, sys
+
+claude_cfg = os.path.expanduser('~/.claude.json')
+if not os.path.exists(claude_cfg):
+    print('Warning: ~/.claude.json not found after mcp add — keys not injected', file=sys.stderr)
+    sys.exit(0)
 
 # Read .env
 env_keys = {}
@@ -80,35 +92,33 @@ with open('${ENV_FILE}') as f:
         if k.endswith('_API_KEY') and v:
             env_keys[k] = v
 
-# Read existing keys from ~/.claude.json
-existing = {}
-claude_cfg = os.path.expanduser('~/.claude.json')
-if os.path.exists(claude_cfg):
-    try:
-        with open(claude_cfg) as f:
-            cfg = json.load(f)
-        existing = cfg.get('mcpServers', {}).get('squall', {}).get('env', {})
-    except Exception:
-        pass
+# Read config
+with open(claude_cfg) as f:
+    cfg = json.load(f)
 
-# Merge: .env wins (canonical source), preserve non-API-key vars from existing
-merged = {}
-for k, v in existing.items():
-    if not k.endswith('_API_KEY'):
-        merged[k] = v  # preserve non-key vars (e.g. custom settings)
-merged.update(env_keys)  # .env API keys take precedence
+# Navigate to squall's env (create if absent)
+servers = cfg.setdefault('mcpServers', {})
+squall = servers.setdefault('squall', {})
+existing_env = squall.get('env', {})
 
-for k, v in sorted(merged.items()):
-    print(f'-e {k}={v}')
-" 2>/dev/null || true)
+# Merge: preserve non-API-key vars, .env API keys take precedence
+merged = {k: v for k, v in existing_env.items() if not k.endswith('_API_KEY')}
+merged.update(env_keys)
+squall['env'] = merged
+
+# Write back atomically (temp + rename)
+tmp = claude_cfg + '.tmp'
+with open(tmp, 'w') as f:
+    json.dump(cfg, f, indent=2)
+    f.write('\n')
+os.rename(tmp, claude_cfg)
+print(f'Injected {len(env_keys)} API key(s) into ~/.claude.json')
+" 2>/dev/null || echo "Warning: Python3 key injection failed — add keys manually to ~/.claude.json"
+        else
+            echo "Warning: python3 not found — API keys not injected."
+            echo "Add keys manually to ~/.claude.json under mcpServers.squall.env"
         fi
-
-        echo "Registering squall as global MCP server..."
-        # Remove existing entry first (claude mcp add fails if it exists)
-        claude mcp remove squall 2>/dev/null || true
-        # shellcheck disable=SC2086
-        claude mcp add --scope user --transport stdio squall "$INSTALL_BIN" $MERGED_ENV
-        echo "Registered squall in ~/.claude.json ($KEY_COUNT API keys injected)"
+        echo "Registered squall in ~/.claude.json ($KEY_COUNT API keys)"
     else
         echo "Warning: 'claude' CLI not found — skipping MCP registration."
         echo "Run manually: claude mcp add --scope user --transport stdio squall $INSTALL_BIN"

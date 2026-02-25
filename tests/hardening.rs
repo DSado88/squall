@@ -108,7 +108,7 @@ async fn semaphore_acquire_respects_deadline() {
 
     // Request with a tight deadline — should not block forever on semaphore
     let req = ProviderRequest {
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         model: "test-cli".to_string(),
         deadline: Instant::now() + Duration::from_millis(500),
         working_directory: None,
@@ -242,7 +242,7 @@ async fn cli_oversized_output_completes_without_deadlock() {
 
     let dispatch = CliDispatch::new();
     let req = ProviderRequest {
-        prompt: String::new(),
+        prompt: "".into(),
         model: "test".to_string(),
         deadline: Instant::now() + Duration::from_secs(10),
         working_directory: None,
@@ -297,7 +297,7 @@ async fn cli_oversized_stderr_completes_without_deadlock() {
 
     let dispatch = CliDispatch::new();
     let req = ProviderRequest {
-        prompt: String::new(),
+        prompt: "".into(),
         model: "test".to_string(),
         deadline: Instant::now() + Duration::from_secs(10),
         working_directory: None,
@@ -357,7 +357,7 @@ async fn cli_cap_kills_process_group_not_just_leader() {
 
     let dispatch = CliDispatch::new();
     let req = ProviderRequest {
-        prompt: String::new(),
+        prompt: "".into(),
         model: "test".to_string(),
         deadline: Instant::now() + Duration::from_secs(10),
         working_directory: None,
@@ -448,7 +448,7 @@ async fn http_oversized_response_gives_clear_error() {
 
     let dispatch = HttpDispatch::new();
     let req = ProviderRequest {
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         model: "test".to_string(),
         deadline: Instant::now() + Duration::from_secs(30),
         working_directory: None,
@@ -507,7 +507,7 @@ async fn cli_large_prompt_does_not_deadlock() {
     let prompt = format!(r#"{{"response": "{big_payload}"}}"#);
 
     let req = ProviderRequest {
-        prompt,
+        prompt: prompt.into(),
         model: "test".to_string(),
         deadline: Instant::now() + Duration::from_secs(10),
         working_directory: None,
@@ -561,9 +561,9 @@ async fn cli_prompt_delivered_via_stdin() {
 
     let dispatch = CliDispatch::new();
     // Valid Gemini JSON — cat will echo this back via stdout
-    let prompt = r#"{"response": "stdin_delivery_works"}"#.to_string();
+    let prompt = r#"{"response": "stdin_delivery_works"}"#;
     let req = ProviderRequest {
-        prompt,
+        prompt: prompt.into(),
         model: "test".to_string(),
         deadline: Instant::now() + Duration::from_secs(5),
         working_directory: None,
@@ -626,7 +626,7 @@ async fn http_chunk_error_not_silently_swallowed() {
 
     let dispatch = HttpDispatch::new();
     let req = ProviderRequest {
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         model: "test".to_string(),
         deadline: Instant::now() + Duration::from_secs(5),
         working_directory: None,
@@ -986,7 +986,7 @@ async fn cli_cross_stream_cap_kills_process() {
 
     let dispatch = CliDispatch::new();
     let req = ProviderRequest {
-        prompt: String::new(),
+        prompt: "".into(),
         model: "test".to_string(),
         deadline: Instant::now() + Duration::from_secs(10),
         working_directory: None,
@@ -1122,7 +1122,7 @@ async fn cli_overflow_by_one_byte_is_rejected() {
 
     let dispatch = CliDispatch::new();
     let req = ProviderRequest {
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         model: "test".to_string(),
         deadline: Instant::now() + Duration::from_secs(10),
         working_directory: None,
@@ -1184,7 +1184,7 @@ async fn cli_stderr_overflow_is_rejected() {
 
     let dispatch = CliDispatch::new();
     let req = ProviderRequest {
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         model: "test".to_string(),
         deadline: Instant::now() + Duration::from_secs(10),
         working_directory: None,
@@ -1499,7 +1499,7 @@ async fn cli_exact_limit_output_not_killed() {
 
     let dispatch = CliDispatch::new();
     let req = ProviderRequest {
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         model: "test".to_string(),
         deadline: Instant::now() + Duration::from_secs(10),
         working_directory: None,
@@ -1586,7 +1586,7 @@ async fn review_none_branch_model_selection_is_sorted() {
     let executor = ReviewExecutor::new(registry);
 
     let req = ReviewRequest {
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         models: None, // triggers the None branch
         timeout_secs: Some(3),
         system_prompt: None,

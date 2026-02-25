@@ -118,7 +118,7 @@ impl SquallServer {
             300 // HTTP gets 5 min
         };
         let provider_req = ProviderRequest {
-            prompt,
+            prompt: prompt.into(),
             model: model.clone(),
             deadline: Instant::now() + Duration::from_secs(deadline_secs),
             working_directory: req.working_directory,
@@ -236,7 +236,7 @@ impl SquallServer {
         };
 
         let provider_req = ProviderRequest {
-            prompt,
+            prompt: prompt.into(),
             model: cli_name.clone(),
             deadline: Instant::now() + Duration::from_secs(600), // CLIs get 10 min
             working_directory,

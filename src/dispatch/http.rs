@@ -199,10 +199,10 @@ impl HttpDispatch {
                 if let Some(ref system) = req.system_prompt {
                     messages.push(serde_json::json!({"role": "system", "content": system}));
                 }
-                messages.push(serde_json::json!({"role": "user", "content": req.prompt}));
+                messages.push(serde_json::json!({"role": "user", "content": &*req.prompt}));
 
                 let mut body = serde_json::json!({
-                    "model": req.model,
+                    "model": &*req.model,
                     "messages": messages,
                     "stream": true,
                 });
@@ -232,10 +232,10 @@ impl HttpDispatch {
                 (body, builder)
             }
             ApiFormat::Anthropic => {
-                let messages = vec![serde_json::json!({"role": "user", "content": req.prompt})];
+                let messages = vec![serde_json::json!({"role": "user", "content": &*req.prompt})];
 
                 let mut body = serde_json::json!({
-                    "model": req.model,
+                    "model": &*req.model,
                     "messages": messages,
                     "stream": true,
                     "max_tokens": req.max_tokens.unwrap_or(16384),

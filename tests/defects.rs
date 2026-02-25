@@ -418,6 +418,7 @@ fn p1_5_async_poll_filename_includes_pid() {
             "test text",
             "job-123",
             1000,
+            None,
         )
         .await
         .unwrap()

@@ -487,10 +487,16 @@ impl AsyncPollDispatch {
                         "async-poll job completed"
                     );
 
-                    // Persist to disk
-                    let file_path =
-                        persist_research_result(&req.model, provider, &text, &job_id, elapsed_ms)
-                            .await;
+                    // Persist to disk (in project dir, not daemon CWD)
+                    let file_path = persist_research_result(
+                        &req.model,
+                        provider,
+                        &text,
+                        &job_id,
+                        elapsed_ms,
+                        req.working_directory.as_deref(),
+                    )
+                    .await;
 
                     let response_text = match file_path {
                         Ok(path) => format!("{text}\n\n---\nFull result persisted to: {path}"),
@@ -575,14 +581,21 @@ pub fn sanitize_model_name(name: &str) -> String {
 }
 
 /// Persist deep research results to `.squall/research/{timestamp}_{seq}_{model}.json`.
+///
+/// When `working_directory` is set, output lands in the project dir rather than
+/// the daemon's CWD. Falls back to CWD-relative `.squall/research/` when None.
 pub async fn persist_research_result(
     model: &str,
     provider: &str,
     text: &str,
     job_id: &str,
     elapsed_ms: u64,
+    working_directory: Option<&str>,
 ) -> Result<String, std::io::Error> {
-    let dir = std::path::PathBuf::from(".squall/research");
+    let base = working_directory
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let dir = base.join(".squall/research");
     tokio::fs::create_dir_all(&dir).await?;
 
     let ts = SystemTime::now()

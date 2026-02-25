@@ -36,7 +36,7 @@ const SSE_DONE: &[u8] = b"data: [DONE]\n\n";
 
 fn make_req(deadline_secs: u64) -> ProviderRequest {
     ProviderRequest {
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         model: "test-model".to_string(),
         deadline: Instant::now() + Duration::from_secs(deadline_secs),
         working_directory: None,
@@ -51,7 +51,7 @@ fn make_req(deadline_secs: u64) -> ProviderRequest {
 
 fn make_req_with_cancel(deadline_secs: u64, token: CancellationToken) -> ProviderRequest {
     ProviderRequest {
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         model: "test-model".to_string(),
         deadline: Instant::now() + Duration::from_secs(deadline_secs),
         working_directory: None,
@@ -662,7 +662,7 @@ async fn streaming_reasoning_model_survives_stall() {
     let dispatch = HttpDispatch::new();
     // reasoning_effort = "high" → stall timeout should be >= 300s, not 60s
     let req = ProviderRequest {
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         model: "test-model".to_string(),
         deadline: Instant::now() + Duration::from_secs(30),
         working_directory: None,
@@ -741,7 +741,7 @@ async fn streaming_reasoning_model_survives_pre_first_token_silence() {
 
     let dispatch = HttpDispatch::new();
     let req = ProviderRequest {
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         model: "test-model".to_string(),
         deadline: Instant::now() + Duration::from_secs(30),
         working_directory: None,
@@ -845,7 +845,7 @@ async fn anthropic_content_block_delta_parsing() {
     let http = HttpDispatch::new();
     let req = ProviderRequest {
         model: "claude-opus-4-6".to_string(),
-        prompt: "hi".to_string(),
+        prompt: "hi".into(),
         system_prompt: None,
         deadline: Instant::now() + Duration::from_secs(30),
         working_directory: None,
@@ -893,7 +893,7 @@ async fn anthropic_stream_done_on_message_stop() {
     let http = HttpDispatch::new();
     let req = ProviderRequest {
         model: "claude-opus-4-6".to_string(),
-        prompt: "hi".to_string(),
+        prompt: "hi".into(),
         system_prompt: None,
         deadline: Instant::now() + Duration::from_secs(30),
         working_directory: None,
@@ -955,7 +955,7 @@ async fn anthropic_request_uses_x_api_key_header() {
     let http = HttpDispatch::new();
     let req = ProviderRequest {
         model: "claude-opus-4-6".to_string(),
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         system_prompt: None,
         deadline: Instant::now() + Duration::from_secs(30),
         working_directory: None,
@@ -1111,7 +1111,7 @@ async fn openai_sends_max_completion_tokens() {
 
     let dispatch = HttpDispatch::new();
     let req = ProviderRequest {
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         model: "gpt-5".to_string(),
         deadline: Instant::now() + Duration::from_secs(30),
         working_directory: None,
@@ -1164,7 +1164,7 @@ async fn non_openai_sends_max_tokens() {
 
     let dispatch = HttpDispatch::new();
     let req = ProviderRequest {
-        prompt: "test".to_string(),
+        prompt: "test".into(),
         model: "test-model".to_string(),
         deadline: Instant::now() + Duration::from_secs(30),
         working_directory: None,
@@ -1208,7 +1208,7 @@ async fn openai_parser_unchanged_after_refactor() {
     let http = HttpDispatch::new();
     let req = ProviderRequest {
         model: "grok-test".to_string(),
-        prompt: "hi".to_string(),
+        prompt: "hi".into(),
         system_prompt: None,
         deadline: Instant::now() + Duration::from_secs(30),
         working_directory: None,

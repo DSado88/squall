@@ -527,7 +527,7 @@ fn make_request(
     deadline: std::time::Duration,
 ) -> squall::dispatch::ProviderRequest {
     squall::dispatch::ProviderRequest {
-        prompt: "".to_string(),
+        prompt: "".into(),
         model: "test-model".to_string(),
         deadline: std::time::Instant::now() + deadline,
         working_directory: Some(dir.display().to_string()),
