@@ -534,6 +534,281 @@ async fn display_rounding_shows_one_decimal() {
     assert_eq!(display, "69.9%", "Should show 69.9%, not 70%");
 }
 
+// ==========================================================================
+// Diagnostic gate stats: timeout/cutoff/partial tracking (plan v4)
+// ==========================================================================
+
+// Diagnostic: timeout_count and cutoff_count are tracked independently.
+#[tokio::test]
+async fn gate_stats_track_timeout_and_cutoff_counts() {
+    // New format: 3 timeouts + 2 cutoffs + 5 successes = 10 quality events
+    let events = "\
+| 2026-02-25T10:00:00Z | test-model | 10.0s | error | no | timeout | timed out | 5000 |
+| 2026-02-25T10:01:00Z | test-model | 10.0s | error | no | timeout | timed out | 5000 |
+| 2026-02-25T10:02:00Z | test-model | 10.0s | error | no | timeout | timed out | 5000 |
+| 2026-02-25T10:03:00Z | test-model | 10.0s | error | no | cutoff | straggler | 5000 |
+| 2026-02-25T10:04:00Z | test-model | 10.0s | error | no | cutoff | straggler | 5000 |
+| 2026-02-25T10:05:00Z | test-model | 5.0s | success | no | — | — | 2000 |
+| 2026-02-25T10:06:00Z | test-model | 5.0s | success | no | — | — | 2000 |
+| 2026-02-25T10:07:00Z | test-model | 5.0s | success | no | — | — | 2000 |
+| 2026-02-25T10:08:00Z | test-model | 5.0s | success | no | — | — | 2000 |
+| 2026-02-25T10:09:00Z | test-model | 5.0s | success | no | — | — | 2000 |";
+
+    let (store, _dir) = store_with_events(events);
+    let stats = store
+        .get_model_stats(None)
+        .await
+        .expect("should have stats");
+
+    let s = stats.get("test-model").unwrap();
+    assert_eq!(s.timeout_count, 3, "3 timeout events");
+    assert_eq!(s.cutoff_count, 2, "2 cutoff events");
+    assert_eq!(s.sample_count, 10, "all 10 are quality events (not infra)");
+    assert!(
+        (s.success_rate - 0.5).abs() < 0.01,
+        "5/10 = 50%, got {:.1}%",
+        s.success_rate * 100.0
+    );
+}
+
+// Diagnostic: partial_count tracks partial responses separately from success_rate.
+#[tokio::test]
+async fn gate_stats_track_partial_count() {
+    // 3 full successes + 2 partial successes = 5 quality events
+    let events = "\
+| 2026-02-25T10:00:00Z | test-model | 5.0s | success | no | — | — | 2000 |
+| 2026-02-25T10:01:00Z | test-model | 5.0s | success | no | — | — | 2000 |
+| 2026-02-25T10:02:00Z | test-model | 5.0s | success | no | — | — | 2000 |
+| 2026-02-25T10:03:00Z | test-model | 10.0s | success | yes | partial | — | 3000 |
+| 2026-02-25T10:04:00Z | test-model | 10.0s | success | yes | partial | — | 3000 |";
+
+    let (store, _dir) = store_with_events(events);
+    let stats = store
+        .get_model_stats(None)
+        .await
+        .expect("should have stats");
+
+    let s = stats.get("test-model").unwrap();
+    assert_eq!(s.partial_count, 2, "2 partial responses");
+    assert_eq!(s.sample_count, 5, "all 5 are quality events");
+    // Partials are NOT counted as successes: 3/5 = 60%
+    assert!(
+        (s.success_rate - 0.6).abs() < 0.01,
+        "3 full successes / 5 = 60%, got {:.1}%",
+        s.success_rate * 100.0
+    );
+}
+
+// Diagnostic: avg_failed_prompt_len only averages over timeout/cutoff events.
+#[tokio::test]
+async fn gate_stats_avg_failed_prompt_len() {
+    // 2 timeouts (prompt 10000, 20000) + 3 successes (prompt 5000)
+    let events = "\
+| 2026-02-25T10:00:00Z | test-model | 10.0s | error | no | timeout | timed out | 10000 |
+| 2026-02-25T10:01:00Z | test-model | 10.0s | error | no | timeout | timed out | 20000 |
+| 2026-02-25T10:02:00Z | test-model | 5.0s | success | no | — | — | 5000 |
+| 2026-02-25T10:03:00Z | test-model | 5.0s | success | no | — | — | 5000 |
+| 2026-02-25T10:04:00Z | test-model | 5.0s | success | no | — | — | 5000 |";
+
+    let (store, _dir) = store_with_events(events);
+    let stats = store
+        .get_model_stats(None)
+        .await
+        .expect("should have stats");
+
+    let s = stats.get("test-model").unwrap();
+    // Only timeout/cutoff events: (10000 + 20000) / 2 = 15000
+    assert_eq!(
+        s.avg_failed_prompt_len, 15000,
+        "avg of timeout prompts only: (10000+20000)/2"
+    );
+    // Success events' prompt_len should NOT be included
+    assert_eq!(s.timeout_count, 2);
+}
+
+// Diagnostic: old format (9 cols) parses prompt_len from correct column.
+#[tokio::test]
+async fn gate_stats_old_format_prompt_len() {
+    // Old format: 7 pipe-delimited fields → 9 elements after split (leading/trailing empty)
+    // No reason column: | ts | model | lat | status | partial | error | prompt_len |
+    let events = "\
+| 2026-02-25T10:00:00Z | old-model | 10.0s | error | no | timeout | 8000 |
+| 2026-02-25T10:01:00Z | old-model | 10.0s | error | no | timeout | 12000 |
+| 2026-02-25T10:02:00Z | old-model | 5.0s | success | no | — | 3000 |";
+
+    let (store, _dir) = store_with_events(events);
+    let stats = store
+        .get_model_stats(None)
+        .await
+        .expect("should have stats");
+
+    let s = stats.get("old-model").unwrap();
+    // Old format: reason is inferred as "—" (not "timeout"), so timeouts from
+    // old format events are NOT detected (no reason column).
+    // Old format has 9 cols, which is < 10, so reason defaults to "—".
+    // The "timeout" text in cols[6] is the error field, not reason.
+    assert_eq!(
+        s.timeout_count, 0,
+        "old format has no reason column — timeouts not detected"
+    );
+    assert_eq!(
+        s.avg_failed_prompt_len, 0,
+        "no timeout/cutoff detected → no failed prompt avg"
+    );
+    assert_eq!(s.sample_count, 3, "all 3 are quality events");
+}
+
+// ==========================================================================
+// Exploration slot tests
+// ==========================================================================
+
+// Exploration slot: re-adds a gated model only when >50% of failures are timeouts.
+#[tokio::test]
+async fn exploration_slot_only_for_timeout_dominant() {
+    // timeout-model: 3/8 success, 5/8 errors — 4 timeout + 1 error
+    //   failures=5, timing=4, 4*2=8 > 5 → >50% timing → gets exploration slot
+    // error-model: 3/8 success, 5/8 errors — 0 timeout, 5 errors
+    //   failures=5, timing=0, 0*2=0 < 5 → NOT timeout-dominant → no slot
+    // good-model: 9/10 success → passes gate normally
+    let mut events = String::new();
+    // timeout-model: 3 successes + 4 timeouts + 1 plain error
+    for i in 0..3 {
+        events.push_str(&format!(
+            "| 2026-02-25T10:{i:02}:00Z | timeout-model | 5.0s | success | no | — | — | 2000 |\n"
+        ));
+    }
+    for i in 3..7 {
+        events.push_str(&format!(
+            "| 2026-02-25T10:{i:02}:00Z | timeout-model | 10.0s | error | no | timeout | timed out | 15000 |\n"
+        ));
+    }
+    events.push_str(
+        "| 2026-02-25T10:07:00Z | timeout-model | 10.0s | error | no | error | failed | 2000 |\n",
+    );
+
+    // error-model: 3 successes + 5 plain errors (no timeouts)
+    for i in 0..3 {
+        events.push_str(&format!(
+            "| 2026-02-25T11:{i:02}:00Z | error-model | 5.0s | success | no | — | — | 2000 |\n"
+        ));
+    }
+    for i in 3..8 {
+        events.push_str(&format!(
+            "| 2026-02-25T11:{i:02}:00Z | error-model | 10.0s | error | no | error | failed | 2000 |\n"
+        ));
+    }
+
+    // good-model: 9 successes + 1 error
+    for i in 0..9 {
+        events.push_str(&format!(
+            "| 2026-02-25T12:{i:02}:00Z | good-model | 5.0s | success | no | — | — | 2000 |\n"
+        ));
+    }
+    events.push_str(
+        "| 2026-02-25T12:09:00Z | good-model | 10.0s | error | no | error | fail | 2000 |\n",
+    );
+
+    let (store, _dir) = store_with_events(&events);
+    let registry = test_registry(&["timeout-model", "error-model", "good-model"]);
+    let executor = ReviewExecutor::new(registry);
+    let req = make_request(vec!["timeout-model", "error-model", "good-model"]);
+
+    let resp = executor
+        .execute(&req, req.prompt.clone(), &store, None, None, None, None)
+        .await;
+
+    let dispatched: Vec<&str> = resp.results.iter().map(|r| r.model.as_str()).collect();
+    // good-model: passes gate (90% success)
+    assert!(
+        dispatched.contains(&"good-model"),
+        "good-model should pass gate. Got: {dispatched:?}"
+    );
+    // timeout-model: gated (37.5%) but >50% timeouts → exploration slot
+    assert!(
+        dispatched.contains(&"timeout-model"),
+        "timeout-model should get exploration slot (4/5 failures are timeouts). Got: {dispatched:?}"
+    );
+    // error-model: gated (37.5%) and 0% timeouts → NO exploration slot
+    assert!(
+        !dispatched.contains(&"error-model"),
+        "error-model should stay gated (0 timeouts). Got: {dispatched:?}"
+    );
+
+    // Check exploration slot warning
+    let explore_warning = resp
+        .warnings
+        .iter()
+        .find(|w| w.contains("Exploration slot"));
+    assert!(
+        explore_warning.is_some(),
+        "should have exploration slot warning. Warnings: {:?}",
+        resp.warnings
+    );
+    assert!(
+        explore_warning.unwrap().contains("timeout-model"),
+        "exploration slot should name timeout-model"
+    );
+}
+
+// Exploration slot: not applied when all models are gated (fallback already restores all).
+#[tokio::test]
+async fn exploration_slot_skipped_when_all_gated() {
+    // Both models have terrible success rates — all will be gated
+    let mut events = String::new();
+    for i in 0..2 {
+        events.push_str(&format!(
+            "| 2026-02-25T10:{i:02}:00Z | model-a | 5.0s | success | no | — | — | 2000 |\n"
+        ));
+    }
+    for i in 2..8 {
+        events.push_str(&format!(
+            "| 2026-02-25T10:{i:02}:00Z | model-a | 10.0s | error | no | timeout | timed out | 15000 |\n"
+        ));
+    }
+    for i in 0..2 {
+        events.push_str(&format!(
+            "| 2026-02-25T11:{i:02}:00Z | model-b | 5.0s | success | no | — | — | 2000 |\n"
+        ));
+    }
+    for i in 2..8 {
+        events.push_str(&format!(
+            "| 2026-02-25T11:{i:02}:00Z | model-b | 10.0s | error | no | timeout | timed out | 15000 |\n"
+        ));
+    }
+
+    let (store, _dir) = store_with_events(&events);
+    let registry = test_registry(&["model-a", "model-b"]);
+    let executor = ReviewExecutor::new(registry);
+    let req = make_request(vec!["model-a", "model-b"]);
+
+    let resp = executor
+        .execute(&req, req.prompt.clone(), &store, None, None, None, None)
+        .await;
+
+    // Both gated (25% success) → fallback restores both → no exploration slot
+    let dispatched: Vec<&str> = resp.results.iter().map(|r| r.model.as_str()).collect();
+    assert_eq!(
+        dispatched.len(),
+        2,
+        "all-gated fallback should restore both. Got: {dispatched:?}"
+    );
+
+    // Should NOT have exploration slot warning (fallback handles it)
+    let explore_warning = resp.warnings.iter().any(|w| w.contains("Exploration slot"));
+    assert!(
+        !explore_warning,
+        "no exploration slot when all models gated (fallback used). Warnings: {:?}",
+        resp.warnings
+    );
+
+    // Should have the fallback warning
+    let has_fallback = resp
+        .warnings
+        .iter()
+        .any(|w| w.contains("All requested models below"));
+    assert!(has_fallback, "should have fallback warning");
+}
+
 // Bug 5: Partial results are not counted as full successes.
 #[tokio::test]
 async fn partial_results_not_counted_as_success() {

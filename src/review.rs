@@ -156,6 +156,7 @@ impl ReviewExecutor {
         // Hard gate: exclude models below success threshold.
         // Models with insufficient samples pass through (can't judge on tiny data).
         // If ALL models would be gated, restore the original list (never dispatch to zero).
+        // Diagnostic: gate warnings include timeout/cutoff breakdown + avg failed prompt size.
         let mut gated_count = 0usize;
         let id_to_key = self.registry.model_id_to_key();
         if let Some(stats) = memory.get_model_stats(Some(&id_to_key)).await {
@@ -166,11 +167,27 @@ impl ReviewExecutor {
                     && s.sample_count >= MIN_GATE_SAMPLES
                     && s.success_rate < MIN_SUCCESS_RATE
                 {
-                    gated.push(format!(
-                        "{model}: {:.1}% success ({} samples)",
+                    // Diagnostic gate warning: break down WHY the model is failing
+                    let timing = s.timeout_count + s.cutoff_count;
+                    let mut detail = format!(
+                        "{model}: {:.1}% success ({} samples",
                         s.success_rate * 100.0,
                         s.sample_count
-                    ));
+                    );
+                    if timing > 0 {
+                        detail.push_str(&format!(", {}/{} timeout/cutoff", timing, s.sample_count));
+                        if s.avg_failed_prompt_len > 0 {
+                            detail.push_str(&format!(
+                                ", avg failed prompt {}chars",
+                                s.avg_failed_prompt_len
+                            ));
+                        }
+                    }
+                    if s.partial_count > 0 {
+                        detail.push_str(&format!(", {} partial", s.partial_count));
+                    }
+                    detail.push(')');
+                    gated.push(detail);
                     return false;
                 }
                 true
@@ -193,8 +210,43 @@ impl ReviewExecutor {
                         .to_string();
                 tracing::warn!("{msg}");
                 warnings.push(msg);
-                target_models = original;
+                target_models = original.clone();
                 gated_count = 0; // reset: gate was overridden
+            }
+
+            // Exploration slot: re-add one gated model when >50% of its failures are
+            // timeouts/cutoffs (suggests a config problem, not a quality problem).
+            // Skip when all models were gated (fallback already restored full list).
+            if gated_count > 0 && !target_models.is_empty() {
+                let best_timeout_gated = original
+                    .iter()
+                    .filter(|m| !target_models.contains(m))
+                    .filter_map(|m| stats.get(m).map(|s| (m, s)))
+                    .filter(|(_, s)| {
+                        let timing = s.timeout_count + s.cutoff_count;
+                        let successes = (s.success_rate * s.sample_count as f64).round() as usize;
+                        let failures = s.sample_count.saturating_sub(successes);
+                        // >50% of failures are timing-related
+                        failures > 0 && timing * 2 > failures
+                    })
+                    .max_by(|a, b| {
+                        a.1.success_rate
+                            .partial_cmp(&b.1.success_rate)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                if let Some((model, s)) = best_timeout_gated {
+                    target_models.push(model.clone());
+                    gated_count -= 1; // accurate accounting for ReviewSummary
+                    let msg = format!(
+                        "Exploration slot: re-adding {model} ({:.1}% success, \
+                         {}/{} timeout/cutoff — likely config issue)",
+                        s.success_rate * 100.0,
+                        s.timeout_count + s.cutoff_count,
+                        s.sample_count
+                    );
+                    tracing::info!("{msg}");
+                    warnings.push(msg);
+                }
             }
         }
 

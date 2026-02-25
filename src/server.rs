@@ -278,7 +278,7 @@ impl SquallServer {
 
     #[tool(
         name = "review",
-        description = "Fan out a prompt to multiple models in parallel with straggler cutoff. Use this instead of multiple chat/clink calls when you want responses from several models. Supports per-model system prompts via `per_model_system_prompts` for different review angles (security, architecture, etc). Use `listmodels` first to get exact model names.",
+        description = "Fan out a prompt to multiple models in parallel with straggler cutoff. Default timeout: 180s. Set `deep: true` for 600s + high reasoning effort. Set `per_model_timeout_secs` for per-model overrides. Models below 70% success rate (5+ samples) are auto-excluded — check gate warnings for timeout breakdown. Use `per_model_system_prompts` for different review lenses (security, architecture, etc). Use `listmodels` for exact model names and speed_tier.",
         annotations(read_only_hint = true)
     )]
     async fn review(
@@ -556,6 +556,12 @@ impl ServerHandler for SquallServer {
                  (e.g. security, architecture, correctness). Check `memory` category \"tactics\" for proven lenses.\n\
                  3. Call `review`. For security audits, complex architecture, or high-stakes changes, set `deep: true` \
                  (raises timeout to 600s, reasoning_effort to \"high\", max_tokens to 16384).\n\
+                 - Default timeout is 180s. Slow models may need `per_model_timeout_secs` or `deep: true` (600s). \
+                 Check `listmodels` for speed_tier.\n\
+                 - Models with <70% success rate over 5+ samples are auto-excluded. Gate warnings include \
+                 timeout/cutoff breakdown and avg failed prompt size. If failures are mostly timeouts, \
+                 the model needs more time — use `deep: true` or `per_model_timeout_secs`, not removal.\n\
+                 - Check `memory` category \"recommend\" before selecting models to see current health.\n\
                  4. The response includes a `results_file` path. This file persists on disk and survives context compaction — \
                  if you lose review details after a long conversation, read the results_file to recover them.\n\
                  - If context compaction destroys the review response, the `results_file` path survives — \

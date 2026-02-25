@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 
 use crate::tools::review::ReviewModelResult;
 
-/// Per-model performance stats for hard gate decisions.
+/// Per-model performance stats for hard gate decisions and diagnostics.
 #[derive(Debug, Clone)]
 pub struct ModelGateStats {
     pub success_rate: f64,
@@ -16,6 +16,14 @@ pub struct ModelGateStats {
     pub sample_count: usize,
     /// Auth failures, rate limits, etc. excluded from success_rate.
     pub infrastructure_failures: usize,
+    /// Number of events with reason="timeout".
+    pub timeout_count: usize,
+    /// Number of events with reason="cutoff" (straggler cutoff).
+    pub cutoff_count: usize,
+    /// Number of partial responses (status=success, partial=yes). Diagnostic only.
+    pub partial_count: usize,
+    /// Average prompt_len for timeout/cutoff events only. 0 if no such events.
+    pub avg_failed_prompt_len: usize,
     pub last_seen: String,
 }
 
@@ -581,8 +589,22 @@ impl MemoryStore {
             return None;
         }
 
-        // (total_latency, quality_count, successes, infra_failures, last_seen)
-        let mut stats: HashMap<String, (f64, usize, usize, usize, String)> = HashMap::new();
+        // Per-model accumulator for gate stats and diagnostics.
+        #[derive(Default)]
+        struct Acc {
+            total_latency: f64,
+            quality_count: usize,
+            successes: usize,
+            infra_failures: usize,
+            timeouts: usize,
+            cutoffs: usize,
+            partials: usize,
+            failed_prompt_total: usize,
+            failed_prompt_count: usize,
+            last_seen: String,
+        }
+
+        let mut stats: HashMap<String, Acc> = HashMap::new();
         for line in &events {
             let cols: Vec<&str> = line.split('|').map(|s| s.trim()).collect();
             if cols.len() < 8 {
@@ -598,55 +620,83 @@ impl MemoryStore {
             let status = cols[4];
             let partial = cols[5];
             // Detect format: 10+ elements = new (has reason), 9 = old (no reason)
-            let reason = if cols.len() >= 10 {
-                cols[6]
-            } else {
-                "\u{2014}"
-            };
+            let is_new_format = cols.len() >= 10;
+            let reason = if is_new_format { cols[6] } else { "\u{2014}" };
             let event_date = cols[1].get(..10).unwrap_or("").to_string();
 
-            let entry = stats.entry(model).or_insert((0.0, 0, 0, 0, String::new()));
+            let entry = stats.entry(model).or_default();
 
             // Exclude infrastructure failures from quality stats
             let is_infra = matches!(reason, "auth_failed" | "rate_limited");
             if is_infra {
-                entry.3 += 1; // infrastructure_failures
+                entry.infra_failures += 1;
             } else {
-                entry.0 += latency;
-                entry.1 += 1; // quality_count
+                entry.total_latency += latency;
+                entry.quality_count += 1;
                 if status == "success" && partial != "yes" {
-                    entry.2 += 1; // successes
+                    entry.successes += 1;
                 }
             }
-            if event_date > entry.4 {
-                entry.4 = event_date;
+
+            // Diagnostic counters (independent of is_infra)
+            if reason == "timeout" {
+                entry.timeouts += 1;
+            }
+            if reason == "cutoff" {
+                entry.cutoffs += 1;
+            }
+            if status == "success" && partial == "yes" {
+                entry.partials += 1;
+            }
+
+            // Track prompt_len for timeout/cutoff events only (diagnostic: what sizes cause failures)
+            if matches!(reason, "timeout" | "cutoff") {
+                // prompt_len column: new format (>=10 cols) = cols[8], old format = cols[7]
+                let prompt_col = if is_new_format { 8 } else { 7 };
+                let prompt_len: usize = cols
+                    .get(prompt_col)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                entry.failed_prompt_total += prompt_len;
+                entry.failed_prompt_count += 1;
+            }
+
+            if event_date > entry.last_seen {
+                entry.last_seen = event_date;
             }
         }
 
         let result: HashMap<String, ModelGateStats> = stats
             .into_iter()
-            .map(
-                |(model, (total_lat, quality_count, successes, infra_failures, last_seen))| {
-                    (
-                        model,
-                        ModelGateStats {
-                            success_rate: if quality_count > 0 {
-                                successes as f64 / quality_count as f64
-                            } else {
-                                0.0
-                            },
-                            avg_latency_secs: if quality_count > 0 {
-                                total_lat / quality_count as f64
-                            } else {
-                                0.0
-                            },
-                            sample_count: quality_count,
-                            infrastructure_failures: infra_failures,
-                            last_seen,
+            .map(|(model, a)| {
+                let avg_failed = if a.failed_prompt_count > 0 {
+                    a.failed_prompt_total / a.failed_prompt_count
+                } else {
+                    0
+                };
+                (
+                    model,
+                    ModelGateStats {
+                        success_rate: if a.quality_count > 0 {
+                            a.successes as f64 / a.quality_count as f64
+                        } else {
+                            0.0
                         },
-                    )
-                },
-            )
+                        avg_latency_secs: if a.quality_count > 0 {
+                            a.total_latency / a.quality_count as f64
+                        } else {
+                            0.0
+                        },
+                        sample_count: a.quality_count,
+                        infrastructure_failures: a.infra_failures,
+                        timeout_count: a.timeouts,
+                        cutoff_count: a.cutoffs,
+                        partial_count: a.partials,
+                        avg_failed_prompt_len: avg_failed,
+                        last_seen: a.last_seen,
+                    },
+                )
+            })
             .collect();
 
         Some(result)
@@ -846,6 +896,8 @@ fn compute_summary(events: &[String], id_to_key: &HashMap<String, String>) -> St
         total_latency: f64,
         count: usize,
         successes: usize,
+        timeouts: usize,
+        cutoffs: usize,
         latencies: Vec<f64>,
         common_errors: HashMap<String, usize>,
     }
@@ -879,6 +931,8 @@ fn compute_summary(events: &[String], id_to_key: &HashMap<String, String>) -> St
             total_latency: 0.0,
             count: 0,
             successes: 0,
+            timeouts: 0,
+            cutoffs: 0,
             latencies: Vec::new(),
             common_errors: HashMap::new(),
         });
@@ -893,6 +947,15 @@ fn compute_summary(events: &[String], id_to_key: &HashMap<String, String>) -> St
                 entry.successes += 1;
             }
         }
+
+        // Diagnostic counters (independent of is_infra)
+        if reason == "timeout" {
+            entry.timeouts += 1;
+        }
+        if reason == "cutoff" {
+            entry.cutoffs += 1;
+        }
+
         if error != "\u{2014}" && !error.is_empty() {
             *entry.common_errors.entry(error.to_string()).or_insert(0) += 1;
         }
@@ -927,6 +990,13 @@ fn compute_summary(events: &[String], id_to_key: &HashMap<String, String>) -> St
             "\u{2014}".to_string()
         };
 
+        let timing = s.timeouts + s.cutoffs;
+        let timing_col = if timing > 0 {
+            format!("{timing}/{}", s.count)
+        } else {
+            "\u{2014}".to_string()
+        };
+
         let top_error = s
             .common_errors
             .iter()
@@ -937,15 +1007,15 @@ fn compute_summary(events: &[String], id_to_key: &HashMap<String, String>) -> St
         let today = iso_date();
         rows.push((
             model.clone(),
-            format!("| {model} | {avg} | {p95} | {rate} | {top_error} | {today} |"),
+            format!("| {model} | {avg} | {p95} | {rate} | {timing_col} | {top_error} | {today} |"),
         ));
     }
 
     let mut table = String::from(
-        "| Model | Avg Latency | P95 Latency | Success Rate | Common Failures | Last Updated |\n",
+        "| Model | Avg Latency | P95 Latency | Success Rate | Timeouts | Common Failures | Last Updated |\n",
     );
     table.push_str(
-        "|-------|-------------|-------------|--------------|-----------------|--------------|",
+        "|-------|-------------|-------------|--------------|----------|-----------------|--------------|",
     );
     for (_, row) in &rows {
         table.push('\n');
@@ -977,7 +1047,8 @@ fn generate_recommendations(models_content: &str, id_to_key: &HashMap<String, St
     let today = iso_date();
     let today_days = date_to_days(&today).unwrap_or(0);
 
-    let mut stats: HashMap<String, (f64, usize, usize, String)> = HashMap::new(); // (total_lat, count, successes, last_seen)
+    // (total_lat, count, successes, last_seen)
+    let mut stats: HashMap<String, (f64, usize, usize, String)> = HashMap::new();
 
     for line in &events {
         let cols: Vec<&str> = line.split('|').map(|s| s.trim()).collect();
@@ -1513,6 +1584,39 @@ mod tests {
         assert!(summary.contains("grok"));
         // 2/3 = 66.67% rounds to 67%
         assert!(summary.contains("67%"), "summary: {summary}");
+    }
+
+    #[test]
+    fn compute_summary_timeouts_column_denominator() {
+        // New format: 5 successes + 3 timeouts + 2 cutoffs = 10 quality events
+        let events: Vec<String> = (0..5)
+            .map(|i| {
+                format!(
+                    "| 2026-02-25T10:{i:02}:00Z | test-model | 5.0s | success | no | \u{2014} | \u{2014} | 2000 |"
+                )
+            })
+            .chain((5..8).map(|i| {
+                format!(
+                    "| 2026-02-25T10:{i:02}:00Z | test-model | 10.0s | error | no | timeout | timed out | 5000 |"
+                )
+            }))
+            .chain((8..10).map(|i| {
+                format!(
+                    "| 2026-02-25T10:{i:02}:00Z | test-model | 10.0s | error | no | cutoff | straggler | 5000 |"
+                )
+            }))
+            .collect();
+        let summary = compute_summary(&events, &HashMap::new());
+        // Timeouts column: timing=5 (3 timeout + 2 cutoff), total=10 quality events
+        // Should show "5/10", NOT "5/15" (the double-count bug)
+        assert!(
+            summary.contains("5/10"),
+            "Timeouts column should be 5/10, not 5/15. Got: {summary}"
+        );
+        assert!(
+            !summary.contains("5/15"),
+            "Denominator should NOT double-count timing events. Got: {summary}"
+        );
     }
 
     #[test]
