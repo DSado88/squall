@@ -15,6 +15,7 @@ use crate::response::{PalMetadata, PalToolResponse};
 use crate::review::ReviewExecutor;
 use crate::tools::chat::ChatRequest;
 use crate::tools::clink::ClinkRequest;
+use crate::tools::enums::{ReasoningEffort, ResponseFormat};
 use crate::tools::listmodels::{ListModelsResponse, ModelInfo};
 use crate::tools::memory::{FlushRequest, MemorizeRequest, MemoryRequest};
 use crate::tools::review::ReviewRequest;
@@ -70,7 +71,7 @@ impl SquallServer {
 
     #[tool(
         name = "chat",
-        description = "Query a single AI model via HTTP (OpenAI-compatible). Use for one-off questions to a specific model. Use `listmodels` first to see available model names.",
+        description = "Ask one AI model a targeted question. Use for focused second opinions to complement your own analysis. Use `listmodels` for model names.",
         annotations(read_only_hint = true)
     )]
     async fn chat(
@@ -111,7 +112,7 @@ impl SquallServer {
         }
 
         let deadline_secs = if self.registry.get(&model).is_some_and(|e| e.is_async_poll())
-            || reasoning_needs_extended_deadline(req.reasoning_effort.as_deref())
+            || reasoning_needs_extended_deadline(req.reasoning_effort.as_ref())
         {
             600 // async-poll or reasoning models get 10 min (MCP ceiling)
         } else {
@@ -125,7 +126,7 @@ impl SquallServer {
             system_prompt: req.system_prompt,
             temperature: req.temperature,
             max_tokens: req.max_tokens,
-            reasoning_effort: req.reasoning_effort,
+            reasoning_effort: req.reasoning_effort.map(|e| e.as_str().to_string()),
             cancellation_token: None,
             stall_timeout: None,
         };
@@ -160,7 +161,7 @@ impl SquallServer {
 
     #[tool(
         name = "listmodels",
-        description = "List all available AI models with provider and backend info.",
+        description = "List available AI models with provider, backend, and capability info.",
         annotations(read_only_hint = true)
     )]
     async fn listmodels(&self) -> Result<CallToolResult, McpError> {
@@ -173,8 +174,7 @@ impl SquallServer {
         models.sort_by(|a, b| a.name.cmp(&b.name));
 
         let list = ListModelsResponse { models };
-        let content = serde_json::to_string(&list)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let content = list.to_markdown();
 
         let response = PalToolResponse::success(
             content,
@@ -191,7 +191,7 @@ impl SquallServer {
 
     #[tool(
         name = "clink",
-        description = "Query a CLI-based AI model (e.g. gemini, codex). Use for tasks that benefit from the model's native CLI capabilities. Use `listmodels` first to see available model names.",
+        description = "Query a CLI-based AI model (codex, gemini) as a subprocess. Use for web search or deep repo analysis. Use `listmodels` for model names.",
         annotations(read_only_hint = true)
     )]
     async fn clink(
@@ -202,7 +202,7 @@ impl SquallServer {
         context::validate_temperature(req.temperature)
             .map_err(|msg| McpError::invalid_params(msg, None))?;
 
-        let cli_name = req.cli_name.clone();
+        let model = req.model.clone();
         let start = Instant::now();
 
         // Resolve file manifest and working directory for CLI.
@@ -237,13 +237,13 @@ impl SquallServer {
 
         let provider_req = ProviderRequest {
             prompt: prompt.into(),
-            model: cli_name.clone(),
+            model: model.clone(),
             deadline: Instant::now() + Duration::from_secs(600), // CLIs get 10 min
             working_directory,
             system_prompt: req.system_prompt,
             temperature: req.temperature,
             max_tokens: req.max_tokens,
-            reasoning_effort: req.reasoning_effort,
+            reasoning_effort: req.reasoning_effort.map(|e| e.as_str().to_string()),
             cancellation_token: None,
             stall_timeout: None,
         };
@@ -260,12 +260,12 @@ impl SquallServer {
             ),
             Err(e) => {
                 tracing::warn!("clink query failed: {e}");
-                let provider = e.provider().unwrap_or(&cli_name).to_string();
+                let provider = e.provider().unwrap_or(&model).to_string();
                 PalToolResponse::error(
                     e.user_message(),
                     PalMetadata {
                         tool_name: "clink".to_string(),
-                        model_used: cli_name,
+                        model_used: model,
                         provider_used: provider,
                         duration_seconds: start.elapsed().as_secs_f64(),
                     },
@@ -278,7 +278,7 @@ impl SquallServer {
 
     #[tool(
         name = "review",
-        description = "Fan out a prompt to multiple models in parallel with straggler cutoff. Default timeout: 180s. Set `deep: true` for 600s + high reasoning effort. Set `per_model_timeout_secs` for per-model overrides. Models below 70% success rate (5+ samples) are auto-excluded — check gate warnings for timeout breakdown. Use `per_model_system_prompts` for different review lenses (security, architecture, etc). Use `listmodels` for exact model names and speed_tier.",
+        description = "Consult multiple models in parallel with straggler cutoff. Assign expertise lenses via per_model_system_prompts — falsification framing ('attempt to PROVE X') produces the best results. Use `listmodels` for model names.",
         annotations(read_only_hint = true)
     )]
     async fn review(
@@ -382,12 +382,12 @@ impl SquallServer {
                 .await;
         });
 
-        // Serialize the full review response as the MCP content
-        let json = serde_json::to_string(&review_response)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        // Render the review response as markdown for MCP (disk file stays JSON)
+        let concise = matches!(req.response_format, Some(ResponseFormat::Concise));
+        let content = review_response.to_markdown(concise);
 
         let response = PalToolResponse::success(
-            json,
+            content,
             PalMetadata {
                 tool_name: "review".to_string(),
                 model_used: "multi".to_string(),
@@ -401,7 +401,7 @@ impl SquallServer {
 
     #[tool(
         name = "memorize",
-        description = "Save a learning to Squall's memory. Use after reviewing results to record patterns, model blind spots, or effective prompt tactics. Categories: 'pattern' (recurring findings), 'tactic' (prompt effectiveness), or 'recommend' (model recommendations)."
+        description = "Save your synthesized findings after a review: recurring patterns, effective tactics, and model recommendations."
     )]
     async fn memorize(
         &self,
@@ -428,7 +428,7 @@ impl SquallServer {
         match self
             .memory
             .memorize(
-                &req.category,
+                req.category.as_str(),
                 &req.content,
                 req.model.as_deref(),
                 req.tags.as_deref(),
@@ -455,7 +455,7 @@ impl SquallServer {
 
     #[tool(
         name = "memory",
-        description = "Read Squall's memory: model performance stats, recurring patterns, and prompt tactics. Use before a review to inform model selection and system_prompt choices.",
+        description = "Read prior patterns, tactics, and model recommendations to inform model selection and review lenses.",
         annotations(read_only_hint = true)
     )]
     async fn memory(
@@ -467,7 +467,7 @@ impl SquallServer {
         match self
             .memory
             .read_memory(
-                req.category.as_deref(),
+                req.category.as_ref().map(|c| c.as_str()),
                 req.model.as_deref(),
                 req.max_chars(),
                 req.scope.as_deref(),
@@ -523,8 +523,11 @@ impl SquallServer {
 }
 
 /// Returns true if reasoning_effort warrants an extended deadline.
-fn reasoning_needs_extended_deadline(effort: Option<&str>) -> bool {
-    matches!(effort, Some("medium" | "high" | "xhigh"))
+fn reasoning_needs_extended_deadline(effort: Option<&ReasoningEffort>) -> bool {
+    matches!(
+        effort,
+        Some(ReasoningEffort::Medium | ReasoningEffort::High | ReasoningEffort::Xhigh)
+    )
 }
 
 #[tool_handler]
@@ -537,50 +540,20 @@ impl ServerHandler for SquallServer {
                 ..Default::default()
             },
             instructions: Some(
-                "Squall: parallel AI model dispatch via HTTP and CLI.\n\n\
-                 Tools:\n\
-                 - `listmodels`: List available models with provider, backend, and capability info.\n\
-                 - `chat`: Single HTTP model query (OpenAI-compatible providers).\n\
-                 - `clink`: Single CLI model query (gemini, codex — runs as subprocess).\n\
-                 - `review`: Fan out a prompt to multiple models in parallel. ALWAYS prefer this over multiple chat/clink calls.\n\
-                 - `memorize`: Save a learning (pattern, tactic, or model recommendation) to persistent memory.\n\
-                 - `memory`: Read persistent memory (model stats, patterns, tactics, recommendations).\n\
-                 - `flush`: Clean up branch-scoped memory after PR merge.\n\n\
-                 Model Selection:\n\
-                 1. Call `memory` with category \"recommend\" for past model recommendations.\n\
-                 2. Call `listmodels` to see exact model names and capabilities.\n\
-                 3. Pick an ensemble based on the task (e.g. fast models for drafts, reasoning models for analysis).\n\n\
-                 Review Workflow:\n\
-                 1. Select models (see Model Selection above).\n\
-                 2. Set `per_model_system_prompts` to give each model a different review lens \
-                 (e.g. security, architecture, correctness). Check `memory` category \"tactics\" for proven lenses.\n\
-                 3. Call `review`. For security audits, complex architecture, or high-stakes changes, set `deep: true` \
-                 (raises timeout to 600s, reasoning_effort to \"high\", max_tokens to 16384).\n\
-                 - Default timeout is 180s. Slow models may need `per_model_timeout_secs` or `deep: true` (600s). \
-                 Check `listmodels` for speed_tier.\n\
-                 - Models with <70% success rate over 5+ samples are auto-excluded. Gate warnings include \
-                 timeout/cutoff breakdown and avg failed prompt size. If failures are mostly timeouts, \
-                 the model needs more time — use `deep: true` or `per_model_timeout_secs`, not removal.\n\
-                 - Check `memory` category \"recommend\" before selecting models to see current health.\n\
-                 4. The response includes a `results_file` path. This file persists on disk and survives context compaction — \
-                 if you lose review details after a long conversation, read the results_file to recover them.\n\
-                 - If context compaction destroys the review response, the `results_file` path survives — \
-                 read the file to recover full results.\n\
-                 5. ALWAYS call `memorize` after synthesizing review results to record patterns and model blind spots.\n\n\
-                 File Context:\n\
-                 - Pass `file_paths` + `working_directory` to include source files in the prompt.\n\
-                 - For `review`, you can also pass `diff` with unified diff text (e.g. git diff output).\n\n\
-                 Research Workflow:\n\
-                 - For web-sourced research: `clink` with model \"codex\", timeout 600.\n\
-                 - For multi-vector research: `review` with 3-5 models as research advisors.\n\
-                 - ALWAYS persist results to `.squall/research/<topic>.md`.\n\
-                 - After research: `memorize` category \"pattern\" for reusable findings.\n\n\
-                 Memory Workflow:\n\
-                 - BEFORE reviews (mandatory): `memory` category \"recommend\" + \"patterns\" + \"tactics\" \
-                 to check past learnings. This is the most important step — without it, memory accumulates data nobody uses.\n\
-                 - After reviews: `memorize` with category \"pattern\" for recurring findings, \"tactic\" for prompt strategies, \
-                 \"recommend\" for model recommendations.\n\
-                 - After PR merge: `flush` with the branch name to graduate patterns to codebase scope."
+                "Squall: parallel AI model dispatch. Each model is an independent consultant.\n\n\
+                 Workflow:\n\
+                 1. Call `memory` (recommend/patterns/tactics) to check past learnings.\n\
+                 2. Call `listmodels` for exact model names and speed tiers.\n\
+                 3. Call `review` with expertise `per_model_system_prompts` (security, correctness, etc.).\n\
+                    - Use falsification framing: 'Attempt to PROVE [issue] exists. Report confidence.'\n\
+                    - Set `deep: true` for security/architecture/high-stakes (600s, high reasoning).\n\
+                    - `results_file` persists on disk — read it if context compaction loses the response.\n\
+                 4. Triangulate model findings with your own investigation.\n\
+                 5. Call `memorize` to capture patterns, tactics, and model recommendations.\n\
+                 6. After PR merge: `flush` to graduate branch patterns to codebase scope.\n\n\
+                 File context: pass `file_paths` + `working_directory` to include source files.\n\
+                 For review, also pass `diff` with unified diff text.\n\
+                 Research: `clink` with model \"codex\" for web search, or `review` with models as advisors."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),

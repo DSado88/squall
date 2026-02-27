@@ -158,11 +158,14 @@ Sequential investigation by main Claude, then Opus + models in parallel:
 3. Map control flow, trace callers/callees with Grep/Glob
 4. Check git history (`git log`, `git blame`) on changed files
 5. Form hypotheses — specific, testable claims with file:line references, informed by memory patterns
-6. Write investigation notes — these become `investigation_context` AND inform per-model lenses
+6. Write investigation notes — these become `investigation_context` (persist-only, models don't see this).
+   Hypotheses inform which files to include and which expertise areas matter most,
+   but do NOT go into per_model_system_prompts — lenses stay expertise-based with falsification framing.
 7. **Spawn Opus agent** (same as STANDARD, but with hypotheses added to its prompt)
 8. Proceed to Phase 2 — Opus runs concurrently with Squall dispatch
 
-Investigation MUST complete before dispatch. Hypotheses inform both model lenses AND the Opus agent.
+Investigation MUST complete before dispatch. Hypotheses inform file selection, expertise area emphasis,
+and the Opus agent's context — but NOT model lenses directly.
 The Opus agent gets hypotheses as additional context so it can validate or challenge them independently.
 
 ### SWARM
@@ -262,13 +265,16 @@ Proceed to Phase 3. The instructions below apply to QUICK, STANDARD, and DEEP on
 
    | Strength Area | Default Lens |
    |---------------|-------------|
-   | Systems/concurrency | "Focus on concurrency issues, resource leaks, memory safety, and deadlock potential" |
-   | Correctness/logic | "Focus on logic errors, edge cases, off-by-one bugs, and step-by-step correctness" |
-   | Surface bugs | "Focus on obvious bugs, null dereferences, missing validation, and common pitfalls" |
-   | Adversarial | "Focus on edge cases, unusual inputs, race conditions, and adversarial scenarios" |
+   | Systems/concurrency | "You are a concurrency skeptic. Attempt to PROVE race conditions, resource leaks, or deadlocks exist. If you cannot find evidence, explain why the synchronization is correct. Report confidence (high/medium/low) for each finding." |
+   | Correctness/logic | "You are a correctness enforcer. Attempt to PROVE logic errors, edge-case failures, or off-by-one bugs exist. Trace each path step by step. If the logic is sound, explain why. Report confidence for each finding." |
+   | Surface/defects | "You are a defect hunter. Attempt to PROVE null dereferences, missing validation, or common pitfalls exist. If the code handles these correctly, explain the safeguards. Report confidence for each finding." |
+   | Adversarial/security | "You are an adversarial tester. Attempt to PROVE the code fails under unusual inputs, injection attacks, or trust boundary violations. If it's robust, explain the defenses. Report confidence for each finding." |
 
    Assign lenses based on each model's strengths (from listmodels or tactics), not by model name.
-   For DEEP, tailor lenses to investigation hypotheses (see squall-deep-review examples).
+   For DEEP, investigation hypotheses inform which files and areas to include (via `file_paths`
+   and `investigation_context`), but lenses stay expertise-based with falsification framing.
+   Do NOT inject specific hypotheses into `per_model_system_prompts` — this anchors the models
+   and suppresses independent discovery.
 
 5. **Call `review`** with appropriate parameters:
    - QUICK: just `prompt`, `models`, `diff`, `temperature: 0`
@@ -497,7 +503,9 @@ Two jobs, one mission:
 - Read changed files: {file_list}
 - {INVESTIGATION_STEPS}
 - Form specific hypotheses with file:line references
-- Write investigation notes — these become your system prompts for the models
+- Write investigation notes — these inform which areas to probe, but system prompts
+  use falsification framing (e.g. "Attempt to PROVE [issue type] exists. Report confidence.")
+  Do NOT inject specific hypotheses into per_model_system_prompts.
 
 ## Step 3: Dispatch to models
 - Call `listmodels` to verify model names
@@ -604,6 +612,8 @@ Models with <70% success rate (>=5 samples) are automatically rejected by Squall
 | Always pick the same 3 "proven" models | Include at least 1 model with <5 samples for exploration (cold-start diversity) |
 | Assume infrastructure failures = model quality | Auth/credit failures inflate error rates — check `reason` field, not just `status` |
 | Skip per_model_system_prompts for "weak" models | Lenses transform average models into unique contributors (Kimi: B→A with security lens) |
+| Use conclusion-driven lenses ("look for race condition at line 67") | Use expertise lenses with falsification framing ("Attempt to PROVE concurrency issues exist. Report confidence.") |
+| Inject investigation hypotheses into per_model_system_prompts | Keep hypotheses in investigation_context (persist-only). Lenses are expertise-based, not hypothesis-confirming. |
 | Spawn SWARM for score < 6 | SWARM costs ~3x tokens vs DEEP — reserve for high-stakes changes |
 | Use SWARM without checking team availability | Always check first, degrade to DEEP with notification if unavailable |
 | Silently degrade from SWARM to DEEP | Always notify — high-stakes code getting downgraded review must be visible |
@@ -675,6 +685,11 @@ Insights captured during skill execution:
 **Origin**: 5-agent team (researcher, architect, scribe, builder, tester) traced all model selection logic, dispatch paths, and naming lifecycle end-to-end.
 **Core insight**: (1) Code bug: `compute_summary()` and `generate_recommendations()` in memory.rs didn't normalize model names — legacy events with provider model_ids (e.g. "moonshotai/Kimi-K2.5") showed up in `memory recommend` output instead of config keys ("kimi-k2.5"). Fixed by threading `id_to_key` map through both functions via MemoryStore field. (2) Skill text: "non-negotiable" for Tier 1 was misleading — server CAN gate them. Changed to "strongly preferred" with gate acknowledgment. (3) "pick 2" had no escape clause for when all Tier 2 models are gated. (4) Phase 3 quality gates didn't check `not_started` or `models_gated`. (5) "tactics" vs "tactic" category naming inconsistency. (6) Stale model notes (deepseek-r1, deepseek-v3.1). (7) Zombie models (100% infra failures never gated) identified as architectural concern — not yet fixed.
 **Harvested** -> memory.rs normalization fix, 7 skill text updates, MemoryStore.with_id_to_key() builder
+
+### 2026-02-27: Falsification lenses + parallel investigation architecture
+**Origin**: 5-model design review (grok, kimi, codex, deepseek-r1, qwen3-coder) on anchoring bias and investigation orchestration.
+**Core insight**: (1) Hypothesis-driven lenses create anchoring bias — models confirm what they're told to look for. Kimi's breakthrough: use falsification framing ("attempt to PROVE X exists, report confidence") instead. This converts lenses from confirmation tools into scientific hypotheses. (2) The explore agent IS the wild card — all 5 review models get focused expertise lenses, the parallel explore agent provides the independent/contrarian signal. (3) Investigation orchestration belongs in the skill layer, not get_info() — MCP instructions can't spawn agents and are too brittle for orchestration (30-40% parallelism failure rate per AgentBench).
+**Harvested** -> get_info() revised, review description revised, default lenses rewritten with falsification framing, DEEP/SWARM investigation notes updated, 2 anti-patterns added.
 
 ---
 <!-- SENTINEL:SESSION_LEARNINGS_END -->

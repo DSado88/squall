@@ -366,7 +366,9 @@ impl ReviewExecutor {
                 .or_else(|| req.system_prompt.clone());
             let temperature = req.temperature;
             let max_tokens = req.effective_max_tokens();
-            let reasoning_effort = req.effective_reasoning_effort();
+            let reasoning_effort = req
+                .effective_reasoning_effort()
+                .map(|e| e.as_str().to_string());
             // Fix #2: Thread working_directory through to CLI models
             let wd = working_directory.clone();
 

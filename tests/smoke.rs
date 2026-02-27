@@ -160,3 +160,212 @@ fn listmodels_returns_capability_fields() {
         );
     }
 }
+
+// ===========================================================================
+// Markdown responses
+// ===========================================================================
+
+#[test]
+fn listmodels_returns_markdown_table() {
+    use squall::tools::listmodels::{ListModelsResponse, ModelInfo};
+
+    let response = ListModelsResponse {
+        models: vec![ModelInfo {
+            name: "test-model".to_string(),
+            provider: "test-provider".to_string(),
+            backend: "http".to_string(),
+            description: "A test model".to_string(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        }],
+    };
+
+    let md = response.to_markdown();
+    assert!(md.contains('|'), "Should be a markdown table");
+    assert!(md.contains("test-model"), "Should contain model name");
+    assert!(md.contains("test-provider"), "Should contain provider");
+    assert!(!md.contains('{'), "Should not contain JSON braces");
+}
+
+#[test]
+fn listmodels_markdown_escapes_pipes() {
+    use squall::tools::listmodels::{ListModelsResponse, ModelInfo};
+
+    let response = ListModelsResponse {
+        models: vec![ModelInfo {
+            name: "model|name".to_string(),
+            provider: "provider".to_string(),
+            backend: "http".to_string(),
+            description: "desc with | pipe".to_string(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        }],
+    };
+
+    let md = response.to_markdown();
+    assert!(
+        md.contains(r"model\|name"),
+        "Should escape pipes in model names"
+    );
+    assert!(
+        md.contains(r"desc with \| pipe"),
+        "Should escape pipes in descriptions"
+    );
+}
+
+#[test]
+fn listmodels_markdown_escapes_newlines() {
+    use squall::tools::listmodels::{ListModelsResponse, ModelInfo};
+
+    let response = ListModelsResponse {
+        models: vec![ModelInfo {
+            name: "test".to_string(),
+            provider: "prov".to_string(),
+            backend: "http".to_string(),
+            description: "line one\nline two".to_string(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        }],
+    };
+
+    let md = response.to_markdown();
+    // Each model must be a single table row — no raw newlines in cells
+    let data_lines: Vec<&str> = md.lines().skip(2).collect(); // skip header + separator
+    assert_eq!(data_lines.len(), 1, "Model entry should be a single row");
+    assert!(
+        !data_lines[0].contains('\n'),
+        "Table row should not contain raw newlines"
+    );
+}
+
+#[test]
+fn listmodels_markdown_strips_carriage_returns() {
+    use squall::tools::listmodels::{ListModelsResponse, ModelInfo};
+
+    let response = ListModelsResponse {
+        models: vec![ModelInfo {
+            name: "test".to_string(),
+            provider: "prov".to_string(),
+            backend: "http".to_string(),
+            description: "line one\r\nline two".to_string(),
+            strengths: vec![],
+            weaknesses: vec![],
+            speed_tier: "fast".to_string(),
+            precision_tier: "medium".to_string(),
+        }],
+    };
+
+    let md = response.to_markdown();
+    assert!(
+        !md.contains('\r'),
+        "Markdown should not contain carriage returns"
+    );
+    let data_lines: Vec<&str> = md.lines().skip(2).collect();
+    assert_eq!(
+        data_lines.len(),
+        1,
+        "CRLF input should still be a single row"
+    );
+}
+
+// ===========================================================================
+// CLI name backward compatibility
+// ===========================================================================
+
+#[test]
+fn clink_accepts_cli_name_alias() {
+    use squall::tools::clink::ClinkRequest;
+
+    let json = r#"{"cli_name": "gemini", "prompt": "hello"}"#;
+    let req: ClinkRequest = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        req.model, "gemini",
+        "cli_name alias should deserialize into model field"
+    );
+}
+
+#[test]
+fn clink_accepts_model_field() {
+    use squall::tools::clink::ClinkRequest;
+
+    let json = r#"{"model": "codex", "prompt": "hello"}"#;
+    let req: ClinkRequest = serde_json::from_str(json).unwrap();
+    assert_eq!(req.model, "codex", "model field should work directly");
+}
+
+// ===========================================================================
+// Enum serde aliases
+// ===========================================================================
+
+#[test]
+fn memorize_category_accepts_plural_aliases() {
+    use squall::tools::enums::MemorizeCategory;
+
+    // "patterns" should deserialize to Pattern (common LLM mistake)
+    let cat: MemorizeCategory = serde_json::from_str(r#""patterns""#).unwrap();
+    assert_eq!(cat, MemorizeCategory::Pattern);
+
+    // "tactics" should deserialize to Tactic
+    let cat: MemorizeCategory = serde_json::from_str(r#""tactics""#).unwrap();
+    assert_eq!(cat, MemorizeCategory::Tactic);
+
+    // "recommendation" should deserialize to Recommend
+    let cat: MemorizeCategory = serde_json::from_str(r#""recommendation""#).unwrap();
+    assert_eq!(cat, MemorizeCategory::Recommend);
+}
+
+#[test]
+fn memory_category_accepts_singular_aliases() {
+    use squall::tools::enums::MemoryCategory;
+
+    // "pattern" should deserialize to Patterns (common LLM mistake)
+    let cat: MemoryCategory = serde_json::from_str(r#""pattern""#).unwrap();
+    assert_eq!(cat, MemoryCategory::Patterns);
+
+    // "tactic" should deserialize to Tactics
+    let cat: MemoryCategory = serde_json::from_str(r#""tactic""#).unwrap();
+    assert_eq!(cat, MemoryCategory::Tactics);
+}
+
+#[test]
+fn memory_category_has_no_all_variant() {
+    use squall::tools::enums::MemoryCategory;
+
+    // "all" should NOT be a valid MemoryCategory — callers omit the field instead
+    let result = serde_json::from_str::<MemoryCategory>(r#""all""#);
+    assert!(
+        result.is_err(),
+        "MemoryCategory should not have an All variant — use Option::None instead"
+    );
+}
+
+#[test]
+fn reasoning_effort_enum_round_trips() {
+    use squall::tools::enums::ReasoningEffort;
+
+    for (json, variant) in [
+        (r#""none""#, ReasoningEffort::None),
+        (r#""low""#, ReasoningEffort::Low),
+        (r#""medium""#, ReasoningEffort::Medium),
+        (r#""high""#, ReasoningEffort::High),
+        (r#""xhigh""#, ReasoningEffort::Xhigh),
+    ] {
+        let parsed: ReasoningEffort = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed, variant);
+        let serialized = serde_json::to_string(&parsed).unwrap();
+        assert_eq!(serialized, json);
+    }
+}
+
+#[test]
+fn response_format_defaults_to_detailed() {
+    use squall::tools::enums::ResponseFormat;
+
+    assert_eq!(ResponseFormat::default(), ResponseFormat::Detailed);
+}

@@ -153,12 +153,12 @@ fn query_parallel_not_in_tool_list() {
 fn clink_request_has_no_role_field() {
     use squall::tools::clink::ClinkRequest;
 
-    // After fix, ClinkRequest should only have prompt and cli_name.
+    // After fix, ClinkRequest should only have prompt and model.
     // This test verifies compilation — if role field is removed,
     // constructing with role would fail to compile.
     let req = ClinkRequest {
         prompt: "hello".to_string(),
-        cli_name: "gemini".to_string(),
+        model: "gemini".to_string(),
         file_paths: None,
         working_directory: None,
         system_prompt: None,
@@ -167,7 +167,7 @@ fn clink_request_has_no_role_field() {
         reasoning_effort: None,
     };
     assert_eq!(req.prompt, "hello");
-    assert_eq!(req.cli_name, "gemini");
+    assert_eq!(req.model, "gemini");
 }
 
 // ---------------------------------------------------------------------------

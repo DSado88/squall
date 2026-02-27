@@ -390,7 +390,7 @@ fn clink_request_has_file_context_fields() {
     use squall::tools::clink::ClinkRequest;
     let _req = ClinkRequest {
         prompt: "hello".to_string(),
-        cli_name: "gemini".to_string(),
+        model: "gemini".to_string(),
         file_paths: Some(vec!["src/lib.rs".to_string()]),
         working_directory: Some("/tmp".to_string()),
         system_prompt: None,

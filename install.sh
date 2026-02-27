@@ -54,11 +54,10 @@ if $DO_BUILD; then
     cd "$SQUALL_DIR"
     cargo build --release 2>&1
 
-    # Install binary
+    # Install binary (symlink avoids macOS com.apple.provenance SIGKILL on copied binaries)
     mkdir -p "$(dirname "$INSTALL_BIN")"
-    cp target/release/squall "$INSTALL_BIN"
-    chmod +x "$INSTALL_BIN"
-    echo "Installed binary to $INSTALL_BIN"
+    ln -sf "${SQUALL_DIR}/target/release/squall" "$INSTALL_BIN"
+    echo "Installed binary to $INSTALL_BIN -> target/release/squall"
 
     # Register as global MCP server (user scope → ~/.claude.json).
     # SECURITY: API keys are written directly to the JSON config file, never

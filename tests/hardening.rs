@@ -1600,6 +1600,7 @@ async fn review_none_branch_model_selection_is_sorted() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
