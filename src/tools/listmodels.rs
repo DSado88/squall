@@ -33,3 +33,30 @@ impl From<(&String, &ModelEntry)> for ModelInfo {
 pub struct ListModelsResponse {
     pub models: Vec<ModelInfo>,
 }
+
+/// Escape pipe, newline, and carriage-return characters for markdown table cells.
+fn escape_cell(s: &str) -> String {
+    s.replace('|', "\\|").replace('\r', "").replace('\n', " ")
+}
+
+impl ListModelsResponse {
+    /// Render the model list as a markdown table.
+    pub fn to_markdown(&self) -> String {
+        let mut md = String::from(
+            "| Model | Provider | Backend | Speed | Precision | Description |\n\
+             |-------|----------|---------|-------|-----------|-------------|\n",
+        );
+        for m in &self.models {
+            md.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} |\n",
+                escape_cell(&m.name),
+                escape_cell(&m.provider),
+                escape_cell(&m.backend),
+                escape_cell(&m.speed_tier),
+                escape_cell(&m.precision_tier),
+                escape_cell(&m.description),
+            ));
+        }
+        md
+    }
+}

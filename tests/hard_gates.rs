@@ -81,6 +81,7 @@ fn make_request(models: Vec<&str>) -> ReviewRequest {
         per_model_timeout_secs: None,
         deep: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     }
 }

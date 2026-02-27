@@ -250,6 +250,7 @@ fn find4_10_deep_mode_respects_explicit_timeout() {
         per_model_timeout_secs: None,
         deep: Some(true),
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -281,6 +282,7 @@ fn find4_10b_deep_mode_defaults_to_600_when_not_set() {
         per_model_timeout_secs: None,
         deep: Some(true),
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 

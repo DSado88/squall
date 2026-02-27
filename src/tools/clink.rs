@@ -1,10 +1,14 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use super::enums::ReasoningEffort;
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ClinkRequest {
-    /// CLI agent name from `listmodels` (e.g. "gemini", "codex"). Must be a CLI-backend model.
-    pub cli_name: String,
+    /// Model name from `listmodels` (e.g. "gemini", "codex"). Must be a CLI-backend model.
+    /// Also accepts "cli_name" for backward compatibility.
+    #[serde(alias = "cli_name")]
+    pub model: String,
     /// The prompt to send to the CLI agent. File manifest from file_paths is prepended automatically.
     pub prompt: String,
     /// Relative file paths to include as a path manifest (listed but not inlined for CLI). Requires working_directory.
@@ -17,7 +21,6 @@ pub struct ClinkRequest {
     pub temperature: Option<f64>,
     /// Maximum tokens to generate. Caps output length; useful for concise responses.
     pub max_tokens: Option<u64>,
-    /// Reasoning effort for thinking models: "none" (fastest), "low", "medium", "high" (deepest).
-    /// Non-reasoning models ignore this.
-    pub reasoning_effort: Option<String>,
+    /// Reasoning effort for thinking models. Non-reasoning models ignore this.
+    pub reasoning_effort: Option<ReasoningEffort>,
 }

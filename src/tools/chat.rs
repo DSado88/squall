@@ -1,6 +1,7 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use super::enums::ReasoningEffort;
 use crate::context::ContextFormat;
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -19,9 +20,9 @@ pub struct ChatRequest {
     pub temperature: Option<f64>,
     /// Maximum tokens to generate. Caps output length; useful for concise responses.
     pub max_tokens: Option<u64>,
-    /// Reasoning effort for thinking models: "none" (fastest), "low", "medium", "high" (deepest).
-    /// Non-reasoning models ignore this. "medium"/"high" automatically extend the deadline to 600s.
-    pub reasoning_effort: Option<String>,
+    /// Reasoning effort for thinking models. Non-reasoning models ignore this.
+    /// Medium/high automatically extend the deadline to 600s.
+    pub reasoning_effort: Option<ReasoningEffort>,
     /// File context format: "xml" (default, full content) or "hashline" (line_num:hash|content,
     /// compact for large files). Hashline lets models reference lines by number+hash.
     pub context_format: Option<ContextFormat>,

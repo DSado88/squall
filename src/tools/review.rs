@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::enums::{ReasoningEffort, ResponseFormat};
 use crate::context::ContextFormat;
 
 /// Request to dispatch a prompt to multiple models with straggler cutoff.
@@ -21,9 +22,9 @@ pub struct ReviewRequest {
     pub temperature: Option<f64>,
     /// Maximum tokens to generate per model. Caps output length for each model's response.
     pub max_tokens: Option<u64>,
-    /// Reasoning effort for thinking models: "none" (fastest), "low", "medium", "high" (deepest).
-    /// Non-reasoning models ignore this. "medium"/"high" automatically extend the deadline to 600s.
-    pub reasoning_effort: Option<String>,
+    /// Reasoning effort for thinking models. Non-reasoning models ignore this.
+    /// Medium/high automatically extend the deadline to 600s.
+    pub reasoning_effort: Option<ReasoningEffort>,
     /// Relative file paths to include as context (read and inlined server-side). Requires working_directory.
     pub file_paths: Option<Vec<String>>,
     /// Absolute path to the project root for resolving file_paths.
@@ -49,6 +50,8 @@ pub struct ReviewRequest {
     /// File context format: "xml" (default, full content) or "hashline" (line_num:hash|content,
     /// compact for large files). Hashline lets models reference lines by number+hash.
     pub context_format: Option<ContextFormat>,
+    /// Response format: "detailed" (default, full per-model responses) or "concise" (summary only).
+    pub response_format: Option<ResponseFormat>,
     /// Pre-review investigation context (code structure notes, hypotheses, areas of concern).
     /// Persist-only — NOT injected into model prompts. Models get context via per_model_system_prompts.
     /// Clamped to 32KB to prevent oversized persistence payloads.
@@ -80,12 +83,12 @@ impl ReviewRequest {
         }
     }
 
-    /// Effective reasoning effort: deep mode defaults to "high".
-    pub fn effective_reasoning_effort(&self) -> Option<String> {
+    /// Effective reasoning effort: deep mode defaults to High.
+    pub fn effective_reasoning_effort(&self) -> Option<ReasoningEffort> {
         if self.deep == Some(true) && self.reasoning_effort.is_none() {
-            Some("high".to_string())
+            Some(ReasoningEffort::High)
         } else {
-            self.reasoning_effort.clone()
+            self.reasoning_effort
         }
     }
 
@@ -154,7 +157,7 @@ pub struct ReviewSummary {
     pub selection_reasoning: Option<String>,
 }
 
-/// Full review response (serialized to JSON for MCP and disk).
+/// Full review response (rendered as markdown for MCP, persisted as JSON to disk).
 #[derive(Debug, Serialize)]
 pub struct ReviewResponse {
     pub results: Vec<ReviewModelResult>,
@@ -175,4 +178,107 @@ pub struct ReviewResponse {
     pub warnings: Vec<String>,
     /// Quick summary of model outcomes.
     pub summary: ReviewSummary,
+}
+
+impl ReviewResponse {
+    /// Render the review response as markdown for the MCP response.
+    /// `concise` mode omits per-model response text (just summary + results_file).
+    pub fn to_markdown(&self, concise: bool) -> String {
+        let mut md = String::with_capacity(1024);
+
+        // Summary line
+        md.push_str(&format!(
+            "## Review Summary\n{} succeeded, {} failed, {} cutoff, {} partial | {}ms elapsed\n",
+            self.summary.models_succeeded,
+            self.summary.models_failed,
+            self.summary.models_cutoff,
+            self.summary.models_partial,
+            self.elapsed_ms,
+        ));
+
+        if let Some(ref file) = self.results_file {
+            md.push_str(&format!("\nResults saved: `{file}`\n"));
+        }
+
+        // Persistence error — critical in concise mode where model text is omitted
+        if let Some(ref err) = self.persist_error {
+            md.push_str(&format!("\n**Persist error**: {err}\n"));
+        }
+
+        // File context issues
+        if let Some(ref skipped) = self.files_skipped
+            && !skipped.is_empty()
+        {
+            md.push_str(&format!(
+                "\n**Files skipped (budget)**: {}\n",
+                skipped.join(", ")
+            ));
+        }
+        if let Some(ref errors) = self.files_errors
+            && !errors.is_empty()
+        {
+            md.push_str(&format!("\n**File errors**: {}\n", errors.join(", ")));
+        }
+
+        // Warnings
+        if !self.warnings.is_empty() {
+            md.push_str("\n### Warnings\n");
+            for w in &self.warnings {
+                md.push_str(&format!("- {w}\n"));
+            }
+        }
+
+        // Not started
+        if !self.not_started.is_empty() {
+            md.push_str(&format!(
+                "\n**Not started**: {}\n",
+                self.not_started.join(", ")
+            ));
+        }
+
+        // Per-model responses (detailed only)
+        if !concise {
+            let succeeded: Vec<_> = self
+                .results
+                .iter()
+                .filter(|r| r.status == ModelStatus::Success)
+                .collect();
+            let failed: Vec<_> = self
+                .results
+                .iter()
+                .filter(|r| r.status != ModelStatus::Success)
+                .collect();
+
+            if !succeeded.is_empty() {
+                for res in &succeeded {
+                    md.push_str(&format!(
+                        "\n### {} ({}ms{})\n",
+                        res.model,
+                        res.latency_ms,
+                        if res.partial { ", partial" } else { "" },
+                    ));
+                    if let Some(ref text) = res.response {
+                        md.push_str(text.trim());
+                        md.push('\n');
+                    }
+                }
+            }
+
+            if !failed.is_empty() {
+                md.push_str("\n### Failed Models\n");
+                for res in &failed {
+                    md.push_str(&format!("- **{}**: ", res.model));
+                    if let Some(ref err) = res.error {
+                        md.push_str(err);
+                    }
+                    if let Some(ref reason) = res.reason {
+                        md.push_str(&format!(" ({reason})"));
+                    }
+                    md.push_str(&format!(" [{}ms]\n", res.latency_ms));
+                }
+            }
+        }
+
+        md
+    }
 }

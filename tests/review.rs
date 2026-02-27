@@ -8,7 +8,9 @@ use squall::config::Config;
 use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
 use squall::memory::MemoryStore;
 use squall::review::ReviewExecutor;
-use squall::tools::review::{ModelStatus, ReviewRequest, ReviewResponse, ReviewSummary};
+use squall::tools::review::{
+    ModelStatus, ReviewModelResult, ReviewRequest, ReviewResponse, ReviewSummary,
+};
 
 // ---------------------------------------------------------------------------
 // Helper: resolve per-model system prompt (mirrors executor logic exactly)
@@ -45,6 +47,7 @@ fn review_request_default_timeout() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
     assert_eq!(req.timeout_secs(), 180);
@@ -67,6 +70,7 @@ fn review_request_custom_timeout() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
     assert_eq!(req.timeout_secs(), 60);
@@ -241,6 +245,7 @@ async fn executor_unknown_models_go_to_not_started() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -306,6 +311,7 @@ async fn executor_none_models_uses_all_configured() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -375,6 +381,7 @@ async fn executor_cutoff_aborts_slow_models() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -450,6 +457,7 @@ async fn executor_fast_models_complete_before_cutoff() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -541,6 +549,7 @@ async fn executor_mixed_fast_and_slow() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -597,6 +606,7 @@ async fn executor_persists_results_to_disk() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -727,6 +737,7 @@ async fn executor_clamps_huge_timeout() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -796,6 +807,7 @@ async fn executor_deduplicates_model_ids() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -872,6 +884,7 @@ async fn executor_caps_all_configured_models() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -927,6 +940,7 @@ async fn persist_filename_includes_pid() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -1058,6 +1072,7 @@ async fn executor_with_per_model_system_prompts() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -1106,6 +1121,7 @@ fn deep_mode_sets_600s_effective_timeout() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
     assert_eq!(
@@ -1114,8 +1130,8 @@ fn deep_mode_sets_600s_effective_timeout() {
         "deep: true should default timeout to 600s"
     );
     assert_eq!(
-        req.effective_reasoning_effort().as_deref(),
-        Some("high"),
+        req.effective_reasoning_effort(),
+        Some(squall::tools::enums::ReasoningEffort::High),
         "deep: true should default reasoning_effort to high"
     );
     assert_eq!(
@@ -1140,14 +1156,18 @@ fn deep_mode_does_not_override_explicit_values() {
         per_model_timeout_secs: None,
         deep: Some(true),
         max_tokens: Some(4096),
-        reasoning_effort: Some("medium".to_string()),
+        reasoning_effort: Some(squall::tools::enums::ReasoningEffort::Medium),
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
     // Explicit timeout_secs overrides deep default (fix: was clamped to 600).
     assert_eq!(req.effective_timeout_secs(), 300);
     // explicit reasoning_effort should be kept
-    assert_eq!(req.effective_reasoning_effort().as_deref(), Some("medium"));
+    assert_eq!(
+        req.effective_reasoning_effort(),
+        Some(squall::tools::enums::ReasoningEffort::Medium)
+    );
     // explicit max_tokens should be kept
     assert_eq!(req.effective_max_tokens(), Some(4096));
 }
@@ -1169,6 +1189,7 @@ fn deep_false_uses_normal_defaults() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
     assert_eq!(req.effective_timeout_secs(), 180);
@@ -1223,6 +1244,7 @@ async fn deep_mode_executor_uses_effective_timeout() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -1314,6 +1336,7 @@ async fn per_model_timeout_does_not_extend_global_cutoff() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -1410,6 +1433,7 @@ async fn warnings_surface_unknown_per_model_system_prompt_keys() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -1482,6 +1506,7 @@ async fn warnings_surface_unknown_per_model_timeout_keys() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -1538,6 +1563,7 @@ async fn warnings_surface_max_models_truncation() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -1612,6 +1638,7 @@ async fn summary_counts_match_results() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -1689,6 +1716,7 @@ async fn summary_buckets_reconcile() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -1747,6 +1775,7 @@ async fn investigation_context_persisted() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: Some("Found potential race condition in auth flow".to_string()),
     };
 
@@ -1804,6 +1833,7 @@ async fn investigation_context_clamped() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: Some(big_context),
     };
 
@@ -1875,6 +1905,7 @@ async fn investigation_context_clamped_utf8_boundary() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: Some(big_context),
     };
 
@@ -2001,6 +2032,7 @@ async fn persisted_json_contains_files_skipped() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -2073,6 +2105,7 @@ async fn truncation_warning_reports_actual_boundary() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: Some(big_context.clone()),
     };
 
@@ -2177,6 +2210,7 @@ async fn zero_per_model_timeout_warns() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -2253,6 +2287,7 @@ async fn persisted_json_contains_files_errors() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -2347,6 +2382,7 @@ async fn per_model_system_prompt_case_insensitive_resolution() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -2421,6 +2457,7 @@ async fn per_model_system_prompt_resolves_provider_model_id() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -2489,6 +2526,7 @@ async fn per_model_system_prompt_exact_match_no_warning() {
         max_tokens: None,
         reasoning_effort: None,
         context_format: None,
+        response_format: None,
         investigation_context: None,
     };
 
@@ -2508,5 +2546,180 @@ async fn per_model_system_prompt_exact_match_no_warning() {
         !resp.warnings.iter().any(|w| w.contains("resolved to")),
         "Exact match should NOT produce resolution warning. Warnings: {:?}",
         resp.warnings,
+    );
+}
+
+// ===========================================================================
+// Markdown response format
+// ===========================================================================
+
+#[test]
+fn review_to_markdown_returns_summary_header() {
+    let resp = ReviewResponse {
+        results: vec![],
+        not_started: vec![],
+        cutoff_seconds: 180,
+        elapsed_ms: 1234,
+        results_file: Some("/tmp/results.json".to_string()),
+        persist_error: None,
+        files_skipped: None,
+        files_errors: None,
+        warnings: vec![],
+        summary: ReviewSummary {
+            models_requested: 3,
+            models_gated: 0,
+            models_succeeded: 2,
+            models_failed: 1,
+            models_cutoff: 0,
+            models_partial: 0,
+            models_not_started: 0,
+            auto_selected: false,
+            selection_reasoning: None,
+        },
+    };
+
+    let md = resp.to_markdown(false);
+    assert!(
+        md.contains("## Review Summary"),
+        "Should contain summary header"
+    );
+    assert!(md.contains("2 succeeded"), "Should include succeeded count");
+    assert!(md.contains("1234ms elapsed"), "Should include elapsed time");
+    assert!(
+        md.contains("results.json"),
+        "Should include results_file path"
+    );
+    // Should NOT contain JSON artifacts
+    assert!(!md.contains('{'), "Markdown should not contain JSON braces");
+}
+
+#[test]
+fn review_to_markdown_concise_omits_model_text() {
+    let resp = ReviewResponse {
+        results: vec![ReviewModelResult {
+            model: "grok".to_string(),
+            provider: "xai".to_string(),
+            status: ModelStatus::Success,
+            response: Some("Long model response text here".to_string()),
+            error: None,
+            reason: None,
+            latency_ms: 500,
+            partial: false,
+        }],
+        not_started: vec![],
+        cutoff_seconds: 180,
+        elapsed_ms: 600,
+        results_file: Some("/tmp/r.json".to_string()),
+        persist_error: None,
+        files_skipped: None,
+        files_errors: None,
+        warnings: vec![],
+        summary: ReviewSummary {
+            models_requested: 1,
+            models_gated: 0,
+            models_succeeded: 1,
+            models_failed: 0,
+            models_cutoff: 0,
+            models_partial: 0,
+            models_not_started: 0,
+            auto_selected: false,
+            selection_reasoning: None,
+        },
+    };
+
+    let concise = resp.to_markdown(true);
+    assert!(
+        !concise.contains("Long model response text"),
+        "Concise mode should omit model response text"
+    );
+    assert!(
+        concise.contains("1 succeeded"),
+        "Concise should still have summary"
+    );
+
+    let detailed = resp.to_markdown(false);
+    assert!(
+        detailed.contains("Long model response text"),
+        "Detailed mode should include model response text"
+    );
+    assert!(
+        detailed.contains("### grok"),
+        "Detailed should have per-model headers"
+    );
+}
+
+#[test]
+fn review_to_markdown_shows_warnings() {
+    let resp = ReviewResponse {
+        results: vec![],
+        not_started: vec!["missing-model".to_string()],
+        cutoff_seconds: 180,
+        elapsed_ms: 100,
+        results_file: None,
+        persist_error: None,
+        files_skipped: None,
+        files_errors: None,
+        warnings: vec!["Unknown key 'typo' in per_model_system_prompts".to_string()],
+        summary: ReviewSummary::default(),
+    };
+
+    let md = resp.to_markdown(false);
+    assert!(md.contains("### Warnings"), "Should have warnings section");
+    assert!(md.contains("Unknown key"), "Should include warning text");
+    assert!(
+        md.contains("missing-model"),
+        "Should show not-started models"
+    );
+}
+
+// ===========================================================================
+// Defect: to_markdown() must surface files_skipped and files_errors
+// ===========================================================================
+
+#[test]
+fn review_to_markdown_shows_files_skipped() {
+    let resp = ReviewResponse {
+        results: vec![],
+        not_started: vec![],
+        cutoff_seconds: 180,
+        elapsed_ms: 100,
+        results_file: None,
+        persist_error: None,
+        files_skipped: Some(vec!["large_file.rs".to_string(), "huge.rs".to_string()]),
+        files_errors: None,
+        warnings: vec![],
+        summary: ReviewSummary::default(),
+    };
+
+    let md = resp.to_markdown(false);
+    assert!(
+        md.contains("large_file.rs"),
+        "Markdown should surface skipped files"
+    );
+    assert!(
+        md.contains("huge.rs"),
+        "Markdown should surface all skipped files"
+    );
+}
+
+#[test]
+fn review_to_markdown_shows_files_errors() {
+    let resp = ReviewResponse {
+        results: vec![],
+        not_started: vec![],
+        cutoff_seconds: 180,
+        elapsed_ms: 100,
+        results_file: None,
+        persist_error: None,
+        files_skipped: None,
+        files_errors: Some(vec!["missing.rs: not found".to_string()]),
+        warnings: vec![],
+        summary: ReviewSummary::default(),
+    };
+
+    let md = resp.to_markdown(false);
+    assert!(
+        md.contains("missing.rs: not found"),
+        "Markdown should surface file errors"
     );
 }
