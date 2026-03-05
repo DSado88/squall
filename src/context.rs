@@ -76,25 +76,36 @@ impl GitContextCache {
 /// Detect git context (branch + short SHA) from a working directory.
 /// Returns None if not a git repo or git is not available.
 async fn detect_git_context(working_directory: &Path) -> Option<GitContext> {
-    let sha = tokio::process::Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .current_dir(working_directory)
-        .output()
-        .await
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty());
+    // 5s timeout guards against git hangs (NFS mounts, broken hooks, etc.)
+    let git_timeout = Duration::from_secs(5);
 
-    let branch = tokio::process::Command::new("git")
-        .args(["branch", "--show-current"])
-        .current_dir(working_directory)
-        .output()
-        .await
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty());
+    let sha = tokio::time::timeout(
+        git_timeout,
+        tokio::process::Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .current_dir(working_directory)
+            .output(),
+    )
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    .filter(|o| o.status.success())
+    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    .filter(|s| !s.is_empty());
+
+    let branch = tokio::time::timeout(
+        git_timeout,
+        tokio::process::Command::new("git")
+            .args(["branch", "--show-current"])
+            .current_dir(working_directory)
+            .output(),
+    )
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    .filter(|o| o.status.success())
+    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    .filter(|s| !s.is_empty());
 
     // If neither succeeded, we're not in a git repo
     if sha.is_none() && branch.is_none() {
@@ -378,7 +389,8 @@ pub async fn resolve_file_context(
     }
 
     // Canonicalize base_dir for symlink checks (e.g., /tmp → /private/tmp on macOS).
-    // In production this is a no-op (validate_working_directory already canonicalizes).
+    // Defense-in-depth: validate_working_directory already canonicalizes, but callers
+    // (e.g. tests) may pass non-canonical paths directly.
     let base_dir = &tokio::fs::canonicalize(base_dir)
         .await
         .map_err(|e| SquallError::FileContext(format!("cannot resolve base directory: {e}")))?;

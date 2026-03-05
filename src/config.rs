@@ -711,7 +711,7 @@ mod tests {
         assert!(config.providers.contains_key("mistral"));
         assert!(config.providers.contains_key("openrouter"));
         assert_eq!(config.providers.len(), 5);
-        assert_eq!(config.models.len(), 13);
+        assert_eq!(config.models.len(), 14);
         assert!(config.models.contains_key("grok"));
         assert!(config.models.contains_key("gemini"));
         assert!(config.models.contains_key("codex"));
