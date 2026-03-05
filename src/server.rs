@@ -523,7 +523,7 @@ impl SquallServer {
 }
 
 /// Returns true if reasoning_effort warrants an extended deadline.
-fn reasoning_needs_extended_deadline(effort: Option<&ReasoningEffort>) -> bool {
+pub fn reasoning_needs_extended_deadline(effort: Option<&ReasoningEffort>) -> bool {
     matches!(
         effort,
         Some(ReasoningEffort::Medium | ReasoningEffort::High | ReasoningEffort::Xhigh)

@@ -369,3 +369,82 @@ fn response_format_defaults_to_detailed() {
 
     assert_eq!(ResponseFormat::default(), ResponseFormat::Detailed);
 }
+
+// ===========================================================================
+// reasoning_needs_extended_deadline coverage (mut-006 gap)
+// ===========================================================================
+
+#[test]
+fn reasoning_extended_deadline_for_medium_and_above() {
+    use squall::server::reasoning_needs_extended_deadline;
+    use squall::tools::enums::ReasoningEffort;
+
+    // None and Low should NOT trigger extended deadline
+    assert!(!reasoning_needs_extended_deadline(None));
+    assert!(!reasoning_needs_extended_deadline(Some(
+        &ReasoningEffort::None
+    )));
+    assert!(!reasoning_needs_extended_deadline(Some(
+        &ReasoningEffort::Low
+    )));
+
+    // Medium, High, Xhigh SHOULD trigger extended deadline
+    assert!(reasoning_needs_extended_deadline(Some(
+        &ReasoningEffort::Medium
+    )));
+    assert!(reasoning_needs_extended_deadline(Some(
+        &ReasoningEffort::High
+    )));
+    assert!(reasoning_needs_extended_deadline(Some(
+        &ReasoningEffort::Xhigh
+    )));
+}
+
+// ===========================================================================
+// Mutation survivors: enum→string wiring tests
+// ===========================================================================
+
+#[test]
+fn memorize_category_as_str_matches_valid_categories() {
+    use squall::tools::enums::MemorizeCategory;
+
+    // These must match VALID_CATEGORIES = ["pattern", "tactic", "recommend"]
+    assert_eq!(MemorizeCategory::Pattern.as_str(), "pattern");
+    assert_eq!(MemorizeCategory::Tactic.as_str(), "tactic");
+    assert_eq!(MemorizeCategory::Recommend.as_str(), "recommend");
+}
+
+#[test]
+fn memory_category_as_str_matches_read_memory_checks() {
+    use squall::tools::enums::MemoryCategory;
+
+    // These must match the category string comparisons in local.rs read_memory()
+    assert_eq!(MemoryCategory::Models.as_str(), "models");
+    assert_eq!(MemoryCategory::Patterns.as_str(), "patterns");
+    assert_eq!(MemoryCategory::Tactics.as_str(), "tactics");
+    assert_eq!(MemoryCategory::Recommend.as_str(), "recommend");
+}
+
+#[test]
+fn reasoning_effort_as_str_produces_lowercase() {
+    use squall::tools::enums::ReasoningEffort;
+
+    // Downstream dispatch/http.rs matches on lowercase strings like "high", "medium"
+    // format!("{:?}", e) would produce "High" — must use as_str() which returns lowercase
+    for (variant, expected) in [
+        (ReasoningEffort::None, "none"),
+        (ReasoningEffort::Low, "low"),
+        (ReasoningEffort::Medium, "medium"),
+        (ReasoningEffort::High, "high"),
+        (ReasoningEffort::Xhigh, "xhigh"),
+    ] {
+        assert_eq!(
+            variant.as_str(),
+            expected,
+            "{:?} should produce {expected}",
+            variant
+        );
+        // Verify it's truly lowercase (catches Debug format leak)
+        assert_eq!(variant.as_str(), variant.as_str().to_lowercase());
+    }
+}

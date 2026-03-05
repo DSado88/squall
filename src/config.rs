@@ -567,6 +567,16 @@ precision_tier = "high"
 strengths = ["purpose-built for code", "strong at code review", "large context"]
 weaknesses = ["new model, limited benchmarks"]
 
+[models.llama4-maverick]
+model_id = "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
+provider = "together"
+backend = "http"
+description = "Meta Llama 4 Maverick via Together, cheap with 1M context window"
+speed_tier = "fast"
+precision_tier = "medium"
+strengths = ["very cheap", "1M context window", "fast inference"]
+weaknesses = ["new model, unproven for code review"]
+
 # --- CLI models ---
 
 [models.gemini]
