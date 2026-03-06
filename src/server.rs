@@ -191,7 +191,7 @@ impl SquallServer {
 
     #[tool(
         name = "clink",
-        description = "Query a CLI-based AI model (codex, gemini) as a subprocess. Use for web search or deep repo analysis. Use `listmodels` for model names.",
+        description = "Query a CLI-based AI model (codex, gemini) as a subprocess. These are agentic models with file access and tool use. Use `listmodels` for model names.",
         annotations(read_only_hint = true)
     )]
     async fn clink(
