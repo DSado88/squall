@@ -1969,4 +1969,282 @@ mod tests {
             "pre-epoch should get min confidence 0.1, got {confidence}"
         );
     }
+
+    // ---- Greptar-driven tests: evidence counting, dedup, flush, gate stats ----
+
+    #[tokio::test]
+    async fn evidence_counting_increments_on_duplicate() {
+        let (store, tmp) = test_store("evidence-counting").await;
+
+        // Write same pattern twice
+        store
+            .memorize("pattern", "duplicate finding", None, None, None, None)
+            .await
+            .unwrap();
+        store
+            .memorize("pattern", "duplicate finding", None, None, None, None)
+            .await
+            .unwrap();
+
+        let content = tokio::fs::read_to_string(tmp.join("patterns.md"))
+            .await
+            .unwrap();
+        let entries = parse_pattern_entries(&content);
+        assert_eq!(entries.len(), 1, "should be deduplicated into one entry");
+        assert!(
+            entries[0].contains("[x2]"),
+            "should have evidence count [x2], got: {}",
+            entries[0]
+        );
+        let count = extract_evidence_count(&entries[0]);
+        assert_eq!(count, 2);
+
+        let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn evidence_confirmed_at_threshold() {
+        let (store, tmp) = test_store("evidence-confirmed").await;
+
+        // Write same pattern CONFIRMED_THRESHOLD times
+        for _ in 0..CONFIRMED_THRESHOLD {
+            store
+                .memorize("pattern", "confirmed pattern", None, None, None, None)
+                .await
+                .unwrap();
+        }
+
+        let content = tokio::fs::read_to_string(tmp.join("patterns.md"))
+            .await
+            .unwrap();
+        let entries = parse_pattern_entries(&content);
+        assert_eq!(entries.len(), 1);
+        assert!(
+            entries[0].contains("[confirmed]"),
+            "should have [confirmed] at threshold {CONFIRMED_THRESHOLD}, got: {}",
+            entries[0]
+        );
+        assert!(entries[0].contains(&format!("[x{CONFIRMED_THRESHOLD}]")));
+
+        let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
+    }
+
+    #[test]
+    fn content_hash_includes_scope() {
+        let hash_no_scope = content_hash("same content", None);
+        let hash_branch = content_hash("same content", Some("branch:feature"));
+        let hash_codebase = content_hash("same content", Some("codebase"));
+
+        assert_ne!(
+            hash_no_scope, hash_branch,
+            "no-scope and branch hashes should differ"
+        );
+        assert_ne!(
+            hash_branch, hash_codebase,
+            "different scopes should produce different hashes"
+        );
+    }
+
+    #[tokio::test]
+    async fn scoped_patterns_stay_separate() {
+        let (store, tmp) = test_store("scope-separate").await;
+
+        // Same content, different scopes — should be 2 separate entries
+        store
+            .memorize(
+                "pattern",
+                "common finding",
+                None,
+                None,
+                Some("branch:alpha"),
+                None,
+            )
+            .await
+            .unwrap();
+        store
+            .memorize(
+                "pattern",
+                "common finding",
+                None,
+                None,
+                Some("branch:beta"),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let content = tokio::fs::read_to_string(tmp.join("patterns.md"))
+            .await
+            .unwrap();
+        let entries = parse_pattern_entries(&content);
+        assert_eq!(
+            entries.len(),
+            2,
+            "same content under different scopes must be separate entries"
+        );
+
+        let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn flush_graduates_high_evidence_patterns() {
+        let (store, tmp) = test_store("flush-grad").await;
+
+        // Write pattern with branch scope, 3+ evidence
+        for _ in 0..3 {
+            store
+                .memorize(
+                    "pattern",
+                    "important pattern",
+                    None,
+                    None,
+                    Some("branch:feature"),
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+
+        // Write a low-evidence pattern
+        store
+            .memorize(
+                "pattern",
+                "weak pattern",
+                None,
+                None,
+                Some("branch:feature"),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let result = store.flush_branch("feature").await.unwrap();
+        assert!(result.contains("1 patterns graduated"), "result: {result}");
+        assert!(result.contains("1 patterns archived"), "result: {result}");
+
+        // Graduated pattern should now have "codebase" scope
+        let content = tokio::fs::read_to_string(tmp.join("patterns.md"))
+            .await
+            .unwrap();
+        assert!(
+            content.contains("Scope: codebase"),
+            "graduated pattern should have codebase scope"
+        );
+        assert!(
+            !content.contains("Scope: branch:feature"),
+            "no branch:feature scope should remain"
+        );
+
+        // Archived pattern should be in archive.md
+        let archive = tokio::fs::read_to_string(tmp.join("archive.md"))
+            .await
+            .unwrap();
+        assert!(
+            archive.contains("weak pattern"),
+            "archived pattern should be in archive.md"
+        );
+
+        let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
+    }
+
+    #[test]
+    fn gate_stats_excludes_partial_from_success() {
+        // Build event log with a partial success
+        let events = vec![
+            "| 2026-03-01T10:00:00Z | test-model | 5.0s | success | no | \u{2014} | \u{2014} | 2000 |"
+                .to_string(),
+            "| 2026-03-01T10:01:00Z | test-model | 10.0s | success | yes | \u{2014} | \u{2014} | 2000 |"
+                .to_string(),
+        ];
+        let summary = compute_summary(&events, &HashMap::new());
+        // With partial excluded: 1/2 = 50%
+        assert!(
+            summary.contains("50%"),
+            "partial should not count as success: {summary}"
+        );
+    }
+
+    #[test]
+    fn ymd_to_days_february_boundary() {
+        // Feb 28 and Mar 1 in a non-leap year should be exactly 1 day apart
+        let feb28 = ymd_to_days(2025, 2, 28);
+        let mar01 = ymd_to_days(2025, 3, 1);
+        assert_eq!(
+            mar01 - feb28,
+            1,
+            "Feb 28 to Mar 1 should be 1 day in non-leap year"
+        );
+
+        // In a leap year, Feb 29 should exist
+        let feb28_leap = ymd_to_days(2024, 2, 28);
+        let feb29_leap = ymd_to_days(2024, 2, 29);
+        let mar01_leap = ymd_to_days(2024, 3, 1);
+        assert_eq!(feb29_leap - feb28_leap, 1);
+        assert_eq!(mar01_leap - feb29_leap, 1);
+    }
+
+    #[test]
+    fn extract_evidence_count_invalid_returns_zero() {
+        let entry = "## [2026-03-01] something [xNaN]\n<!-- hash:abc -->\n";
+        assert_eq!(
+            extract_evidence_count(entry),
+            0,
+            "invalid [xNaN] should be 0"
+        );
+
+        let entry_valid = "## [2026-03-01] something [x3]\n<!-- hash:abc -->\n";
+        assert_eq!(extract_evidence_count(entry_valid), 3);
+
+        let entry_none = "## [2026-03-01] something\n<!-- hash:abc -->\n";
+        assert_eq!(extract_evidence_count(entry_none), 1, "no [xN] should be 1");
+    }
+
+    #[tokio::test]
+    async fn prune_old_model_events_keeps_recent() {
+        let (store, tmp) = test_store("prune-events").await;
+
+        store.ensure_dir().await.unwrap();
+        let today = iso_date();
+
+        // Compute the exact cutoff date (30 days ago)
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let cutoff_secs = now_secs.saturating_sub(30 * 86400);
+        let cutoff_days = cutoff_secs / 86400;
+        let (cy, cm, cd) = days_to_ymd(cutoff_days);
+        let cutoff_date = format!("{cy:04}-{cm:02}-{cd:02}");
+
+        let content = format!(
+            "# Model Performance Profiles\n\n\
+             ## Summary (auto-generated)\n\
+             summary\n\n\
+             ## Recent Events (last 100)\n\
+             | Timestamp | Model | Latency | Status | Partial | Reason | Error | Prompt Len |\n\
+             |-----------|-------|---------|--------|---------|--------|-------|------------|\n\
+             | 2020-01-01T00:00:00Z | ancient-model | 5.0s | success | no | \u{2014} | \u{2014} | 1000 |\n\
+             | {cutoff_date}T00:00:00Z | boundary-model | 4.0s | success | no | \u{2014} | \u{2014} | 1000 |\n\
+             | {today}T12:00:00Z | new-model | 3.0s | success | no | \u{2014} | \u{2014} | 1000 |\n"
+        );
+        atomic_write(&store.models_path(), &content).await.unwrap();
+
+        let pruned = store.prune_old_model_events(30).await;
+        assert_eq!(pruned, 1, "should prune only the ancient event");
+
+        let after = tokio::fs::read_to_string(store.models_path())
+            .await
+            .unwrap();
+        assert!(after.contains("new-model"), "recent event should survive");
+        assert!(
+            after.contains("boundary-model"),
+            "event exactly on cutoff date should survive (>= not >)"
+        );
+        assert!(
+            !after.contains("ancient-model"),
+            "ancient event should be pruned"
+        );
+
+        let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
+    }
 }
