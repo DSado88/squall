@@ -547,6 +547,7 @@ precision_tier = "high"
 strengths = ["strong reasoning", "finds real bugs"]
 weaknesses = ["verbose output"]
 
+
 [models."qwen-3.5"]
 model_id = "Qwen/Qwen3.5-397B-A17B"
 provider = "together"
@@ -592,12 +593,12 @@ strengths = ["systems-level bugs", "finds all real bugs"]
 weaknesses = ["slower than HTTP models"]
 
 [models.codex]
-model_id = "codex"
+model_id = "gpt-5.4"
 provider = "codex"
 backend = "cli"
 executable = "codex"
-args_template = ["exec", "--json"]
-description = "OpenAI Codex CLI, highest precision with zero false positives"
+args_template = ["exec", "--json", "-m", "{model}", "-c", "model_reasoning_effort=\"{reasoning}\""]
+description = "OpenAI Codex CLI (GPT-5.4), highest precision with zero false positives"
 speed_tier = "slow"
 precision_tier = "high"
 strengths = ["highest precision", "zero false positives", "exact line references"]

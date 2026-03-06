@@ -111,12 +111,16 @@ impl CliDispatch {
             }
         };
 
-        // Build args by substituting {model} in the template.
+        // Build args by substituting {model} and {reasoning} in the template.
         // Prompt is delivered via stdin to avoid ARG_MAX limits (~128KB-2MB).
         // No shell — Command::new() + .args() prevents shell injection.
+        let reasoning = req.reasoning_effort.as_deref().unwrap_or("high");
         let args: Vec<String> = args_template
             .iter()
-            .map(|a| a.replace("{model}", &req.model))
+            .map(|a| {
+                a.replace("{model}", &req.model)
+                    .replace("{reasoning}", reasoning)
+            })
             .collect();
 
         let mut cmd = Command::new(executable);
