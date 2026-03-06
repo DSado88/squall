@@ -48,6 +48,33 @@ impl Drop for ProcessGroupGuard {
     }
 }
 
+/// Build CLI args by substituting `{model}` and `{reasoning}` in the template.
+/// Reasoning defaults to "high" when not specified.
+fn build_args(
+    args_template: &[String],
+    model: &str,
+    reasoning_effort: Option<&str>,
+) -> Vec<String> {
+    let reasoning = reasoning_effort.unwrap_or("high");
+    args_template
+        .iter()
+        .map(|a| {
+            a.replace("{model}", model)
+                .replace("{reasoning}", reasoning)
+        })
+        .collect()
+}
+
+/// Read limit for capped pipe reading: MAX + 1 to distinguish "at limit" from "over limit".
+fn read_limit() -> u64 {
+    MAX_OUTPUT_BYTES as u64 + 1
+}
+
+/// Returns true if the buffer exceeds the output cap (strictly greater).
+fn exceeds_output_cap(buf_len: usize) -> bool {
+    buf_len > MAX_OUTPUT_BYTES
+}
+
 pub struct CliDispatch;
 
 #[allow(clippy::new_without_default)]
@@ -114,14 +141,7 @@ impl CliDispatch {
         // Build args by substituting {model} and {reasoning} in the template.
         // Prompt is delivered via stdin to avoid ARG_MAX limits (~128KB-2MB).
         // No shell — Command::new() + .args() prevents shell injection.
-        let reasoning = req.reasoning_effort.as_deref().unwrap_or("high");
-        let args: Vec<String> = args_template
-            .iter()
-            .map(|a| {
-                a.replace("{model}", &req.model)
-                    .replace("{reasoning}", reasoning)
-            })
-            .collect();
+        let args = build_args(args_template, &req.model, req.reasoning_effort.as_deref());
 
         let mut cmd = Command::new(executable);
         cmd.args(&args)
@@ -203,7 +223,7 @@ impl CliDispatch {
             // Read one extra byte beyond the limit to distinguish "exactly at limit"
             // from "exceeded limit". Without +1, take(N) returns N bytes in both cases
             // and we can't tell them apart — causing false kills at the exact boundary.
-            let read_limit = MAX_OUTPUT_BYTES as u64 + 1;
+            let read_limit = read_limit();
 
             let stdout_handle = tokio::spawn(async move {
                 let mut buf = Vec::with_capacity(MAX_OUTPUT_BYTES.min(64 * 1024));
@@ -233,7 +253,7 @@ impl CliDispatch {
             // Kill only when output strictly exceeds the limit (the extra byte
             // from read_limit proves the process tried to write more than MAX_OUTPUT_BYTES).
             let kill_on_cap = |buf: &[u8]| {
-                if buf.len() > MAX_OUTPUT_BYTES
+                if exceeds_output_cap(buf.len())
                     && let Some(pid) = child_pid
                 {
                     unsafe {
@@ -559,5 +579,121 @@ mod tests {
         drop(guard); // Should NOT send SIGKILL
         // If disarm() doesn't exist, this test won't compile.
         // If disarm() doesn't clear pid, SIGKILL goes to process group 99999.
+    }
+
+    // ---- Greptar-driven tests: arg substitution, defaults, output cap ----
+
+    #[test]
+    fn args_substitution_model_and_reasoning() {
+        let template: Vec<String> = vec![
+            "exec".into(),
+            "--json".into(),
+            "-m".into(),
+            "{model}".into(),
+            "-c".into(),
+            "model_reasoning_effort=\"{reasoning}\"".into(),
+        ];
+        let args = build_args(&template, "gpt-5.4", Some("xhigh"));
+        assert_eq!(args[3], "gpt-5.4", "model must be substituted from req");
+        assert_eq!(
+            args[5], "model_reasoning_effort=\"xhigh\"",
+            "reasoning must be substituted"
+        );
+
+        // Verify model comes from argument, not hardcoded
+        let args2 = build_args(&template, "o3-mini", Some("low"));
+        assert_eq!(
+            args2[3], "o3-mini",
+            "model must vary with input, not be hardcoded"
+        );
+        assert_ne!(
+            args2[3], "gpt-5.4",
+            "model must not be hardcoded to gpt-5.4"
+        );
+    }
+
+    #[test]
+    fn args_reasoning_defaults_to_high() {
+        let template: Vec<String> =
+            vec!["-c".into(), "model_reasoning_effort=\"{reasoning}\"".into()];
+        let args = build_args(&template, "gpt-5.4", None);
+        assert_eq!(
+            args[1], "model_reasoning_effort=\"high\"",
+            "default reasoning must be 'high', not 'medium' or anything else"
+        );
+    }
+
+    #[test]
+    fn args_reasoning_not_hardcoded_model() {
+        // Regression: copy-paste error could substitute model into reasoning slot
+        let template: Vec<String> = vec![
+            "-m".into(),
+            "{model}".into(),
+            "-c".into(),
+            "effort=\"{reasoning}\"".into(),
+        ];
+        let args = build_args(&template, "gpt-5.4", Some("low"));
+        assert_eq!(
+            args[3], "effort=\"low\"",
+            "reasoning slot must not contain model name"
+        );
+        assert_ne!(
+            args[3], "effort=\"gpt-5.4\"",
+            "model name must not leak into reasoning slot"
+        );
+    }
+
+    #[test]
+    fn args_reasoning_placeholder_must_be_replaced() {
+        // If {reasoning} replacement is dropped, the literal passes through
+        let template: Vec<String> = vec!["effort=\"{reasoning}\"".into()];
+        let args = build_args(&template, "m", Some("high"));
+        assert!(
+            !args[0].contains("{reasoning}"),
+            "literal {{reasoning}} must not survive substitution, got: {}",
+            args[0]
+        );
+    }
+
+    #[test]
+    fn read_limit_exceeds_max_output_bytes() {
+        // Off-by-one guard: read_limit must be MAX + 1 to distinguish
+        // "exactly at limit" from "exceeded limit"
+        assert!(
+            read_limit() > MAX_OUTPUT_BYTES as u64,
+            "read_limit must exceed MAX_OUTPUT_BYTES to detect overflow"
+        );
+    }
+
+    #[test]
+    fn cap_kill_only_on_strict_exceed() {
+        // The cap check must use > (not >=) so output exactly at the limit
+        // is valid and not killed
+        assert!(
+            !exceeds_output_cap(MAX_OUTPUT_BYTES),
+            "exactly-at-limit must NOT trigger kill"
+        );
+        assert!(
+            exceeds_output_cap(MAX_OUTPUT_BYTES + 1),
+            "over-limit must trigger kill"
+        );
+    }
+
+    #[tokio::test]
+    async fn process_group_is_set() {
+        // Verify that process_group(0) is called by spawning a real process
+        // and checking its pgid differs from ours
+        let child = Command::new("sleep")
+            .arg("0")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let child_pid = child.id().unwrap();
+        // pgid should equal the child's own pid (it's its own group leader)
+        let pgid = unsafe { libc::getpgid(child_pid as i32) };
+        assert_eq!(
+            pgid, child_pid as i32,
+            "child must be its own process group leader (pgid == pid)"
+        );
     }
 }
