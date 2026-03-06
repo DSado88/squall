@@ -84,6 +84,7 @@ async fn detect_git_context(working_directory: &Path) -> Option<GitContext> {
         tokio::process::Command::new("git")
             .args(["rev-parse", "--short", "HEAD"])
             .current_dir(working_directory)
+            .kill_on_drop(true)
             .output(),
     )
     .await
@@ -98,6 +99,7 @@ async fn detect_git_context(working_directory: &Path) -> Option<GitContext> {
         tokio::process::Command::new("git")
             .args(["branch", "--show-current"])
             .current_dir(working_directory)
+            .kill_on_drop(true)
             .output(),
     )
     .await
