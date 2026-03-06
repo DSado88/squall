@@ -257,8 +257,6 @@ struct DbWorker {
     rx: mpsc::Receiver<DbCommand>,
     db_path: PathBuf,
     events_dir: PathBuf,
-    /// DuckDB connection — opened lazily on first read/merge command.
-    conn: Option<duckdb::Connection>,
     /// Counter for merge frequency: merge every N writes.
     write_count: u64,
 }
@@ -272,12 +270,14 @@ impl DbWorker {
             rx,
             db_path,
             events_dir,
-            conn: None,
             write_count: 0,
         };
 
-        // On startup, attempt to merge any pending parquet files
-        worker.ensure_connection();
+        // On startup, apply migrations (idempotent) and merge pending parquet files.
+        // Connection is opened and closed immediately — not held for the process lifetime.
+        if let Some(conn) = worker.open_connection() {
+            drop(conn);
+        }
         worker.do_merge();
 
         loop {
@@ -317,25 +317,24 @@ impl DbWorker {
         }
     }
 
-    /// Ensure the DuckDB connection is open and migrations are applied.
-    fn ensure_connection(&mut self) -> bool {
-        if self.conn.is_some() {
-            return true;
-        }
-
+    /// Open a fresh DuckDB connection with migrations applied.
+    ///
+    /// Opens and closes the connection per-operation rather than holding it
+    /// for the process lifetime. This prevents zombie MCP server processes
+    /// from holding the DuckDB file lock indefinitely, which blocks all
+    /// subsequent instances from merging or querying.
+    fn open_connection(&self) -> Option<duckdb::Connection> {
         match duckdb::Connection::open(&self.db_path) {
             Ok(conn) => {
-                // Apply schema migrations
                 if let Err(e) = schema::apply_migrations(&conn) {
                     tracing::warn!("global memory: migration failed: {e}");
-                    return false;
+                    return None;
                 }
-                self.conn = Some(conn);
-                true
+                Some(conn)
             }
             Err(e) => {
                 tracing::warn!("global memory: failed to open DuckDB: {e}");
-                false
+                None
             }
         }
     }
@@ -371,13 +370,12 @@ impl DbWorker {
 
     /// Query global recommendations from compacted DB + pending parquet files.
     fn handle_query_recommendations(
-        &mut self,
+        &self,
         exclude_project_id: Option<&str>,
     ) -> Result<GlobalRecommendations, String> {
-        if !self.ensure_connection() {
-            return Err("global memory: no DuckDB connection".into());
-        }
-        let conn = self.conn.as_ref().unwrap();
+        let conn = self
+            .open_connection()
+            .ok_or_else(|| "global memory: cannot open DuckDB for query".to_string())?;
 
         // 90-day lookback window
         let cutoff_ms = epoch_ms() as i64 - 90 * 86400 * 1000;
@@ -447,9 +445,9 @@ impl DbWorker {
         };
 
         let result = if let Some(exclude_id) = exclude_project_id {
-            query_recommendations_impl(conn, &sql, cutoff_ms, Some(exclude_id))
+            query_recommendations_impl(&conn, &sql, cutoff_ms, Some(exclude_id))
         } else {
-            query_recommendations_impl(conn, &sql, cutoff_ms, None)
+            query_recommendations_impl(&conn, &sql, cutoff_ms, None)
         };
 
         result.map_err(|e| format!("global memory: query failed: {e}"))
@@ -470,10 +468,10 @@ impl DbWorker {
             return;
         }
 
-        if !self.ensure_connection() {
-            return;
-        }
-        let conn = self.conn.as_ref().unwrap();
+        let conn = match self.open_connection() {
+            Some(c) => c,
+            None => return,
+        };
 
         let events_glob = self.events_dir.join("*.parquet");
         let events_glob_str = events_glob.to_string_lossy().replace('\'', "''");
@@ -557,11 +555,10 @@ impl DbWorker {
             return;
         }
 
-        if !self.ensure_connection() {
-            return;
-        }
-
-        let conn = self.conn.as_ref().unwrap();
+        let conn = match self.open_connection() {
+            Some(c) => c,
+            None => return,
+        };
         let em_dash = "\u{2014}";
 
         // Upsert the project (FK requirement)
