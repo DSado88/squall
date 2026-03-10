@@ -77,13 +77,14 @@ pub fn extract_findings(model_key: &str, response: &str) -> Vec<Finding> {
     while i < lines.len() {
         let line = lines[i].trim();
 
-        // Match headings: ### or ####
+        // Match headings: ### or #### (skip ##### and deeper)
         if let Some(rest) = line
             .strip_prefix("####")
             .or_else(|| line.strip_prefix("###"))
         {
             let rest = rest.trim();
-            if rest.is_empty() {
+            if rest.is_empty() || rest.starts_with('#') {
+                // Empty heading or h5+ (##### stripped to #rest) — skip
                 i += 1;
                 continue;
             }
@@ -315,10 +316,13 @@ fn extract_file_ref(body: &str) -> (Option<String>, Option<(u32, u32)>) {
             if let Some(tick_end) = line[abs_start..].find('`') {
                 let content = &line[abs_start..abs_start + tick_end];
                 // Must look like a file path with extension and line number
+                // Skip URLs (http://, https://)
                 if content.contains('/')
                     && content.contains('.')
                     && content.contains(':')
                     && !content.contains(' ')
+                    && !content.starts_with("http://")
+                    && !content.starts_with("https://")
                 {
                     return parse_file_with_lines(content);
                 }
@@ -676,5 +680,37 @@ The `acted_on` label conflates correctness with urgency.
             .await
             .unwrap();
         assert!(path.is_empty());
+    }
+
+    #[test]
+    fn h5_headings_skipped() {
+        let response = "\
+### [high] Real finding
+Details here.
+
+##### Deep nested heading
+This should not be a finding.
+
+### [low] Another real finding
+More details.
+";
+        let findings = extract_findings("test", response);
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].summary, "Real finding");
+        assert_eq!(findings[1].summary, "Another real finding");
+        // h5 heading is NOT extracted as a finding
+        assert!(!findings.iter().any(|f| f.summary.contains("Deep nested")));
+    }
+
+    #[test]
+    fn url_not_matched_as_file_ref() {
+        let response = "\
+### [high] External dependency issue
+The code fetches from `https://example.com:8080/api/v1` without timeout.
+";
+        let findings = extract_findings("test", response);
+        assert_eq!(findings.len(), 1);
+        // URL should NOT be extracted as a file path
+        assert_eq!(findings[0].file_path, None);
     }
 }

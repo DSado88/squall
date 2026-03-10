@@ -621,10 +621,8 @@ impl ReviewExecutor {
                 if result.status == ModelStatus::Success
                     && let Some(ref text) = result.response
                 {
-                    let model_key = id_to_key
-                        .get(&result.model)
-                        .unwrap_or(&result.model)
-                        .to_string();
+                    // result.model is already the config key (from target_models iteration)
+                    let model_key = result.model.clone();
                     let findings = crate::findings::extract_findings(&model_key, text);
                     all_findings.extend(findings);
                 }
