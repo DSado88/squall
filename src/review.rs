@@ -614,6 +614,31 @@ impl ReviewExecutor {
             }
         }
 
+        // Extract structured findings from successful responses and persist alongside.
+        if let Some(ref results_file) = response.results_file {
+            let mut all_findings = Vec::new();
+            for result in &response.results {
+                if result.status == ModelStatus::Success
+                    && let Some(ref text) = result.response
+                {
+                    let model_key = id_to_key
+                        .get(&result.model)
+                        .unwrap_or(&result.model)
+                        .to_string();
+                    let findings = crate::findings::extract_findings(&model_key, text);
+                    all_findings.extend(findings);
+                }
+            }
+            if !all_findings.is_empty() {
+                match crate::findings::persist_findings(results_file, &all_findings).await {
+                    Ok(path) => {
+                        tracing::info!("persisted {} findings to {path}", all_findings.len())
+                    }
+                    Err(e) => tracing::warn!("failed to persist findings: {e}"),
+                }
+            }
+        }
+
         response
     }
 }
