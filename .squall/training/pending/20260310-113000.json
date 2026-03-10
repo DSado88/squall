@@ -1,0 +1,57 @@
+{
+  "review_id": "20260310-113000",
+  "review_file": ".squall/reviews/1773157800594_76050_0.json",
+  "depth": "STANDARD",
+  "timestamp": "2026-03-10T11:30:00Z",
+  "topic": "ACT (Agentic Critical Training) integration into Squall",
+  "models": ["grok", "codex", "gemini", "deepseek-r1", "kimi-k2.5"],
+  "elevated": [
+    {
+      "summary": "Phase 1 git-diff correlation is architecturally invalid — no structured findings, semantic void",
+      "severity": "critical",
+      "sources": ["grok", "codex", "gemini", "kimi-k2.5", "deepseek-r1"],
+      "consensus": true,
+      "reasoning": "ReviewModelResult stores unstructured text, no line metadata. Git-diff correlation requires mapping free-text to line changes — impossible without LLM-in-the-loop."
+    },
+    {
+      "summary": "DuckDB schema lacks finding-level granularity — tracks invocation telemetry, not semantic findings",
+      "severity": "critical",
+      "sources": ["grok", "codex", "gemini", "kimi-k2.5", "deepseek-r1"],
+      "consensus": true,
+      "reasoning": "model_events has no finding_id, review_id, line ranges, or outcome labels. Massive schema overhaul needed."
+    },
+    {
+      "summary": "GRPO is wrong algorithm — need DPO for offline preference pairs",
+      "severity": "critical",
+      "sources": ["gemini", "codex"],
+      "consensus": false,
+      "reasoning": "Gemini: GRPO is online RL requiring policy to generate new responses. Historical pairs are offline preference data = DPO. Codex independently confirmed."
+    },
+    {
+      "summary": "Reward signal misspecified — acted_on conflates correctness with urgency/developer preference",
+      "severity": "high",
+      "sources": ["codex", "grok", "gemini", "kimi-k2.5"],
+      "consensus": true,
+      "reasoning": "True but expensive findings get 'ignored'; trivial lint gets 'acted_on'. Training optimizes for compliance, not quality."
+    },
+    {
+      "summary": "Data volume insufficient by 10-100x for any ML training",
+      "severity": "high",
+      "sources": ["grok", "codex", "gemini", "deepseek-r1", "kimi-k2.5"],
+      "consensus": true,
+      "reasoning": "~314 events, ~50-100 reviews. Need 5-10k pairs minimum for offline ranker, 20-50k for DPO."
+    }
+  ],
+  "dismissed": [
+    {
+      "summary": "Proposal is entirely without merit",
+      "severity": "info",
+      "sources": [],
+      "consensus": false,
+      "reasoning": "All models acknowledged the conceptual mapping (evidence counting = discrete reward signal) is directionally correct. The idea isn't wrong, just the Layer 1 implementation."
+    }
+  ],
+  "user_reaction": "corrected",
+  "user_correction": "User pointed out the training data is at Layer 2 (conversation trajectory), not Layer 1 (DuckDB telemetry). The normal workflow (squall review -> 'you agree?' -> claude filters -> 'fix via TDD' -> commit) IS the trajectory. Models evaluated the wrong layer.",
+  "meta_insight": "5 models unanimously proved Layer 1 is flawed. User saw one meta-layer higher — the conversation itself is the training data. This is the most valuable training example: models were technically correct but strategically wrong because they couldn't see the layer they were embedded in."
+}

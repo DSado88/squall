@@ -208,6 +208,104 @@ impl MemoryStore {
         }
     }
 
+    /// Record feedback on model outputs from a review.
+    ///
+    /// Appends feedback events to models.md and writes a standalone feedback
+    /// file to `.squall/training/feedback/`. Scores: 0=noise, 1=okay, 2=actionable.
+    pub async fn record_feedback(
+        &self,
+        review_file: &str,
+        scores: &HashMap<String, u8>,
+        note: Option<&str>,
+    ) -> Result<String, String> {
+        if scores.is_empty() {
+            return Err("scores must not be empty".to_string());
+        }
+        for (model, score) in scores {
+            if *score > 2 {
+                return Err(format!(
+                    "invalid score for {model}: {score} (must be 0, 1, or 2)"
+                ));
+            }
+        }
+
+        let _lock = self.write_lock.lock().await;
+
+        if let Err(e) = self.ensure_dir().await {
+            return Err(format!("failed to create memory directory: {e}"));
+        }
+
+        // Append feedback events to models.md
+        let path = self.models_path();
+        let existing = read_to_string_lossy(&path).await.unwrap_or_default();
+
+        let timestamp = iso_timestamp();
+        let mut new_events = Vec::new();
+        for (model, score) in scores {
+            let label = match score {
+                0 => "noise",
+                1 => "okay",
+                _ => "actionable",
+            };
+            let sanitized = escape_pipes(model);
+            new_events.push(format!(
+                "| {timestamp} | {sanitized} | — | feedback | no | {label} | — | 0 |",
+            ));
+        }
+
+        let (summary_section, mut event_lines) = parse_models_file(&existing);
+        event_lines.extend(new_events);
+
+        // Truncate and recompute summary
+        if event_lines.len() > MAX_EVENT_LOG_ENTRIES {
+            let start = event_lines.len() - MAX_EVENT_LOG_ENTRIES;
+            event_lines = event_lines[start..].to_vec();
+        }
+
+        let id_map = &self.id_to_key;
+        let new_summary = if summary_section.is_empty() {
+            compute_summary(&event_lines, id_map)
+        } else {
+            // Force recompute to pick up feedback
+            compute_summary(&event_lines, id_map)
+        };
+
+        let output = format_models_file(&new_summary, &event_lines);
+        if let Err(e) = atomic_write(&path, &output).await {
+            return Err(format!("failed to write models.md: {e}"));
+        }
+
+        // Write standalone feedback file for ACT training
+        let feedback_dir = self
+            .base_dir
+            .parent()
+            .unwrap_or(&self.base_dir)
+            .join("training/feedback");
+        if let Err(e) = tokio::fs::create_dir_all(&feedback_dir).await {
+            tracing::warn!("feedback: failed to create training/feedback dir: {e}");
+        } else {
+            let ts = timestamp.replace([':', '-', 'T'], "").replace('Z', "");
+            let feedback_path = feedback_dir.join(format!("{ts}.json"));
+            let feedback_json = serde_json::json!({
+                "review_file": review_file,
+                "timestamp": timestamp,
+                "scores": scores,
+                "note": note,
+            });
+            if let Ok(json_str) = serde_json::to_string_pretty(&feedback_json)
+                && let Err(e) = atomic_write(&feedback_path, &json_str).await
+            {
+                tracing::warn!("feedback: failed to write feedback file: {e}");
+            }
+        }
+
+        let model_count = scores.len();
+        Ok(format!(
+            "Recorded feedback for {model_count} model(s) → {}",
+            self.display_dir()
+        ))
+    }
+
     /// Write an explicit memorize entry to patterns.md or tactics.md.
     pub async fn memorize(
         &self,
@@ -2244,6 +2342,94 @@ mod tests {
             !after.contains("ancient-model"),
             "ancient event should be pruned"
         );
+
+        let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn feedback_records_to_models_md() {
+        let (store, tmp) = test_store("feedback_basic").await;
+        let scores: HashMap<String, u8> = [("grok".to_string(), 2u8), ("codex".to_string(), 1u8)]
+            .into_iter()
+            .collect();
+
+        let result = store
+            .record_feedback(
+                "reviews/test.json",
+                &scores,
+                Some("grok found the real bug"),
+            )
+            .await;
+
+        assert!(result.is_ok(), "record_feedback failed: {result:?}");
+        let msg = result.unwrap();
+        assert!(msg.contains("2 model(s)"));
+
+        // Check models.md has feedback events
+        let content = read_to_string_lossy(&store.models_path()).await.unwrap();
+        assert!(
+            content.contains("feedback"),
+            "should contain feedback status"
+        );
+        assert!(
+            content.contains("actionable"),
+            "grok score=2 should be 'actionable'"
+        );
+        assert!(content.contains("okay"), "codex score=1 should be 'okay'");
+
+        let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn feedback_writes_training_file() {
+        let (store, tmp) = test_store("feedback_training").await;
+        let scores: HashMap<String, u8> = [("gemini".to_string(), 0u8)].into_iter().collect();
+
+        store
+            .record_feedback("reviews/test.json", &scores, None)
+            .await
+            .unwrap();
+
+        // Check training/feedback/ directory has a file
+        let feedback_dir = tmp.parent().unwrap().join("training/feedback");
+        let mut entries = tokio::fs::read_dir(&feedback_dir).await.unwrap();
+        let entry = entries.next_entry().await.unwrap();
+        assert!(entry.is_some(), "should have written a feedback file");
+
+        let path = entry.unwrap().path();
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert!(content.contains("gemini"));
+        assert!(content.contains("reviews/test.json"));
+
+        let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn feedback_rejects_invalid_score() {
+        let (store, tmp) = test_store("feedback_invalid").await;
+        let scores: HashMap<String, u8> = [("grok".to_string(), 5u8)].into_iter().collect();
+
+        let result = store
+            .record_feedback("reviews/test.json", &scores, None)
+            .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid score"));
+
+        let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn feedback_rejects_empty_scores() {
+        let (store, tmp) = test_store("feedback_empty").await;
+        let scores: HashMap<String, u8> = HashMap::new();
+
+        let result = store
+            .record_feedback("reviews/test.json", &scores, None)
+            .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must not be empty"));
 
         let _ = tokio::fs::remove_dir_all(tmp.parent().unwrap()).await;
     }

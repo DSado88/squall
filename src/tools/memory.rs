@@ -54,3 +54,18 @@ pub struct FlushRequest {
     /// PR number for context (optional, informational only)
     pub pr_number: Option<u32>,
 }
+
+/// Request to record feedback on model outputs from a review.
+///
+/// After synthesizing a review, use this to rate which models provided
+/// actionable findings. Feeds into model recommendations and ACT training data.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FeedbackRequest {
+    /// Review results file path (e.g. ".squall/reviews/1773157800594_76050_0.json").
+    pub review_file: String,
+    /// Per-model feedback scores. Key = model name, value = score.
+    /// 0 = noise/unhelpful, 1 = okay/expected, 2 = actionable/valuable.
+    pub scores: HashMap<String, u8>,
+    /// Optional note explaining the ratings (e.g. "codex found the real bug, grok was noise").
+    pub note: Option<String>,
+}

@@ -143,6 +143,16 @@ impl CompositeMemoryStore {
         }
     }
 
+    /// Record feedback on model outputs from a review.
+    pub async fn record_feedback(
+        &self,
+        review_file: &str,
+        scores: &HashMap<String, u8>,
+        note: Option<&str>,
+    ) -> Result<String, String> {
+        self.local.record_feedback(review_file, scores, note).await
+    }
+
     /// Write an explicit memorize entry to patterns.md or tactics.md.
     pub async fn memorize(
         &self,

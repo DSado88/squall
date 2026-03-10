@@ -17,7 +17,7 @@ use crate::tools::chat::ChatRequest;
 use crate::tools::clink::ClinkRequest;
 use crate::tools::enums::{ReasoningEffort, ResponseFormat};
 use crate::tools::listmodels::{ListModelsResponse, ModelInfo};
-use crate::tools::memory::{FlushRequest, MemorizeRequest, MemoryRequest};
+use crate::tools::memory::{FeedbackRequest, FlushRequest, MemorizeRequest, MemoryRequest};
 use crate::tools::review::ReviewRequest;
 
 #[derive(Clone)]
@@ -518,6 +518,37 @@ impl SquallServer {
                 Ok(response.into_call_tool_result())
             }
             Err(msg) => Err(McpError::internal_error(msg, None)),
+        }
+    }
+
+    #[tool(
+        name = "feedback",
+        description = "Rate model outputs after a review. Scores: 0=noise, 1=okay, 2=actionable. Feeds into model recommendations and ACT training data."
+    )]
+    async fn feedback(
+        &self,
+        Parameters(req): Parameters<FeedbackRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let start = Instant::now();
+
+        match self
+            .memory
+            .record_feedback(&req.review_file, &req.scores, req.note.as_deref())
+            .await
+        {
+            Ok(msg) => {
+                let response = PalToolResponse::success(
+                    msg,
+                    PalMetadata {
+                        tool_name: "feedback".to_string(),
+                        model_used: "none".to_string(),
+                        provider_used: "none".to_string(),
+                        duration_seconds: start.elapsed().as_secs_f64(),
+                    },
+                );
+                Ok(response.into_call_tool_result())
+            }
+            Err(msg) => Err(McpError::invalid_params(msg, None)),
         }
     }
 }
