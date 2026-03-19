@@ -278,7 +278,7 @@ impl SquallServer {
 
     #[tool(
         name = "review",
-        description = "Consult multiple models in parallel with straggler cutoff. Assign expertise lenses via per_model_system_prompts — falsification framing ('attempt to PROVE X') produces the best results. Use `listmodels` for model names.",
+        description = "For code review: use the `squall-unified-review` skill instead of calling this tool directly. PREREQUISITE: call `memory` then `listmodels` BEFORE calling this tool. Do NOT hardcode model names — use ONLY names from `listmodels` output.\n\nConsult multiple models in parallel with straggler cutoff. Assign expertise lenses via per_model_system_prompts — falsification framing ('attempt to PROVE X') produces the best results.",
         annotations(read_only_hint = true)
     )]
     async fn review(
@@ -572,16 +572,23 @@ impl ServerHandler for SquallServer {
             },
             instructions: Some(
                 "Squall: parallel AI model dispatch. Each model is an independent consultant.\n\n\
-                 Workflow:\n\
-                 1. Call `memory` (recommend/patterns/tactics) to check past learnings.\n\
-                 2. Call `listmodels` for exact model names and speed tiers.\n\
-                 3. Call `review` with expertise `per_model_system_prompts` (security, correctness, etc.).\n\
+                 FOR CODE REVIEW: Use the `squall-unified-review` skill (invoke via Skill tool), \
+                    NOT these MCP tools directly. The skill handles depth detection, ensemble selection, \
+                    Opus agent orchestration, synthesis, and memorization. Calling `review` directly \
+                    skips all of that.\n\n\
+                 FOR DIRECT TOOL USE (chat, clink, research — not code review):\n\
+                 1. FIRST: Call `memory` (recommend/patterns/tactics) to check past learnings.\n\
+                 2. NEXT: Call `listmodels` for EXACT model names. NEVER hardcode names like \
+                    \"claude-sonnet\", \"gpt-4\", \"o4-mini\" — these are NOT Squall models. \
+                    Use ONLY names from `listmodels` output.\n\
+                 3. ONLY THEN: Call `review`/`chat`/`clink` with the task.\n\
                     - Use falsification framing: 'Attempt to PROVE [issue] exists. Report confidence.'\n\
                     - Set `deep: true` for security/architecture/high-stakes (600s, high reasoning).\n\
                     - `results_file` persists on disk — read it if context compaction loses the response.\n\
                  4. Triangulate model findings with your own investigation.\n\
                  5. Call `memorize` to capture patterns, tactics, and model recommendations.\n\
                  6. After PR merge: `flush` to graduate branch patterns to codebase scope.\n\n\
+                 DO NOT call `review` without calling `memory` and `listmodels` first.\n\n\
                  File context: pass `file_paths` + `working_directory` to include source files.\n\
                  For review, also pass `diff` with unified diff text.\n\
                  Research: `clink` with model \"codex\" for web search, or `review` with models as advisors."
