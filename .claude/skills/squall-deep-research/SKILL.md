@@ -11,7 +11,7 @@ activation_triggers:
   - When user wants deep investigation with real sources
 related_skills:
   - "[squall-research](../squall-research/SKILL.md) (for multi-agent swarm research)"
-  - "[squall-review](../squall-review/SKILL.md) (for code review, not research)"
+  - "[squall-unified-review](../squall-unified-review/SKILL.md) (for code review, not research)"
 ---
 
 # Squall Deep Research
@@ -197,7 +197,7 @@ Arguments:
 |-------|------------|
 | Set timeout below 300s for Codex | Use 600s — Codex needs time for web searches |
 | Use vague prompts ("tell me about X") | Be specific: "Search the web for X. Include URLs, dates, version numbers." |
-| Use this for code review | Use `/squall-review` — different tool, different purpose |
+| Use this for code review | Use `/squall-unified-review` — different tool, different purpose |
 | Expect Gemini deep research without API key | Use Codex as primary; Gemini is supplementary |
 | Leave results only in context | Always persist to `.squall/research/<topic>.md` |
 | Use this for parallel multi-vector research | Use `/squall-research` for swarm-based investigation |
@@ -262,7 +262,7 @@ Combine outputs into `.squall/research/mcp-streaming-responses.md`.
 ## Related Skills
 
 - [squall-research](../squall-research/SKILL.md) - Multi-agent swarm research with parallel team members investigating different vectors
-- [squall-review](../squall-review/SKILL.md) - Code review via Squall's review tool, not for research
+- [squall-unified-review](../squall-unified-review/SKILL.md) - Code review via Squall's review tool, not for research
 
 <!-- SENTINEL:SESSION_LEARNINGS_START - Do not remove this line -->
 ## Session Learnings Archive

@@ -11,7 +11,7 @@ activation_triggers:
   - When user wants multi-vector research on a topic
   - When user wants parallel investigation of a question
 related_skills:
-  - "[squall-review](../squall-review/SKILL.md) (for code review, not research)"
+  - "[squall-unified-review](../squall-unified-review/SKILL.md) (for code review, not research)"
   - "[squall-deep-research](../squall-deep-research/SKILL.md) (for single-agent deep research)"
 ---
 
@@ -265,7 +265,7 @@ Three vectors is enough for a focused topic. No need to force 5 agents.
 
 ## Related Skills
 
-- [squall-review](../squall-review/SKILL.md) - Code review via Squall (different use case: code, not research)
+- [squall-unified-review](../squall-unified-review/SKILL.md) - Code review via Squall (different use case: code, not research)
 - [squall-deep-research](../squall-deep-research/SKILL.md) - Single-agent deep research via Codex CLI (for narrow topics, no team needed)
 
 <!-- SENTINEL:SESSION_LEARNINGS_START - Do not remove this line -->

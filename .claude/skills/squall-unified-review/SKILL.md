@@ -625,10 +625,8 @@ Models with <70% success rate (>=5 samples) are automatically rejected by Squall
 | Spawn SWARM agents without bypassPermissions | Agents must run autonomously — permission prompts stall the swarm |
 | Set a short fixed timeout for SWARM agents | Agents call deep review (600s ceiling) — be patient, monitor for stalls instead |
 
-## Backward Compatibility
+## Notes
 
-- `/squall-review` still works — redirects to this skill at STANDARD depth
-- `/squall-deep-review` still works — redirects to this skill at DEEP depth
 - Explicit depth keywords ("deep review", "quick review", "swarm review") override auto-detection
 - SWARM degrades gracefully to DEEP when agent teams are unavailable — no Rust code changes needed
 - SWARM is entirely a skill-layer pattern using existing primitives (TeamCreate, TaskCreate, SendMessage, Squall `review`)
