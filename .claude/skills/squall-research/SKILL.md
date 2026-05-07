@@ -131,7 +131,7 @@ Your workflow:
 3a. Call `listmodels` to verify exact current model names
 3b. Call Squall `memory` category "tactics" to get proven system prompts for the review models
 4. Use the Squall `review` tool to get multi-model perspectives:
-   - models: ["grok-4-1-fast-reasoning", "moonshotai/kimi-k2.5", "z-ai/glm-5"]
+   - models: ["grok", "kimi-k2.6", "glm-5.1"]
    - system_prompt: "You are a research advisor specializing in <VECTOR TOPIC>.
      Analyze the research findings provided and add your own knowledge.
      Cite sources where possible."
@@ -197,9 +197,9 @@ for code review than research advising).
 
 | Model | Strength | Speed | Use For |
 |-------|----------|-------|---------|
-| `grok-4-1-fast-reasoning` | Fast, broad knowledge | 20-65s | Always include |
-| `moonshotai/kimi-k2.5` | Contrarian, edge cases | 60-300s | Alternative perspectives |
-| `z-ai/glm-5` | Architectural framing | 75-93s | Big-picture structure |
+| `grok` | Fast, broad knowledge | 20-65s | Always include |
+| `kimi-k2.6` | Contrarian, edge cases | 60-300s | Alternative perspectives |
+| `glm-5.1` | Architectural framing | 75-93s | Big-picture structure |
 
 ### Agent Count Guidelines
 

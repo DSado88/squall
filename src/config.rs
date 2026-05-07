@@ -469,10 +469,6 @@ persist_raw_output = "on_failure"
 base_url = "https://api.x.ai/v1/chat/completions"
 api_key_env = "XAI_API_KEY"
 
-[providers.openrouter]
-base_url = "https://openrouter.ai/api/v1/chat/completions"
-api_key_env = "OPENROUTER_API_KEY"
-
 [providers.deepseek]
 base_url = "https://api.deepseek.com/chat/completions"
 api_key_env = "DEEPSEEK_API_KEY"
@@ -488,30 +484,30 @@ api_key_env = "TOGETHER_API_KEY"
 # --- HTTP models ---
 
 [models.grok]
-model_id = "grok-4-1-fast-reasoning"
+model_id = "grok-4.3"
 provider = "xai"
 backend = "http"
-description = "xAI's fast reasoning model, good for quick code review"
+description = "xAI Grok 4.3, fast reasoning with 1M ctx and native video input"
 speed_tier = "fast"
 precision_tier = "medium"
-strengths = ["fast responses", "broad knowledge"]
+strengths = ["fast responses", "broad knowledge", "1M context", "agentic tool calling"]
 weaknesses = ["XML escaping false positives", "edition 2024 false positives"]
 
-[models."z-ai/glm-5"]
-model_id = "z-ai/glm-5"
-provider = "openrouter"
-backend = "http"
-description = "Zhipu's GLM-5, architectural framing via OpenRouter"
-speed_tier = "medium"
-precision_tier = "low"
-strengths = ["clear architectural analysis", "structured output"]
-weaknesses = ["rarely finds real bugs", "surface-level findings"]
-
-[models.deepseek-r1]
-model_id = "deepseek-ai/DeepSeek-R1"
+[models."glm-5.1"]
+model_id = "zai-org/GLM-5.1"
 provider = "together"
 backend = "http"
-description = "DeepSeek R1 reasoning model via Together (US-hosted), strong at logic-heavy analysis"
+description = "Zhipu GLM-5.1 via Together, strong on SWE-bench Pro (58.4%), beats GPT-5.4 on hardest coding tasks"
+speed_tier = "medium"
+precision_tier = "medium"
+strengths = ["clear architectural analysis", "structured output", "strong SWE-bench Pro performance"]
+weaknesses = ["surface-level findings on simple bugs"]
+
+[models.deepseek-r1]
+model_id = "deepseek-ai/DeepSeek-R1-0528"
+provider = "together"
+backend = "http"
+description = "DeepSeek R1-0528 reasoning model via Together (US-hosted), strong at logic-heavy analysis"
 speed_tier = "medium"
 precision_tier = "medium"
 strengths = ["deep reasoning chains", "logic analysis"]
@@ -527,24 +523,24 @@ precision_tier = "medium"
 strengths = ["efficient token usage", "multilingual code review"]
 weaknesses = ["less depth on niche Rust patterns"]
 
-[models."kimi-k2.5"]
-model_id = "moonshotai/Kimi-K2.5"
+[models."kimi-k2.6"]
+model_id = "moonshotai/Kimi-K2.6"
 provider = "together"
 backend = "http"
-description = "Moonshot's Kimi K2.5 via Together (US-hosted), contrarian edge case reviewer"
+description = "Moonshot's Kimi K2.6 via Together (US-hosted), contrarian edge case reviewer with cached input"
 speed_tier = "medium"
 precision_tier = "medium"
-strengths = ["contrarian perspective", "edge case detection"]
+strengths = ["contrarian perspective", "edge case detection", "cached input support"]
 weaknesses = ["inconsistent quality"]
 
-[models."deepseek-v3.1"]
-model_id = "deepseek-ai/DeepSeek-V3.1"
+[models."deepseek-v4-pro"]
+model_id = "deepseek-ai/DeepSeek-V4-Pro"
 provider = "together"
 backend = "http"
-description = "DeepSeek V3.1 via Together (US-hosted), strong open-source coder"
+description = "DeepSeek V4-Pro via Together (US-hosted), frontier open-source coder with 512K ctx"
 speed_tier = "medium"
 precision_tier = "high"
-strengths = ["strong reasoning", "finds real bugs"]
+strengths = ["strong reasoning", "finds real bugs", "512K context", "cached input support"]
 weaknesses = ["verbose output"]
 
 
@@ -585,7 +581,7 @@ model_id = "gemini"
 provider = "gemini"
 backend = "cli"
 executable = "gemini"
-args_template = ["-m", "gemini-3-pro-preview", "-o", "json"]
+args_template = ["-m", "gemini-3.1-pro-preview", "-o", "json"]
 description = "Google Gemini CLI, best at systems-level bug detection"
 speed_tier = "medium"
 precision_tier = "high"
@@ -593,12 +589,12 @@ strengths = ["systems-level bugs", "finds all real bugs"]
 weaknesses = ["slower than HTTP models"]
 
 [models.codex]
-model_id = "gpt-5.4"
+model_id = "gpt-5.5"
 provider = "codex"
 backend = "cli"
 executable = "codex"
 args_template = ["exec", "--json", "-m", "{model}", "-c", "model_reasoning_effort=\"{reasoning}\""]
-description = "OpenAI Codex CLI (GPT-5.4), highest precision with zero false positives"
+description = "OpenAI Codex CLI (GPT-5.5), highest precision with zero false positives"
 speed_tier = "slow"
 precision_tier = "high"
 strengths = ["highest precision", "zero false positives", "exact line references"]
@@ -710,8 +706,6 @@ mod tests {
         assert!(config.providers.contains_key("together"));
         assert!(config.providers.contains_key("deepseek"));
         assert!(config.providers.contains_key("mistral"));
-        assert!(config.providers.contains_key("openrouter"));
-        assert_eq!(config.providers.len(), 5);
         assert_eq!(config.models.len(), 14);
         assert!(config.models.contains_key("grok"));
         assert!(config.models.contains_key("gemini"));
@@ -724,7 +718,7 @@ mod tests {
     fn builtin_grok_model_id_is_correct() {
         let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
         let grok = &config.models["grok"];
-        assert_eq!(grok.model_id.as_deref(), Some("grok-4-1-fast-reasoning"));
+        assert_eq!(grok.model_id.as_deref(), Some("grok-4.3"));
         assert_eq!(grok.provider.as_deref(), Some("xai"));
         assert_eq!(grok.backend, "http");
     }

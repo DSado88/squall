@@ -193,8 +193,8 @@ It creates the team, assigns tasks, waits for all agents, then synthesizes their
 
 | Agent | Models | Rationale |
 |-------|--------|-----------|
-| Security | kimi-k2.5, codex, grok | kimi: adversarial edge cases. codex: precision anchor (0 FP). grok: fast cross-function. |
-| Correctness | codex, deepseek-v3.1, gemini | codex: precision. gemini: systems-level bugs. deepseek: fast broad coverage. |
+| Security | kimi-k2.6, codex, grok | kimi: adversarial edge cases. codex: precision anchor (0 FP). grok: fast cross-function. |
+| Correctness | codex, deepseek-v4-pro, gemini | codex: precision. gemini: systems-level bugs. deepseek: fast broad coverage. |
 | Architecture | gemini, codex, qwen-3.5 | gemini: architectural bugs. codex: contract violations. qwen: pattern matching. |
 
 Model overlap across agents is intentional — same model with different lens produces different analysis.
@@ -236,12 +236,12 @@ Proceed to Phase 3. The instructions below apply to QUICK, STANDARD, and DEEP on
 
    | Model | Best For | Notes |
    |-------|----------|-------|
-   | **kimi-k2.5** | Security, edge cases, adversarial scenarios | 83% LiveCodeBench. Needs a focused lens to shine. |
-   | **deepseek-v3.1** | Fast triage, broad coverage | Config key is `deepseek-v3.1` (provider model is V3.2-Exp). Fastest model (~30s). Pair with focused lens. |
+   | **kimi-k2.6** | Security, edge cases, adversarial scenarios | Contrarian edge case reviewer. Needs a focused lens to shine. |
+   | **deepseek-v4-pro** | Fast triage, broad coverage | DeepSeek V4-Pro via Together, 512K ctx, high precision. Pair with focused lens. |
    | **deepseek-r1** | Deep reasoning, logic-heavy analysis | Chain-of-thought reasoner. Routed via Together — persistent auth failures, check memory before selecting. |
    | **qwen-3.5** | Pattern matching, performance analysis | 397B MoE. Good with performance-focused lens. |
    | **qwen3-coder** | Code-specific review | Purpose-built for code. |
-   | **z-ai/glm-5** | Architectural framing | Trained on Issue-PR pairs. Needs OpenRouter credits — check memory for 402 errors. |
+   | **glm-5.1** | Architectural framing | GLM-5.1 via Together, 58.4% SWE-bench Pro. Strong structural analysis. |
    | **mistral-large** | Multilingual, efficient | Needs API key configured — check memory for auth failures. |
 
    **Selection criteria for Tier 2:**
@@ -255,7 +255,7 @@ Proceed to Phase 3. The instructions below apply to QUICK, STANDARD, and DEEP on
    **ALWAYS show selection reasoning:**
    ```
    Tier 1: gemini, codex, grok, Opus agent (always)
-   Tier 2: kimi-k2.5 (security lens, 100% success), deepseek-v3.1 (fast triage, 100% success)
+   Tier 2: kimi-k2.6 (security lens, cold-start), deepseek-v4-pro (fast triage, high precision)
    Rationale: Rust concurrency code — Kimi strong on edge cases, DV3.1 for broad coverage
    ```
 
@@ -378,7 +378,7 @@ Group findings by consensus strength, not by agent. The output should unify acro
 - [high] Description (source: local investigation + codex) — trust boundary at file:line
 
 #### Correctness
-- [medium] Description (source: gemini + deepseek-v3.1) — off-by-one at file:line
+- [medium] Description (source: gemini + deepseek-v4-pro) — off-by-one at file:line
 
 #### Architecture
 - [medium] Description (source: local investigation) — layering violation
@@ -556,14 +556,14 @@ CONSTRAINTS:
 
 ### Lens-Specific Investigation Steps
 
-**Security** (`{MODELS}`: kimi-k2.5, codex, grok):
+**Security** (`{MODELS}`: kimi-k2.6, codex, grok):
 - Trace all trust boundary crossings in changed code
 - Check input validation and sanitization paths
 - `git blame` on security-critical lines
 - Grep for `unsafe`, `unwrap`, hardcoded secrets, TODO security comments
 - Check if security-relevant tests exist for changed paths
 
-**Correctness** (`{MODELS}`: codex, deepseek-v3.1, gemini):
+**Correctness** (`{MODELS}`: codex, deepseek-v4-pro, gemini):
 - Trace control flow through changed functions, map all branches
 - Run targeted tests (`cargo test module_name`) on changed modules
 - Check error handling completeness (all error paths covered?)

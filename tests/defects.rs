@@ -230,7 +230,7 @@ fn p1_8_empty_model_string_uses_default() {
     };
     assert_eq!(
         req.model_or_default(),
-        "grok-4-1-fast-reasoning",
+        "grok",
         "Some(\"\") should fall back to default model"
     );
 }
@@ -250,7 +250,7 @@ fn p1_8_whitespace_model_string_uses_default() {
     };
     assert_eq!(
         req.model_or_default(),
-        "grok-4-1-fast-reasoning",
+        "grok",
         "Some(\"   \") should fall back to default model"
     );
 }

@@ -6,7 +6,7 @@ use crate::context::ContextFormat;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ChatRequest {
-    /// Model name from `listmodels` output (defaults to grok-4-1-fast-reasoning). Use exact names.
+    /// Model name from `listmodels` output (defaults to grok). Use exact names.
     pub model: Option<String>,
     /// The prompt to send to the model. File context from file_paths is prepended automatically.
     pub prompt: String,
@@ -28,7 +28,7 @@ pub struct ChatRequest {
     pub context_format: Option<ContextFormat>,
 }
 
-pub const DEFAULT_MODEL: &str = "grok-4-1-fast-reasoning";
+pub const DEFAULT_MODEL: &str = "grok";
 
 impl ChatRequest {
     pub fn model_or_default(&self) -> &str {
