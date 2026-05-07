@@ -1,0 +1,12 @@
+interface:
+  display_name: "Squall Unified Review (Codex)"
+  description: "Auto-depth multi-model code review under Codex CLI. Mirror of the Claude-side squall-unified-review skill."
+
+policy:
+  allow_implicit_invocation: true
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "squall"
+      description: "Required for review, listmodels, memory, memorize, clink"

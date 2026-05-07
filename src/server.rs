@@ -6,7 +6,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ErrorData as McpError, ServerHandler, tool, tool_handler, tool_router};
 
-use crate::config::Config;
+use crate::config::{ClientMode, Config};
 use crate::context::{self, GitContextCache};
 use crate::dispatch::ProviderRequest;
 use crate::dispatch::registry::Registry;
@@ -26,6 +26,7 @@ pub struct SquallServer {
     memory: Arc<MemoryStore>,
     git_cache: Arc<GitContextCache>,
     review_config: crate::config::ReviewConfig,
+    client_mode: ClientMode,
     tool_router: ToolRouter<Self>,
 }
 
@@ -33,6 +34,7 @@ pub struct SquallServer {
 impl SquallServer {
     pub fn new(config: Config) -> Self {
         let review_config = config.review.clone(); // Clone BEFORE from_config() move
+        let client_mode = config.client_mode;
 
         // Build global writer before config is moved into Registry.
         #[cfg(feature = "global-memory")]
@@ -65,6 +67,7 @@ impl SquallServer {
             memory,
             git_cache,
             review_config,
+            client_mode,
             tool_router: Self::tool_router(),
         }
     }
@@ -156,7 +159,7 @@ impl SquallServer {
             }
         };
 
-        Ok(response.into_call_tool_result())
+        Ok(response.into_call_tool_result(self.client_mode))
     }
 
     #[tool(
@@ -186,7 +189,7 @@ impl SquallServer {
             },
         );
 
-        Ok(response.into_call_tool_result())
+        Ok(response.into_call_tool_result(self.client_mode))
     }
 
     #[tool(
@@ -273,7 +276,7 @@ impl SquallServer {
             }
         };
 
-        Ok(response.into_call_tool_result())
+        Ok(response.into_call_tool_result(self.client_mode))
     }
 
     #[tool(
@@ -396,7 +399,7 @@ impl SquallServer {
             },
         );
 
-        Ok(response.into_call_tool_result())
+        Ok(response.into_call_tool_result(self.client_mode))
     }
 
     #[tool(
@@ -447,7 +450,7 @@ impl SquallServer {
                         duration_seconds: start.elapsed().as_secs_f64(),
                     },
                 );
-                Ok(response.into_call_tool_result())
+                Ok(response.into_call_tool_result(self.client_mode))
             }
             Err(msg) => Err(McpError::invalid_params(msg, None)),
         }
@@ -484,7 +487,7 @@ impl SquallServer {
                         duration_seconds: start.elapsed().as_secs_f64(),
                     },
                 );
-                Ok(response.into_call_tool_result())
+                Ok(response.into_call_tool_result(self.client_mode))
             }
             Err(msg) => Err(McpError::internal_error(msg, None)),
         }
@@ -515,7 +518,7 @@ impl SquallServer {
                         duration_seconds: start.elapsed().as_secs_f64(),
                     },
                 );
-                Ok(response.into_call_tool_result())
+                Ok(response.into_call_tool_result(self.client_mode))
             }
             Err(msg) => Err(McpError::internal_error(msg, None)),
         }
@@ -546,7 +549,7 @@ impl SquallServer {
                         duration_seconds: start.elapsed().as_secs_f64(),
                     },
                 );
-                Ok(response.into_call_tool_result())
+                Ok(response.into_call_tool_result(self.client_mode))
             }
             Err(msg) => Err(McpError::invalid_params(msg, None)),
         }
@@ -570,30 +573,7 @@ impl ServerHandler for SquallServer {
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 ..Default::default()
             },
-            instructions: Some(
-                "Squall: parallel AI model dispatch. Each model is an independent consultant.\n\n\
-                 FOR CODE REVIEW: Use the `squall-unified-review` skill (invoke via Skill tool), \
-                    NOT these MCP tools directly. The skill handles depth detection, ensemble selection, \
-                    Opus agent orchestration, synthesis, and memorization. Calling `review` directly \
-                    skips all of that.\n\n\
-                 FOR DIRECT TOOL USE (chat, clink, research — not code review):\n\
-                 1. FIRST: Call `memory` (recommend/patterns/tactics) to check past learnings.\n\
-                 2. NEXT: Call `listmodels` for EXACT model names. NEVER hardcode names like \
-                    \"claude-sonnet\", \"gpt-4\", \"o4-mini\" — these are NOT Squall models. \
-                    Use ONLY names from `listmodels` output.\n\
-                 3. ONLY THEN: Call `review`/`chat`/`clink` with the task.\n\
-                    - Use falsification framing: 'Attempt to PROVE [issue] exists. Report confidence.'\n\
-                    - Set `deep: true` for security/architecture/high-stakes (600s, high reasoning).\n\
-                    - `results_file` persists on disk — read it if context compaction loses the response.\n\
-                 4. Triangulate model findings with your own investigation.\n\
-                 5. Call `memorize` to capture patterns, tactics, and model recommendations.\n\
-                 6. After PR merge: `flush` to graduate branch patterns to codebase scope.\n\n\
-                 DO NOT call `review` without calling `memory` and `listmodels` first.\n\n\
-                 File context: pass `file_paths` + `working_directory` to include source files.\n\
-                 For review, also pass `diff` with unified diff text.\n\
-                 Research: `clink` with model \"codex\" for web search, or `review` with models as advisors."
-                    .into(),
-            ),
+            instructions: Some(crate::instructions::for_client(self.client_mode).into()),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             ..Default::default()
         }

@@ -3,13 +3,14 @@ use std::time::Instant;
 
 use tokio::sync::Semaphore;
 
-use crate::config::{Config, PersistRawOutput};
+use crate::config::{ClientMode, Config, PersistRawOutput};
 use crate::dispatch::async_poll::AsyncPollDispatch;
 use crate::dispatch::cli::CliDispatch;
 use crate::dispatch::http::HttpDispatch;
 use crate::dispatch::{ProviderRequest, ProviderResult};
 use crate::error::SquallError;
 use crate::parsers::OutputParser;
+use crate::parsers::claude::ClaudeParser;
 use crate::parsers::codex::CodexParser;
 use crate::parsers::gemini::GeminiParser;
 
@@ -141,6 +142,7 @@ pub struct Registry {
     http_semaphore: Semaphore,
     async_poll_semaphore: Semaphore,
     persist_raw_output: PersistRawOutput,
+    client_mode: ClientMode,
 }
 
 impl Registry {
@@ -154,6 +156,7 @@ impl Registry {
             http_semaphore: Semaphore::new(HTTP_MAX_CONCURRENT),
             async_poll_semaphore: Semaphore::new(ASYNC_POLL_MAX_CONCURRENT),
             persist_raw_output: config.persist_raw_output,
+            client_mode: config.client_mode,
         }
     }
 
@@ -212,6 +215,7 @@ impl Registry {
         match provider {
             "gemini" => Ok(Box::new(GeminiParser)),
             "codex" => Ok(Box::new(CodexParser)),
+            "claude" => Ok(Box::new(ClaudeParser)),
             _ => Err(SquallError::ModelNotFound {
                 model: format!("no parser for CLI provider: {provider}"),
                 suggestions: vec![],
@@ -268,6 +272,12 @@ impl Registry {
                 executable,
                 args_template,
             } => {
+                // Recursion guard: refuse to clink to the same CLI that's hosting Squall.
+                // Inspects executable AND args so wrapper-script bypasses
+                // (sh -c "codex ...", npx codex, env codex) are also blocked.
+                if let Some(reason) = recursion_guard(self.client_mode, executable, args_template) {
+                    return Err(SquallError::Other(reason));
+                }
                 let parser = Self::parser_for(&entry.provider)?;
                 let _permit =
                     Self::acquire_with_deadline(&self.cli_semaphore, req.deadline).await?;
@@ -293,5 +303,59 @@ impl Registry {
                     .await
             }
         }
+    }
+}
+
+/// Block clink calls that would recurse back into the hosting client.
+/// Returns `Some(reason)` to refuse, `None` to permit.
+///
+/// Inspects both the executable basename and every token in `args` so wrapper-script
+/// configurations (`executable="sh"`, `args=["-c", "codex ..."]`) can't bypass the guard
+/// by hiding the real client behind a shell, npx, or env runner. Case-insensitive on
+/// basenames to handle Windows `.exe` quirks if Squall ever runs there.
+pub fn recursion_guard(mode: ClientMode, executable: &str, args: &[String]) -> Option<String> {
+    let blocked = match mode {
+        ClientMode::Codex => "codex",
+        ClientMode::Claude => "claude",
+    };
+
+    if token_matches(executable, blocked) {
+        return Some(refusal_message(mode, executable));
+    }
+
+    for arg in args {
+        // Each whitespace-split fragment of an arg is treated as a candidate command.
+        // This catches `sh -c "codex ..."`, `npx codex`, `env codex`, and similar.
+        for token in arg.split_whitespace() {
+            if token_matches(token, blocked) {
+                return Some(refusal_message(mode, &format!("{executable} {arg}")));
+            }
+        }
+    }
+    None
+}
+
+fn token_matches(token: &str, blocked: &str) -> bool {
+    let basename = std::path::Path::new(token)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(token)
+        .to_ascii_lowercase();
+    basename == blocked
+}
+
+fn refusal_message(mode: ClientMode, surfaced_command: &str) -> String {
+    match mode {
+        ClientMode::Codex => format!(
+            "clink to 'codex' refused: Codex is hosting Squall (SQUALL_CLIENT=codex). \
+             Calling codex via clink (directly or via wrapper such as `{surfaced_command}`) \
+             would recurse. Use a different model, or unset SQUALL_CLIENT if Codex is not \
+             actually the host."
+        ),
+        ClientMode::Claude => format!(
+            "clink to 'claude' refused: Claude Code is hosting Squall (SQUALL_CLIENT unset/claude). \
+             Calling claude via clink (directly or via wrapper such as `{surfaced_command}`) \
+             would recurse. Use a different model, or set SQUALL_CLIENT=codex if Codex is the host."
+        ),
     }
 }

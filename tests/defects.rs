@@ -10,7 +10,7 @@ use rmcp::ServerHandler;
 /// Tests that change process CWD must hold this lock.
 static CWD_LOCK: Mutex<()> = Mutex::new(());
 
-use squall::config::Config;
+use squall::config::{ClientMode, Config};
 use squall::dispatch::ProviderResult;
 use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry};
 use squall::error::SquallError;
@@ -60,7 +60,9 @@ fn p0_1_server_version_matches_cargo() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn p0_2_error_response_sets_is_error_true() {
+fn p0_2_claude_mode_error_response_does_not_set_is_error() {
+    // Claude Code cascades sibling tool failures when is_error=true.
+    // In Claude mode, errors must stay at MCP success level.
     let response = PalToolResponse::error(
         "model not found".to_string(),
         PalMetadata {
@@ -70,10 +72,31 @@ fn p0_2_error_response_sets_is_error_true() {
             duration_seconds: 0.0,
         },
     );
-    let result = response.into_call_tool_result();
+    let result = response.into_call_tool_result(ClientMode::Claude);
     assert!(
         result.is_error != Some(true),
-        "Error responses must NOT set is_error=true (causes sibling cascade)"
+        "Claude-mode error responses must NOT set is_error=true (causes sibling cascade)"
+    );
+}
+
+#[test]
+fn p0_2_codex_mode_error_response_sets_is_error_true() {
+    // Codex is spec-compliant — errors should propagate as MCP errors so the client
+    // can surface them properly. No sibling-cascade hazard in Codex.
+    let response = PalToolResponse::error(
+        "model not found".to_string(),
+        PalMetadata {
+            tool_name: "chat".to_string(),
+            model_used: "bad-model".to_string(),
+            provider_used: "unknown".to_string(),
+            duration_seconds: 0.0,
+        },
+    );
+    let result = response.into_call_tool_result(ClientMode::Codex);
+    assert_eq!(
+        result.is_error,
+        Some(true),
+        "Codex-mode error responses must set is_error=true (spec-compliant)"
     );
 }
 
@@ -88,10 +111,25 @@ fn p0_2_success_response_sets_is_error_false() {
             duration_seconds: 1.0,
         },
     );
-    let result = response.into_call_tool_result();
+    let claude_result = response.into_call_tool_result(ClientMode::Claude);
     assert!(
-        !result.is_error.unwrap_or(false),
-        "Success responses must not have is_error=true"
+        !claude_result.is_error.unwrap_or(false),
+        "Success responses must not have is_error=true (claude mode)"
+    );
+
+    let response = PalToolResponse::success(
+        "hello from grok".to_string(),
+        PalMetadata {
+            tool_name: "chat".to_string(),
+            model_used: "grok".to_string(),
+            provider_used: "xai".to_string(),
+            duration_seconds: 1.0,
+        },
+    );
+    let codex_result = response.into_call_tool_result(ClientMode::Codex);
+    assert!(
+        !codex_result.is_error.unwrap_or(false),
+        "Success responses must not have is_error=true (codex mode)"
     );
 }
 
@@ -140,7 +178,9 @@ fn p1_4_into_content_nan_does_not_panic() {
             duration_seconds: f64::NAN,
         },
     );
-    let result = catch_unwind(AssertUnwindSafe(|| response.into_call_tool_result()));
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        response.into_call_tool_result(ClientMode::Claude)
+    }));
     assert!(
         result.is_ok(),
         "into_call_tool_result() panicked on NaN duration"
@@ -158,7 +198,9 @@ fn p1_4_into_content_infinity_does_not_panic() {
             duration_seconds: f64::INFINITY,
         },
     );
-    let result = catch_unwind(AssertUnwindSafe(|| response.into_call_tool_result()));
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        response.into_call_tool_result(ClientMode::Claude)
+    }));
     assert!(
         result.is_ok(),
         "into_call_tool_result() panicked on Infinity duration"

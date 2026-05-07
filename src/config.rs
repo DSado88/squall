@@ -196,10 +196,10 @@ impl TomlConfig {
                     }
                     let cli_provider = model.provider.unwrap_or_else(|| name.clone());
                     // Validate that a parser exists for this CLI provider
-                    if !matches!(cli_provider.as_str(), "gemini" | "codex") {
+                    if !matches!(cli_provider.as_str(), "gemini" | "codex" | "claude") {
                         skip!(format!(
                             "no parser for CLI provider '{cli_provider}' \
-                             (supported: gemini, codex)"
+                             (supported: gemini, codex, claude)"
                         ));
                     }
                     let args = model.args_template.unwrap_or_default();
@@ -277,13 +277,30 @@ impl TomlConfig {
             None => PersistRawOutput::default(),
         };
 
-        // Parse review config
+        // Parse review config — fall back to client-mode-aware defaults so the
+        // server's own fallback ensemble doesn't include the hosting client's
+        // own CLI (which the recursion guard would refuse).
+        let client_mode = ClientMode::from_env();
         let review = ReviewConfig {
             default_models: self
                 .review
                 .default_models
-                .unwrap_or_else(|| ReviewConfig::default().default_models),
+                .unwrap_or_else(|| ReviewConfig::defaults_for(client_mode).default_models),
         };
+        // Defense-in-depth: warn if a user-configured default ensemble includes the
+        // hosting client's own model. The recursion guard still fires per-call, so
+        // failures are loud — but a config-time warning helps users notice the
+        // mistake before they wonder why their review loses one model every time.
+        if let Some(host_model) = host_model_for(client_mode)
+            && review.default_models.iter().any(|m| m == host_model)
+        {
+            tracing::warn!(
+                "[review].default_models contains '{host_model}' but SQUALL_CLIENT={} — \
+                 the recursion guard will refuse it on every dispatch. Remove it from \
+                 default_models or unset SQUALL_CLIENT.",
+                client_mode_str(client_mode)
+            );
+        }
 
         // Parse global memory config
         #[cfg(feature = "global-memory")]
@@ -302,6 +319,7 @@ impl TomlConfig {
             review,
             #[cfg(feature = "global-memory")]
             global_memory,
+            client_mode,
         }
     }
 }
@@ -350,6 +368,21 @@ impl Default for ReviewConfig {
     }
 }
 
+impl ReviewConfig {
+    /// Default ensemble adjusted for the hosting client.
+    ///
+    /// Codex mode: substitute `codex` → `claude` because the recursion guard refuses
+    /// `clink(codex)` when SQUALL_CLIENT=codex, which would otherwise leave the server's
+    /// own fallback ensemble silently broken.
+    pub fn defaults_for(mode: ClientMode) -> Self {
+        let default_models = match mode {
+            ClientMode::Claude => vec!["gemini".into(), "codex".into(), "grok".into()],
+            ClientMode::Codex => vec!["gemini".into(), "claude".into(), "grok".into()],
+        };
+        Self { default_models }
+    }
+}
+
 /// Cross-project global memory configuration.
 #[cfg(feature = "global-memory")]
 #[derive(Debug, Clone)]
@@ -374,6 +407,46 @@ impl Default for GlobalMemoryConfig {
     }
 }
 
+/// Which MCP client is hosting Squall. Set via `SQUALL_CLIENT` env var.
+/// Affects error response shape, server instructions, and clink recursion guard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ClientMode {
+    /// Claude Code (default). Errors return as MCP success with `status:error` in payload
+    /// to avoid Claude's sibling-cascade behavior.
+    #[default]
+    Claude,
+    /// OpenAI Codex CLI. Errors return as MCP `is_error: true` (spec-compliant).
+    Codex,
+}
+
+impl ClientMode {
+    /// Resolve the client mode from the `SQUALL_CLIENT` env var.
+    /// Defaults to `Claude` when unset, empty, or set to any value other than `"codex"`.
+    pub fn from_env() -> Self {
+        match std::env::var("SQUALL_CLIENT").as_deref() {
+            Ok("codex") => Self::Codex,
+            _ => Self::Claude,
+        }
+    }
+}
+
+/// Config-key of the model that represents the hosting client itself.
+/// Used to warn when a default ensemble would include the host (which the recursion
+/// guard always refuses).
+fn host_model_for(mode: ClientMode) -> Option<&'static str> {
+    match mode {
+        ClientMode::Claude => Some("claude"),
+        ClientMode::Codex => Some("codex"),
+    }
+}
+
+fn client_mode_str(mode: ClientMode) -> &'static str {
+    match mode {
+        ClientMode::Claude => "claude",
+        ClientMode::Codex => "codex",
+    }
+}
+
 #[derive(Default)]
 pub struct Config {
     pub models: HashMap<String, ModelEntry>,
@@ -387,6 +460,8 @@ pub struct Config {
     /// Cross-project global memory settings (DuckDB-backed).
     #[cfg(feature = "global-memory")]
     pub global_memory: GlobalMemoryConfig,
+    /// Which MCP client is hosting Squall.
+    pub client_mode: ClientMode,
 }
 
 impl Config {
@@ -600,6 +675,18 @@ precision_tier = "high"
 strengths = ["highest precision", "zero false positives", "exact line references"]
 weaknesses = ["variable speed (50-300s)"]
 
+[models.claude]
+model_id = "opus"
+provider = "claude"
+backend = "cli"
+executable = "claude"
+args_template = ["--print", "--output-format", "json", "--model", "{model}"]
+description = "Anthropic Claude Code CLI (Opus), local investigator backend for Codex-hosted Squall"
+speed_tier = "medium"
+precision_tier = "high"
+strengths = ["local file access", "deep reasoning", "full Claude Code toolset"]
+weaknesses = ["requires claude CLI installed", "slower than HTTP"]
+
 # --- Async-poll models (deep research) ---
 
 [models.o3-deep-research]
@@ -639,9 +726,11 @@ strengths = ["comprehensive research", "Google search integration"]
 weaknesses = ["very slow (minutes to hour)", "may need background job registry"]
 
 # --- Review defaults ---
-
-[review]
-default_models = ["gemini", "codex", "grok"]
+#
+# `default_models` is intentionally NOT set here. The Rust-side fallback in
+# resolve() picks the client-mode-appropriate ensemble (codex for Claude hosts,
+# claude for Codex hosts) — embedding a hardcoded list here would shadow that
+# logic and re-introduce the recursion-guard breakage.
 "#;
 
 // ---------------------------------------------------------------------------
@@ -706,10 +795,11 @@ mod tests {
         assert!(config.providers.contains_key("together"));
         assert!(config.providers.contains_key("deepseek"));
         assert!(config.providers.contains_key("mistral"));
-        assert_eq!(config.models.len(), 14);
+        assert_eq!(config.models.len(), 15);
         assert!(config.models.contains_key("grok"));
         assert!(config.models.contains_key("gemini"));
         assert!(config.models.contains_key("codex"));
+        assert!(config.models.contains_key("claude"));
         assert!(config.models.contains_key("o3-deep-research"));
         assert!(config.models.contains_key("deep-research-pro"));
     }
@@ -1237,6 +1327,54 @@ mod tests {
                 "'{input}' should parse case-insensitively to {expected:?}"
             );
         }
+    }
+
+    // Note: SQUALL_CLIENT env-var coverage lives in tests/client_mode_env.rs as an
+    // integration test (separate test binary). Putting it here would race with the
+    // ~20 unit tests that transitively read SQUALL_CLIENT via Config::from_toml →
+    // resolve → from_env, since Cargo runs unit tests in parallel within one binary.
+    // Each integration test file gets its own process, so reads can't collide.
+
+    #[test]
+    fn host_model_for_returns_self() {
+        // Sanity: claude in Claude mode, codex in Codex mode.
+        assert_eq!(host_model_for(ClientMode::Claude), Some("claude"));
+        assert_eq!(host_model_for(ClientMode::Codex), Some("codex"));
+    }
+
+    #[test]
+    fn review_defaults_for_codex_mode_excludes_codex() {
+        // The recursion guard refuses clink(codex) when SQUALL_CLIENT=codex.
+        // The server's own fallback ensemble must not contain "codex" in that case.
+        let codex_defaults = ReviewConfig::defaults_for(ClientMode::Codex);
+        assert!(
+            !codex_defaults.default_models.iter().any(|m| m == "codex"),
+            "Codex-mode default ensemble must not contain 'codex' (recursion guard refuses it). \
+             Got: {:?}",
+            codex_defaults.default_models
+        );
+        assert!(
+            codex_defaults.default_models.iter().any(|m| m == "claude"),
+            "Codex-mode default ensemble should substitute 'claude' for 'codex'. Got: {:?}",
+            codex_defaults.default_models
+        );
+    }
+
+    #[test]
+    fn review_defaults_for_claude_mode_excludes_claude() {
+        // Mirror invariant: Claude-mode default ensemble must not contain "claude".
+        let claude_defaults = ReviewConfig::defaults_for(ClientMode::Claude);
+        assert!(
+            !claude_defaults.default_models.iter().any(|m| m == "claude"),
+            "Claude-mode default ensemble must not contain 'claude' (recursion guard refuses it). \
+             Got: {:?}",
+            claude_defaults.default_models
+        );
+        assert!(
+            claude_defaults.default_models.iter().any(|m| m == "codex"),
+            "Claude-mode default ensemble should contain 'codex'. Got: {:?}",
+            claude_defaults.default_models
+        );
     }
 
     #[test]

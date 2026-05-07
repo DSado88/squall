@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use squall::config::Config;
+use squall::config::{ClientMode, Config};
 use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
 use squall::memory::MemoryStore;
 use squall::review::ReviewExecutor;
@@ -669,7 +669,7 @@ fn review_response_wraps_in_pal_without_is_error() {
         },
     );
 
-    let result = response.into_call_tool_result();
+    let result = response.into_call_tool_result(ClientMode::Claude);
     assert!(
         result.is_error != Some(true),
         "Review responses must NOT set is_error=true (anti-cascade)"

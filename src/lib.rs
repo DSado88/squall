@@ -3,6 +3,7 @@ pub mod context;
 pub mod dispatch;
 pub mod error;
 pub mod findings;
+pub mod instructions;
 pub mod memory;
 pub mod parsers;
 pub mod response;
