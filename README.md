@@ -37,6 +37,24 @@ The install script:
 3. Registers Squall as a global MCP server in `~/.claude.json` (injects your API keys)
 4. Installs skills (slash commands) to `~/.claude/skills/`
 
+### Install with prebuilt binary
+
+Skip the Rust toolchain — download the binary from [GitHub Releases](https://github.com/DSado88/squall/releases):
+
+```bash
+git clone https://github.com/DSado88/squall.git
+cd squall
+cp .env.example .env
+# Fill in your API keys — see .env.example for signup links
+
+# Download the binary instead of building
+curl -L https://github.com/DSado88/squall/releases/latest/download/squall-darwin-arm64 -o ~/.local/bin/squall
+chmod +x ~/.local/bin/squall
+
+# Install skills + register MCP server (skip build)
+./install.sh --skills
+```
+
 Restart Claude Code (or run `/mcp`) to pick up the new server.
 
 ### API keys
@@ -45,15 +63,13 @@ Fill in what you have, skip what you don't. Models only load when their key is s
 
 | Variable | Unlocks | Signup |
 |----------|---------|--------|
-| `TOGETHER_API_KEY` | Kimi K2.5, DeepSeek V3.1, Qwen 3.5, Qwen3 Coder | [together.xyz](https://api.together.xyz/settings/api-keys) |
+| `TOGETHER_API_KEY` | GLM 5.1, DeepSeek R1, DeepSeek V4-Pro, Kimi K2.6, Qwen 3.7-Max, Qwen3 Coder, Llama 4 Maverick | [together.xyz](https://api.together.xyz/settings/api-keys) |
 | `XAI_API_KEY` | Grok | [console.x.ai](https://console.x.ai/) |
-| `OPENROUTER_API_KEY` | GLM-5 | [openrouter.ai](https://openrouter.ai/keys) |
-| `DEEPSEEK_API_KEY` | DeepSeek R1 | [platform.deepseek.com](https://platform.deepseek.com/api_keys) |
 | `MISTRAL_API_KEY` | Mistral Large | [console.mistral.ai](https://console.mistral.ai/api-keys) |
 | `OPENAI_API_KEY` | o3-deep-research, o4-mini-deep-research | [platform.openai.com](https://platform.openai.com/api-keys) |
 | `GOOGLE_API_KEY` | deep-research-pro | [aistudio.google.com](https://aistudio.google.com/apikey) |
 
-CLI models (gemini, codex) use their respective CLI tools with OAuth authentication — no API key needed, but usage may be subject to each provider's terms and rate limits. Install and authenticate the [Gemini CLI](https://github.com/google-gemini/gemini-cli) and [Codex CLI](https://github.com/openai/codex) separately.
+CLI models (gemini, codex, claude) use their respective CLI tools with OAuth authentication — no API key needed, but usage may be subject to each provider's terms and rate limits. Install and authenticate the [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Codex CLI](https://github.com/openai/codex), and [Claude Code](https://github.com/anthropics/claude-code) separately.
 
 ### Verify
 
@@ -106,7 +122,7 @@ Save a learning to persistent memory. Three categories:
 
 - **pattern** — a recurring finding across reviews (e.g., "JoinError after abort silently drops panics")
 - **tactic** — a prompt strategy that works (e.g., "Kimi needs a security lens to find real bugs")
-- **recommend** — a model recommendation (e.g., "deepseek-v3.1 is fastest for Rust reviews")
+- **recommend** — a model recommendation (e.g., "deepseek-v4-pro is fastest for Rust reviews")
 
 Duplicate patterns auto-merge with evidence counting. Patterns reaching 5 occurrences get confirmed status. Scoped to branch or codebase, auto-detected from git context.
 
@@ -124,16 +140,18 @@ Three dispatch backends: **HTTP** (OpenAI-compatible), **CLI** (subprocess, OAut
 
 | Model | Provider | Backend | Speed | Best for |
 |-------|----------|---------|-------|----------|
-| `grok` | xAI | HTTP | fast | Quick triage, broad coverage |
-| `gemini` | Google | CLI (OAuth) | medium | Systems-level bugs, concurrency |
-| `codex` | OpenAI | CLI (OAuth) | medium | Highest precision, zero false positives |
-| `kimi-k2.5` | Together | HTTP | medium | Edge cases, adversarial scenarios |
-| `deepseek-v3.1` | Together | HTTP | medium | Strong coder, finds real bugs |
-| `deepseek-r1` | DeepSeek | HTTP | medium | Deep reasoning, logic-heavy analysis |
-| `qwen-3.5` | Together | HTTP | medium | Pattern matching, multilingual |
+| `grok` | xAI | HTTP | fast | Quick triage, broad coverage, 1M context |
+| `glm-5.1` | Together | HTTP | medium | Architectural framing, SWE-bench Pro |
+| `deepseek-r1` | Together | HTTP | medium | Deep reasoning, logic-heavy analysis |
+| `deepseek-v4-pro` | Together | HTTP | medium | Strong coder, finds real bugs, 512K context |
+| `kimi-k2.6` | Together | HTTP | medium | Edge cases, adversarial scenarios |
+| `qwen-3.7-max` | Together | HTTP | medium | Agentic, 1M context, multilingual code |
 | `qwen3-coder` | Together | HTTP | medium | Purpose-built for code review |
-| `z-ai/glm-5` | OpenRouter | HTTP | medium | Architectural framing |
+| `llama4-maverick` | Together | HTTP | fast | Cheap, 1M context |
 | `mistral-large` | Mistral | HTTP | fast | Efficient, multilingual |
+| `gemini` | Google | CLI (OAuth) | medium | Systems-level bugs, concurrency |
+| `codex` | OpenAI | CLI (OAuth) | slow | Highest precision, zero false positives |
+| `claude` | Anthropic | CLI (OAuth) | medium | Local investigator for Codex-hosted Squall |
 | `o3-deep-research` | OpenAI | async-poll | minutes | Deep web research |
 | `o4-mini-deep-research` | OpenAI | async-poll | minutes | Faster deep research |
 | `deep-research-pro` | Google | async-poll | minutes | Google-powered deep research |
@@ -144,7 +162,7 @@ All models are configurable via TOML. Add your own models, swap providers, or ov
 
 Squall uses a three-layer TOML config system. Later layers override earlier ones:
 
-1. **Built-in defaults** — 13 models, 5 providers, shipped with the binary
+1. **Built-in defaults** — 15 models across HTTP, CLI, and async-poll backends, shipped with the binary
 2. **User config** (`~/.config/squall/config.toml`) — personal overrides
 3. **Project config** (`.squall/config.toml`) — project-specific settings
 

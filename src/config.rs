@@ -619,15 +619,15 @@ strengths = ["strong reasoning", "finds real bugs", "512K context", "cached inpu
 weaknesses = ["verbose output"]
 
 
-[models."qwen-3.5"]
-model_id = "Qwen/Qwen3.5-397B-A17B"
+[models."qwen-3.7-max"]
+model_id = "Qwen/Qwen3.7-Max"
 provider = "together"
 backend = "http"
-description = "Alibaba's Qwen 3.5 397B MoE via Together, strong multilingual code model"
+description = "Alibaba's Qwen3.7-Max via Together, flagship agent-era model with 1M context"
 speed_tier = "medium"
-precision_tier = "medium"
-strengths = ["multilingual understanding", "good at pattern matching"]
-weaknesses = ["sometimes misses context"]
+precision_tier = "high"
+strengths = ["agentic tool calling", "1M context", "strong multilingual code understanding"]
+weaknesses = ["higher cost than open Qwen variants"]
 
 [models.qwen3-coder]
 model_id = "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
