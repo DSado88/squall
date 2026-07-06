@@ -155,6 +155,27 @@ impl CliDispatch {
             cmd.current_dir(wd);
         }
 
+        // Self-identify the spawned session so downstream tooling (Gloss) can
+        // attribute it to squall. Codex records CODEX_INTERNAL_ORIGINATOR_OVERRIDE
+        // into session_meta.originator; Claude Code records CLAUDE_CODE_ENTRYPOINT
+        // into the session's `entrypoint`. Both are inert for other executables.
+        //
+        // NOTE (transitive attribution): these vars are inherited by the child's
+        // whole process subtree. If a squall-spawned codex/claude itself spawns a
+        // NESTED codex/claude session (e.g. via a shell tool call), that nested
+        // session is also tagged "squall". This is accepted: such sessions run
+        // inside squall's process tree. There is no per-invocation flag to scope
+        // the identity to one level, so env is the only mechanism available.
+        match provider {
+            "codex" => {
+                cmd.env("CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "squall");
+            }
+            "claude" => {
+                cmd.env("CLAUDE_CODE_ENTRYPOINT", "squall");
+            }
+            _ => {}
+        }
+
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
