@@ -196,7 +196,10 @@ impl TomlConfig {
                     }
                     let cli_provider = model.provider.unwrap_or_else(|| name.clone());
                     // Validate that a parser exists for this CLI provider
-                    if !matches!(cli_provider.as_str(), "gemini" | "codex" | "claude") {
+                    if !matches!(
+                        cli_provider.as_str(),
+                        "gemini" | "codex" | "claude" | "antigravity"
+                    ) {
                         skip!(format!(
                             "no parser for CLI provider '{cli_provider}' \
                              (supported: gemini, codex, claude)"
@@ -685,17 +688,59 @@ weaknesses = ["higher cost than open Qwen variants"]
 
 # --- CLI models ---
 
+# Antigravity CLI (`agy`) replaces the retired `gemini` CLI, which now hard-fails with
+# IneligibleTierError ("no longer supported for Gemini Code Assist for individuals").
+#
+# `agy` treats --model and --effort as MUTUALLY EXCLUSIVE: passing both is rejected
+# ("--effort is not supported for model X"), and --model requires the full label
+# including its parenthetical ("Gemini 3.1 Pro (High)", never a bare "Gemini 3.1 Pro").
+# So each entry picks one knob:
+#   gemini        no flags -> honours ~/.gemini/antigravity-cli/settings.json
+#   gemini-flash  pinned Flash, for QUICK/triage work
+#   gemini-pro    pinned Pro, for DEEP/architectural work
+#
+# --effort is deliberately unused: passing it SILENTLY DISCARDS the configured model
+# and falls back to Flash (verified — bare `agy --print` answers "I am Gemini 3.1 Pro",
+# `agy --effort high --print` answers "I am Gemini 3.6 Flash"). Reasoning level is
+# instead selected through the model label's parenthetical.
+#
+# `agy` has no JSON output mode, so these use the plain-text AntigravityParser.
+
 [models.gemini]
 model_id = "gemini"
-provider = "gemini"
+provider = "antigravity"
 backend = "cli"
-executable = "gemini"
-args_template = ["-m", "gemini-3.1-pro-preview", "-o", "json"]
-description = "Google Gemini CLI, best at systems-level bug detection"
+executable = "agy"
+args_template = ["--print", "{prompt}"]
+description = "Antigravity CLI on your configured default model (~/.gemini/antigravity-cli/settings.json)"
 speed_tier = "medium"
 precision_tier = "high"
-strengths = ["systems-level bugs", "finds all real bugs"]
+strengths = ["systems-level bugs", "follows your CLI default model"]
 weaknesses = ["slower than HTTP models"]
+
+[models.gemini-flash]
+model_id = "Gemini 3.6 Flash (High)"
+provider = "antigravity"
+backend = "cli"
+executable = "agy"
+args_template = ["--model", "{model}", "--print", "{prompt}"]
+description = "Antigravity CLI pinned to Gemini 3.6 Flash, fast triage tier"
+speed_tier = "fast"
+precision_tier = "medium"
+strengths = ["fast turnaround", "cheap breadth", "good for QUICK reviews"]
+weaknesses = ["less depth than Pro on architectural analysis"]
+
+[models.gemini-pro]
+model_id = "Gemini 3.1 Pro (High)"
+provider = "antigravity"
+backend = "cli"
+executable = "agy"
+args_template = ["--model", "{model}", "--print", "{prompt}"]
+description = "Antigravity CLI pinned to Gemini 3.1 Pro at high reasoning, deep analysis tier"
+speed_tier = "slow"
+precision_tier = "high"
+strengths = ["systems-level bugs", "architectural analysis", "finds all real bugs"]
+weaknesses = ["slowest CLI model", "no effort knob (effort is baked into the label)"]
 
 [models.codex]
 model_id = "gpt-5.5"
@@ -829,7 +874,7 @@ mod tests {
         assert!(config.providers.contains_key("together"));
         assert!(config.providers.contains_key("deepseek"));
         assert!(config.providers.contains_key("mistral"));
-        assert_eq!(config.models.len(), 11);
+        assert_eq!(config.models.len(), 13);
         assert!(config.models.contains_key("grok"));
         assert!(config.models.contains_key("gemini"));
         assert!(config.models.contains_key("codex"));
@@ -873,6 +918,61 @@ mod tests {
             assert!(
                 config.models.contains_key(model),
                 "ReviewConfig::default() names {model}, which is not a defined model"
+            );
+        }
+    }
+
+    /// The `gemini` CLI hard-fails with IneligibleTierError ("no longer supported for
+    /// Gemini Code Assist for individuals... migrate to the Antigravity suite"), so the
+    /// roster must dispatch through `agy` instead.
+    #[test]
+    fn gemini_models_dispatch_via_antigravity_cli() {
+        let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
+        for key in ["gemini", "gemini-flash", "gemini-pro"] {
+            let entry = config
+                .models
+                .get(key)
+                .unwrap_or_else(|| panic!("{key} must be defined"));
+            assert_eq!(entry.executable.as_deref(), Some("agy"), "{key} executable");
+            assert_eq!(
+                entry.provider.as_deref(),
+                Some("antigravity"),
+                "{key} provider"
+            );
+        }
+    }
+
+    /// `agy` rejects `--effort` whenever `--model` is given ("--effort is not supported
+    /// for model X"), and rejects a bare model name without its parenthetical. Worse,
+    /// `--effort` alone silently swaps the configured model for Flash. So no entry may
+    /// ever pass both, and the roster avoids `--effort` entirely.
+    #[test]
+    fn antigravity_entries_never_combine_model_and_effort() {
+        let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
+        for (key, entry) in &config.models {
+            if entry.provider.as_deref() != Some("antigravity") {
+                continue;
+            }
+            let args = entry.args_template.clone().unwrap_or_default();
+            let has_model = args.iter().any(|a| a == "--model");
+            let has_effort = args.iter().any(|a| a == "--effort");
+            assert!(
+                !(has_model && has_effort),
+                "{key} passes both --model and --effort; agy rejects that combination"
+            );
+            // Not asserting that one is present: `gemini` deliberately passes neither
+            // so it inherits the CLI's own configured default model.
+            assert!(
+                args.iter().any(|a| a == "--print"),
+                "{key} must run non-interactively via --print"
+            );
+            // `agy --print` takes the prompt as its argument and cannot read stdin,
+            // so the placeholder must be present and must directly follow --print.
+            let print_at = args.iter().position(|a| a == "--print").unwrap();
+            assert_eq!(
+                args.get(print_at + 1).map(String::as_str),
+                Some("{prompt}"),
+                "{key}: --print must be followed by {{prompt}}, else agy eats the next flag"
             );
         }
     }

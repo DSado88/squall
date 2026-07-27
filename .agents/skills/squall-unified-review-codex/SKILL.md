@@ -167,12 +167,27 @@ when Codex is the host. `claude` plays the symmetric role.
 
    | Source | Why | Backend |
    |--------|-----|---------|
-   | **gemini** | Best absolute quality, finds architectural bugs. Free (CLI). | `review` |
+   | **gemini-flash** / **gemini-pro** | Antigravity CLI. Pick by depth (see below). Free (CLI). | `review` |
    | **claude** | High signal-to-noise, finds correctness bugs. Mirror of `codex` in the Claude variant. | `review` (uses clink internally) |
    | **grok** | Best speed/quality ratio, fast, finds cross-function bugs. | `review` (HTTP) |
    | **Codex subagent** | Local investigation — shell, git, tests, cross-file tracing. | Background subagent |
 
    For **QUICK**: just grok. Skip Codex subagent.
+
+   **Gemini tier is depth-driven** — the Antigravity CLI exposes Flash and Pro as
+   separate Squall models, so pick the one matching the review's depth:
+
+   | Depth | Use | Why |
+   |-------|-----|-----|
+   | QUICK | `gemini-flash` (if including gemini at all) | fast, cheap breadth |
+   | STANDARD | `gemini-flash` | good signal per second |
+   | DEEP / SWARM | `gemini-pro` | architectural and systems-level depth |
+
+   Plain `gemini` inherits whatever is set in `~/.gemini/antigravity-cli/settings.json`.
+   Use it when the operator's own choice should win; prefer the explicit `-flash`/`-pro`
+   keys when the depth should decide. Do NOT pass `reasoning_effort` to these — `agy`
+   encodes effort in the model label, and its `--effort` flag silently downgrades the
+   model to Flash.
    For **STANDARD**: All 4 Tier 1 sources (subagent runs in parallel).
    For **DEEP**: All 4 Tier 1 sources (subagent spawned after investigation).
 

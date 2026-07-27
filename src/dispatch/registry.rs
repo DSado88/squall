@@ -12,6 +12,7 @@ use crate::dispatch::http::HttpDispatch;
 use crate::dispatch::{ProviderRequest, ProviderResult};
 use crate::error::SquallError;
 use crate::parsers::OutputParser;
+use crate::parsers::antigravity::AntigravityParser;
 use crate::parsers::claude::ClaudeParser;
 use crate::parsers::codex::CodexParser;
 use crate::parsers::gemini::GeminiParser;
@@ -250,6 +251,7 @@ impl Registry {
     pub fn parser_for(provider: &str) -> Result<Box<dyn OutputParser>, SquallError> {
         match provider {
             "gemini" => Ok(Box::new(GeminiParser)),
+            "antigravity" => Ok(Box::new(AntigravityParser)),
             "codex" => Ok(Box::new(CodexParser)),
             "claude" => Ok(Box::new(ClaudeParser)),
             _ => Err(SquallError::ModelNotFound {
@@ -577,6 +579,22 @@ mod tests {
             .await
             .expect_err("unknown model should fail");
         assert!(matches!(err, SquallError::ModelNotFound { .. }));
+    }
+
+    /// The Antigravity CLI needs its own parser: `agy` has no JSON output mode, so
+    /// routing it through GeminiParser would fail on every response.
+    #[test]
+    fn parser_for_resolves_antigravity() {
+        let parser = Registry::parser_for("antigravity").expect("antigravity parser must exist");
+        assert_eq!(
+            parser.parse(b"plain text reply").unwrap(),
+            "plain text reply"
+        );
+    }
+
+    #[test]
+    fn parser_for_still_rejects_unknown_provider() {
+        assert!(Registry::parser_for("no-such-cli").is_err());
     }
 
     /// The provider must receive the *successor's* model_id, not the retired name —

@@ -19,7 +19,7 @@ Squall was used to build and validate itself — ~10k lines of Rust and ~13k lin
 - [Rust](https://rustup.rs/) toolchain (stable)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI installed (`claude` command available)
 - At least one API key (see below)
-- Optional: [Gemini CLI](https://github.com/google-gemini/gemini-cli) and/or [Codex CLI](https://github.com/openai/codex) for free CLI models
+- Optional: [Antigravity CLI](https://antigravity.google) (`agy`) and/or [Codex CLI](https://github.com/openai/codex) for free CLI models
 
 ### Install
 
@@ -69,7 +69,7 @@ Fill in what you have, skip what you don't. Models only load when their key is s
 | `OPENAI_API_KEY` | o3-deep-research, o4-mini-deep-research | [platform.openai.com](https://platform.openai.com/api-keys) |
 | `GOOGLE_API_KEY` | deep-research-pro | [aistudio.google.com](https://aistudio.google.com/apikey) |
 
-CLI models (gemini, codex, claude) use their respective CLI tools with OAuth authentication — no API key needed, but usage may be subject to each provider's terms and rate limits. Install and authenticate the [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Codex CLI](https://github.com/openai/codex), and [Claude Code](https://github.com/anthropics/claude-code) separately.
+CLI models (gemini/gemini-flash/gemini-pro via `agy`, codex, claude) use their respective CLI tools with OAuth authentication — no API key needed, but usage may be subject to each provider's terms and rate limits. Install and authenticate the [Antigravity CLI](https://antigravity.google), [Codex CLI](https://github.com/openai/codex), and [Claude Code](https://github.com/anthropics/claude-code) separately. The legacy `gemini` CLI is retired — it now fails with `IneligibleTierError`.
 
 ### Verify
 
@@ -145,7 +145,9 @@ Three dispatch backends: **HTTP** (OpenAI-compatible), **CLI** (subprocess, OAut
 | `deepseek-v4-pro` | Together | HTTP | medium | Strong coder, finds real bugs, 512K context |
 | `kimi-k2.7-code` | Together | HTTP | medium | Code-specialized, edge cases, adversarial scenarios |
 | `qwen-3.7-max` | Together | HTTP | medium | Agentic, 1M context, multilingual code |
-| `gemini` | Google | CLI (OAuth) | medium | Systems-level bugs, concurrency |
+| `gemini` | Antigravity | CLI (OAuth) | medium | Your configured default model |
+| `gemini-flash` | Antigravity | CLI (OAuth) | fast | Quick triage, cheap breadth |
+| `gemini-pro` | Antigravity | CLI (OAuth) | slow | Systems-level bugs, architecture |
 | `codex` | OpenAI | CLI (OAuth) | slow | Highest precision, zero false positives |
 | `claude` | Anthropic | CLI (OAuth) | medium | Local investigator for Codex-hosted Squall |
 | `o3-deep-research` | OpenAI | async-poll | minutes | Deep web research |

@@ -217,12 +217,27 @@ Proceed to Phase 3. The instructions below apply to QUICK, STANDARD, and DEEP on
 
    | Source | Why | Backend |
    |--------|-----|---------|
-   | **gemini** | Best absolute quality, finds architectural bugs. Free (CLI). | `review` (uses clink internally) |
+   | **gemini-flash** / **gemini-pro** | Antigravity CLI. Pick by depth (see below). Free (CLI). | `review` (uses clink internally) |
    | **codex** | Highest signal-to-noise, concise, finds correctness bugs. Free (CLI). | `review` (uses clink internally) |
    | **grok** | Best speed/quality ratio, fast, finds cross-function bugs. | `review` (HTTP) |
    | **Opus agent** | Local investigation — shell, git, tests, cross-file tracing. | `Task` (background agent) |
 
    For **QUICK**: Use only grok (single fastest Tier 1 model). Skip Opus agent.
+
+   **Gemini tier is depth-driven** — the Antigravity CLI exposes Flash and Pro as
+   separate Squall models, so pick the one that matches the review's depth:
+
+   | Depth | Use | Why |
+   |-------|-----|-----|
+   | QUICK | `gemini-flash` (if including gemini at all) | fast, cheap breadth |
+   | STANDARD | `gemini-flash` | good signal per second |
+   | DEEP / SWARM | `gemini-pro` | architectural and systems-level depth |
+
+   Plain `gemini` inherits whatever model is set in `~/.gemini/antigravity-cli/settings.json`.
+   Use it when the operator's own choice should win; prefer the explicit `-flash`/`-pro`
+   keys when the depth should decide. Do NOT pass `reasoning_effort` to these — `agy`
+   encodes effort in the model label, and its `--effort` flag silently downgrades the
+   model to Flash.
    For **STANDARD**: All 4 Tier 1 sources (Opus runs in parallel with dispatch).
    For **DEEP**: All 4 Tier 1 sources (Opus spawned after investigation, runs in parallel with dispatch).
 

@@ -48,14 +48,66 @@ impl Drop for ProcessGroupGuard {
     }
 }
 
+/// Max prompt size deliverable through argv.
+///
+/// `ARG_MAX` is 1MB on macOS and covers argv *and* envp combined, so this leaves
+/// generous headroom. Only CLIs that cannot read stdin (Antigravity) pay this limit;
+/// stdin-capable CLIs stay unbounded.
+pub const MAX_ARGV_PROMPT_BYTES: usize = 256 * 1024;
+
+/// True when the template expects the prompt as a command-line argument.
+///
+/// `agy --print` takes the prompt as its argument and has no stdin mode, so its
+/// template carries a `{prompt}` placeholder. Without one, `--print` would swallow
+/// whatever flag follows it and treat that literal string as the prompt.
+fn template_wants_argv_prompt(args_template: &[String]) -> bool {
+    args_template.iter().any(|a| a.contains("{prompt}"))
+}
+
+/// Reject prompts too large to pass through argv, before the spawn fails obscurely.
+fn check_argv_prompt_size(prompt: &str) -> Result<(), SquallError> {
+    if prompt.len() > MAX_ARGV_PROMPT_BYTES {
+        return Err(SquallError::Other(format!(
+            "prompt is {} bytes; this CLI takes the prompt via argv and the limit is {} bytes. \
+             Reduce file_paths/diff size or use a model whose CLI reads stdin.",
+            prompt.len(),
+            MAX_ARGV_PROMPT_BYTES
+        )));
+    }
+    Ok(())
+}
+
+/// Build CLI args, substituting `{model}`, `{reasoning}` and `{prompt}`.
+fn build_args_with_prompt(
+    provider: &str,
+    args_template: &[String],
+    model: &str,
+    reasoning_effort: Option<&str>,
+    prompt: &str,
+) -> Vec<String> {
+    build_args(provider, args_template, model, reasoning_effort)
+        .into_iter()
+        .map(|a| a.replace("{prompt}", prompt))
+        .collect()
+}
+
 /// Build CLI args by substituting `{model}` and `{reasoning}` in the template.
 /// Reasoning defaults to "high" when not specified.
 fn build_args(
+    provider: &str,
     args_template: &[String],
     model: &str,
     reasoning_effort: Option<&str>,
 ) -> Vec<String> {
     let reasoning = reasoning_effort.unwrap_or("high");
+    // agy accepts only low|medium|high and rejects the whole invocation otherwise,
+    // so Squall's `none` and `xhigh` are clamped to the nearest supported neighbour.
+    // Other CLIs take their own vocabulary unchanged.
+    let reasoning = if provider == "antigravity" {
+        crate::parsers::antigravity::clamp_effort(reasoning)
+    } else {
+        reasoning
+    };
     args_template
         .iter()
         .map(|a| {
@@ -138,10 +190,34 @@ impl CliDispatch {
             }
         };
 
-        // Build args by substituting {model} and {reasoning} in the template.
-        // Prompt is delivered via stdin to avoid ARG_MAX limits (~128KB-2MB).
-        // No shell — Command::new() + .args() prevents shell injection.
-        let args = build_args(args_template, &req.model, req.reasoning_effort.as_deref());
+        // Prompt is normally delivered via stdin to avoid ARG_MAX limits (~128KB-2MB).
+        // CLIs with no stdin mode (Antigravity's `agy --print`) mark their template with
+        // `{prompt}` and receive it through argv instead, subject to a size check.
+        // No shell — Command::new() + .args() prevents shell injection either way.
+        let argv_prompt = template_wants_argv_prompt(args_template);
+
+        // System prompt is prepended the same way stdin delivery does it, so both
+        // paths present the model with identical text.
+        let composed_prompt = if argv_prompt {
+            match req.system_prompt.as_deref() {
+                Some(system) => format!("{system}\n\n{}", req.prompt),
+                None => req.prompt.to_string(),
+            }
+        } else {
+            String::new()
+        };
+
+        if argv_prompt {
+            check_argv_prompt_size(&composed_prompt)?;
+        }
+
+        let args = build_args_with_prompt(
+            provider,
+            args_template,
+            &req.model,
+            req.reasoning_effort.as_deref(),
+            &composed_prompt,
+        );
 
         let mut cmd = Command::new(executable);
         cmd.args(&args)
@@ -218,11 +294,16 @@ impl CliDispatch {
             let system_prompt = req.system_prompt.clone();
             let prompt = req.prompt.clone();
             tokio::spawn(async move {
-                if let Some(ref system) = system_prompt {
-                    let _ = stdin.write_all(system.as_bytes()).await;
-                    let _ = stdin.write_all(b"\n\n").await;
+                // When the prompt went out through argv, write nothing — dropping the
+                // handle closes the pipe so the child sees immediate EOF. `agy` errors
+                // out ("empty prompt") if it is handed a prompt it did not ask for.
+                if !argv_prompt {
+                    if let Some(ref system) = system_prompt {
+                        let _ = stdin.write_all(system.as_bytes()).await;
+                        let _ = stdin.write_all(b"\n\n").await;
+                    }
+                    let _ = stdin.write_all(prompt.as_bytes()).await;
                 }
-                let _ = stdin.write_all(prompt.as_bytes()).await;
                 // drop closes the pipe → child sees EOF on stdin
             });
         }
@@ -614,7 +695,7 @@ mod tests {
             "-c".into(),
             "model_reasoning_effort=\"{reasoning}\"".into(),
         ];
-        let args = build_args(&template, "gpt-5.4", Some("xhigh"));
+        let args = build_args("codex", &template, "gpt-5.4", Some("xhigh"));
         assert_eq!(args[3], "gpt-5.4", "model must be substituted from req");
         assert_eq!(
             args[5], "model_reasoning_effort=\"xhigh\"",
@@ -622,7 +703,7 @@ mod tests {
         );
 
         // Verify model comes from argument, not hardcoded
-        let args2 = build_args(&template, "o3-mini", Some("low"));
+        let args2 = build_args("codex", &template, "o3-mini", Some("low"));
         assert_eq!(
             args2[3], "o3-mini",
             "model must vary with input, not be hardcoded"
@@ -637,7 +718,7 @@ mod tests {
     fn args_reasoning_defaults_to_high() {
         let template: Vec<String> =
             vec!["-c".into(), "model_reasoning_effort=\"{reasoning}\"".into()];
-        let args = build_args(&template, "gpt-5.4", None);
+        let args = build_args("codex", &template, "gpt-5.4", None);
         assert_eq!(
             args[1], "model_reasoning_effort=\"high\"",
             "default reasoning must be 'high', not 'medium' or anything else"
@@ -653,7 +734,7 @@ mod tests {
             "-c".into(),
             "effort=\"{reasoning}\"".into(),
         ];
-        let args = build_args(&template, "gpt-5.4", Some("low"));
+        let args = build_args("codex", &template, "gpt-5.4", Some("low"));
         assert_eq!(
             args[3], "effort=\"low\"",
             "reasoning slot must not contain model name"
@@ -668,12 +749,95 @@ mod tests {
     fn args_reasoning_placeholder_must_be_replaced() {
         // If {reasoning} replacement is dropped, the literal passes through
         let template: Vec<String> = vec!["effort=\"{reasoning}\"".into()];
-        let args = build_args(&template, "m", Some("high"));
+        let args = build_args("codex", &template, "m", Some("high"));
         assert!(
             !args[0].contains("{reasoning}"),
             "literal {{reasoning}} must not survive substitution, got: {}",
             args[0]
         );
+    }
+
+    /// `agy --effort` accepts only low|medium|high and hard-fails the whole invocation
+    /// on anything else. Squall's enum also has `none` and `xhigh`, so they must be
+    /// clamped for antigravity or every such dispatch dies at the CLI.
+    #[test]
+    fn build_args_clamps_effort_for_antigravity() {
+        let template: Vec<String> = vec!["--print".into(), "--effort".into(), "{reasoning}".into()];
+
+        let args = build_args("antigravity", &template, "gemini", Some("xhigh"));
+        assert_eq!(args, vec!["--print", "--effort", "high"]);
+
+        let args = build_args("antigravity", &template, "gemini", Some("none"));
+        assert_eq!(args, vec!["--print", "--effort", "low"]);
+
+        // Supported values pass through untouched.
+        let args = build_args("antigravity", &template, "gemini", Some("medium"));
+        assert_eq!(args, vec!["--print", "--effort", "medium"]);
+
+        // Unset falls back to the global default, which agy accepts.
+        let args = build_args("antigravity", &template, "gemini", None);
+        assert_eq!(args, vec!["--print", "--effort", "high"]);
+    }
+
+    /// `agy --print` takes the prompt as its ARGUMENT and cannot read stdin
+    /// ("flag needs an argument" / "empty prompt"). Templates therefore need a
+    /// `{prompt}` placeholder, or agy silently treats the next flag as the prompt.
+    #[test]
+    fn build_args_substitutes_prompt() {
+        let template: Vec<String> = vec!["--print".into(), "{prompt}".into()];
+        let args = build_args_with_prompt("antigravity", &template, "m", None, "hello world");
+        assert_eq!(args, vec!["--print", "hello world"]);
+    }
+
+    /// Flag order matters: agy rejects `--print --effort high` because --print eats
+    /// the literal "--effort" as its prompt.
+    #[test]
+    fn build_args_keeps_prompt_after_its_flag() {
+        let template: Vec<String> = vec![
+            "--effort".into(),
+            "{reasoning}".into(),
+            "--print".into(),
+            "{prompt}".into(),
+        ];
+        let args = build_args_with_prompt("antigravity", &template, "m", Some("low"), "hi");
+        assert_eq!(args, vec!["--effort", "low", "--print", "hi"]);
+    }
+
+    /// A prompt is only ever substituted where the template asks for it.
+    #[test]
+    fn build_args_leaves_stdin_templates_untouched() {
+        let template: Vec<String> = vec!["exec".into(), "--json".into()];
+        let args = build_args_with_prompt("codex", &template, "m", None, "a huge prompt");
+        assert_eq!(args, vec!["exec", "--json"]);
+    }
+
+    #[test]
+    fn template_wants_argv_prompt_detects_placeholder() {
+        assert!(template_wants_argv_prompt(&[
+            "--print".into(),
+            "{prompt}".into()
+        ]));
+        assert!(!template_wants_argv_prompt(&[
+            "exec".into(),
+            "--json".into()
+        ]));
+    }
+
+    /// argv is bounded by ARG_MAX (1MB on macOS). Overflowing it makes the spawn fail
+    /// with a confusing OS error, so oversized prompts must be refused up front.
+    #[test]
+    fn oversized_argv_prompt_is_refused() {
+        let big = "x".repeat(MAX_ARGV_PROMPT_BYTES + 1);
+        assert!(check_argv_prompt_size(&big).is_err());
+        assert!(check_argv_prompt_size("small").is_ok());
+    }
+
+    /// Clamping must not leak into other CLIs — codex accepts xhigh natively.
+    #[test]
+    fn build_args_does_not_clamp_effort_for_other_providers() {
+        let template: Vec<String> = vec!["effort=\"{reasoning}\"".into()];
+        let args = build_args("codex", &template, "gpt-5.4", Some("xhigh"));
+        assert_eq!(args[0], "effort=\"xhigh\"");
     }
 
     #[test]
