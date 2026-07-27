@@ -101,7 +101,7 @@ fn chat_request_default_model() {
 
     let req = ChatRequest {
         prompt: "hello".to_string(),
-        model: Some("kimi-k2.6".to_string()),
+        model: Some("kimi-k2.7-code".to_string()),
         file_paths: None,
         working_directory: None,
         system_prompt: None,
@@ -110,7 +110,7 @@ fn chat_request_default_model() {
         reasoning_effort: None,
         context_format: None,
     };
-    assert_eq!(req.model_or_default(), "kimi-k2.6");
+    assert_eq!(req.model_or_default(), "kimi-k2.7-code");
 }
 
 // ---------------------------------------------------------------------------

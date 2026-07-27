@@ -529,6 +529,55 @@ impl Config {
 }
 
 // ---------------------------------------------------------------------------
+// Retired model identifiers
+// ---------------------------------------------------------------------------
+
+/// Maps retired model identifiers to the current config key that supersedes them.
+///
+/// Covers both old **config keys** (the public API callers pass in `models`) and old
+/// provider **model_ids** (what historical memory rows were logged under). Both kinds
+/// resolve to a current config key, which is exactly the normalization
+/// `Registry::model_id_to_key` already performs — so one table serves three purposes:
+///
+/// 1. Old keys keep dispatching instead of silently landing in `not_started`.
+/// 2. Memory stats survive a rename, so the hard gate isn't reset to cold-start.
+/// 3. `suggest_models` can point at the successor, which plain substring matching
+///    cannot do across a version bump (`kimi-k2.6` shares no substring with
+///    `kimi-k2.7-code`).
+///
+/// Add an entry here whenever a model key or model_id changes. `retired_aliases_resolve`
+/// asserts every target still exists, and `skill_files_have_no_retired_model_keys`
+/// asserts no skill file still dispatches a retired name.
+pub const RETIRED_MODEL_ALIASES: &[(&str, &str)] = &[
+    // --- retired config keys ---
+    ("kimi-k2.5", "kimi-k2.7-code"),
+    ("kimi-k2.6", "kimi-k2.7-code"),
+    ("glm-5.1", "glm-5.2"),
+    ("z-ai/glm-5", "glm-5.2"),
+    ("qwen-3.5", "qwen-3.7-max"),
+    ("deepseek-v3.1", "deepseek-v4-pro"),
+    // --- retired provider model_ids (memory continuity) ---
+    ("moonshotai/Kimi-K2.5", "kimi-k2.7-code"),
+    ("moonshotai/Kimi-K2.6", "kimi-k2.7-code"),
+    ("zai-org/GLM-5.1", "glm-5.2"),
+    ("deepseek-ai/DeepSeek-V3.1", "deepseek-v4-pro"),
+    ("grok-4.3", "grok"),
+];
+
+/// Resolve a possibly-retired model identifier to its current config key.
+/// Returns `None` when the identifier is not a known retired alias.
+///
+/// Case-insensitive: provider model_ids vary in casing between the config and what
+/// providers echo back, and a casing mismatch here would silently skip the alias.
+pub fn resolve_retired_alias(name: &str) -> Option<&'static str> {
+    let needle = name.trim().to_lowercase();
+    RETIRED_MODEL_ALIASES
+        .iter()
+        .find(|(old, _)| old.to_lowercase() == needle)
+        .map(|(_, new)| *new)
+}
+
+// ---------------------------------------------------------------------------
 // Built-in defaults — all 12 models as TOML
 // ---------------------------------------------------------------------------
 
@@ -559,20 +608,20 @@ api_key_env = "TOGETHER_API_KEY"
 # --- HTTP models ---
 
 [models.grok]
-model_id = "grok-4.3"
+model_id = "grok-4.5"
 provider = "xai"
 backend = "http"
-description = "xAI Grok 4.3, fast reasoning with 1M ctx and native video input"
+description = "xAI Grok 4.5, fast reasoning with text+image input and 200K long-context threshold"
 speed_tier = "fast"
 precision_tier = "medium"
-strengths = ["fast responses", "broad knowledge", "1M context", "agentic tool calling"]
+strengths = ["fast responses", "broad knowledge", "long context", "agentic tool calling"]
 weaknesses = ["XML escaping false positives", "edition 2024 false positives"]
 
-[models."glm-5.1"]
-model_id = "zai-org/GLM-5.1"
+[models."glm-5.2"]
+model_id = "zai-org/GLM-5.2"
 provider = "together"
 backend = "http"
-description = "Zhipu GLM-5.1 via Together, strong on SWE-bench Pro (58.4%), beats GPT-5.4 on hardest coding tasks"
+description = "Zhipu GLM-5.2 via Together (US-hosted), 262K ctx, strong architectural and coding analysis"
 speed_tier = "medium"
 precision_tier = "medium"
 strengths = ["clear architectural analysis", "structured output", "strong SWE-bench Pro performance"]
@@ -598,11 +647,11 @@ precision_tier = "medium"
 strengths = ["efficient token usage", "multilingual code review"]
 weaknesses = ["less depth on niche Rust patterns"]
 
-[models."kimi-k2.6"]
-model_id = "moonshotai/Kimi-K2.6"
+[models."kimi-k2.7-code"]
+model_id = "moonshotai/Kimi-K2.7-Code"
 provider = "together"
 backend = "http"
-description = "Moonshot's Kimi K2.6 via Together (US-hosted), contrarian edge case reviewer with cached input"
+description = "Moonshot's Kimi K2.7-Code via Together (US-hosted), code-specialized contrarian edge case reviewer with cached input"
 speed_tier = "medium"
 precision_tier = "medium"
 strengths = ["contrarian perspective", "edge case detection", "cached input support"]
@@ -804,11 +853,139 @@ mod tests {
         assert!(config.models.contains_key("deep-research-pro"));
     }
 
+    /// Every retired alias must point at a model that actually exists, and no retired
+    /// name may still be a live key. Guards the alias table itself from rotting.
+    #[test]
+    fn retired_aliases_resolve() {
+        let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
+        for (old, new) in RETIRED_MODEL_ALIASES {
+            assert!(
+                config.models.contains_key(*new),
+                "retired alias {old} points at {new}, which is not a defined model"
+            );
+            assert!(
+                !config.models.contains_key(*old),
+                "{old} is listed as retired but is still a live model key"
+            );
+        }
+    }
+
+    /// A dangling entry in `default_models` is a silent runtime failure — the model
+    /// lands in `not_started` and the fallback ensemble quietly shrinks. Commit
+    /// b479df9b fixed exactly this bug once already.
+    #[test]
+    fn default_models_resolve_to_defined_keys() {
+        let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
+        for mode in [ClientMode::Claude, ClientMode::Codex] {
+            for model in &ReviewConfig::defaults_for(mode).default_models {
+                assert!(
+                    config.models.contains_key(model),
+                    "default_models for {mode:?} names {model}, which is not a defined model"
+                );
+            }
+        }
+        for model in &ReviewConfig::default().default_models {
+            assert!(
+                config.models.contains_key(model),
+                "ReviewConfig::default() names {model}, which is not a defined model"
+            );
+        }
+    }
+
+    /// Skill files are executable contracts, not documentation: they instruct agents to
+    /// pass exact model keys to `review`, so a stale key silently shrinks the ensemble
+    /// rather than erroring. The Session Learnings archive is excluded — it is a
+    /// historical record and legitimately names models that no longer exist.
+    #[test]
+    fn skill_files_have_no_retired_model_keys() {
+        let mut stale: Vec<String> = Vec::new();
+
+        for root in [".claude/skills", ".agents/skills"] {
+            for path in markdown_files(std::path::Path::new(root)) {
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                for (lineno, line) in strip_learnings_archive(&text).lines().enumerate() {
+                    for (old, new) in RETIRED_MODEL_ALIASES {
+                        if mentions_key(line, old) {
+                            stale.push(format!(
+                                "{}:{} references retired `{old}` (use `{new}`)",
+                                path.display(),
+                                lineno + 1
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(
+            stale.is_empty(),
+            "skill files dispatch retired model keys:\n  {}",
+            stale.join("\n  ")
+        );
+    }
+
+    /// Blank out the Session Learnings archive so historical mentions don't trip the scan.
+    fn strip_learnings_archive(text: &str) -> String {
+        const START: &str = "SENTINEL:SESSION_LEARNINGS_START";
+        const END: &str = "SENTINEL:SESSION_LEARNINGS_END";
+        let mut out = String::with_capacity(text.len());
+        let mut skipping = false;
+        for line in text.lines() {
+            if line.contains(START) {
+                skipping = true;
+            }
+            // Preserve line numbering so failure messages point at the real line.
+            out.push_str(if skipping { "" } else { line });
+            out.push('\n');
+            if line.contains(END) {
+                skipping = false;
+            }
+        }
+        out
+    }
+
+    /// Substring match with identifier boundaries, so `glm-5.1` does not match
+    /// `glm-5.12` and `kimi-k2.5` does not match `kimi-k2.5x`.
+    fn mentions_key(line: &str, key: &str) -> bool {
+        let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '/';
+        let mut from = 0;
+        while let Some(rel) = line[from..].find(key) {
+            let start = from + rel;
+            let end = start + key.len();
+            let before_ok = start == 0 || !line[..start].chars().next_back().is_some_and(is_ident);
+            let after_ok = end == line.len() || !line[end..].chars().next().is_some_and(is_ident);
+            if before_ok && after_ok {
+                return true;
+            }
+            from = start + key.len();
+        }
+        false
+    }
+
+    /// Recursively collect `*.md` files under `root`. Missing directories yield nothing.
+    fn markdown_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        let Ok(entries) = std::fs::read_dir(root) else {
+            return out;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(markdown_files(&path));
+            } else if path.extension().is_some_and(|e| e == "md") {
+                out.push(path);
+            }
+        }
+        out
+    }
+
     #[test]
     fn builtin_grok_model_id_is_correct() {
         let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
         let grok = &config.models["grok"];
-        assert_eq!(grok.model_id.as_deref(), Some("grok-4.3"));
+        assert_eq!(grok.model_id.as_deref(), Some("grok-4.5"));
         assert_eq!(grok.provider.as_deref(), Some("xai"));
         assert_eq!(grok.backend, "http");
     }

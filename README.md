@@ -140,11 +140,11 @@ Three dispatch backends: **HTTP** (OpenAI-compatible), **CLI** (subprocess, OAut
 
 | Model | Provider | Backend | Speed | Best for |
 |-------|----------|---------|-------|----------|
-| `grok` | xAI | HTTP | fast | Quick triage, broad coverage, 1M context |
-| `glm-5.1` | Together | HTTP | medium | Architectural framing, SWE-bench Pro |
+| `grok` | xAI | HTTP | fast | Quick triage, broad coverage, long context |
+| `glm-5.2` | Together | HTTP | medium | Architectural framing, 262K context |
 | `deepseek-r1` | Together | HTTP | medium | Deep reasoning, logic-heavy analysis |
 | `deepseek-v4-pro` | Together | HTTP | medium | Strong coder, finds real bugs, 512K context |
-| `kimi-k2.6` | Together | HTTP | medium | Edge cases, adversarial scenarios |
+| `kimi-k2.7-code` | Together | HTTP | medium | Code-specialized, edge cases, adversarial scenarios |
 | `qwen-3.7-max` | Together | HTTP | medium | Agentic, 1M context, multilingual code |
 | `qwen3-coder` | Together | HTTP | medium | Purpose-built for code review |
 | `llama4-maverick` | Together | HTTP | fast | Cheap, 1M context |

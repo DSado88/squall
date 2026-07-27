@@ -148,9 +148,9 @@ different lens, each doing local investigation AND dispatching its own Squall re
 
 | Agent | Models | Rationale |
 |-------|--------|-----------|
-| Security | kimi-k2.6, claude, grok | kimi: adversarial edge cases. claude: precision anchor (mirror of codex in Claude version). grok: fast cross-function. |
+| Security | kimi-k2.7-code, claude, grok | kimi: adversarial edge cases. claude: precision anchor (mirror of codex in Claude version). grok: fast cross-function. |
 | Correctness | claude, deepseek-v4-pro, gemini | claude: precision. gemini: systems-level bugs. deepseek: fast broad coverage. |
-| Architecture | gemini, claude, qwen-3.5 | gemini: architectural bugs. claude: contract violations. qwen: pattern matching. |
+| Architecture | gemini, claude, qwen-3.7-max | gemini: architectural bugs. claude: contract violations. qwen: pattern matching. |
 
 Note `claude` replaces `codex` in every ensemble — recursion guard refuses `clink(codex)`
 when Codex is the host. `claude` plays the symmetric role.
@@ -180,12 +180,12 @@ when Codex is the host. `claude` plays the symmetric role.
 
    | Model | Best For | Notes |
    |-------|----------|-------|
-   | **kimi-k2.6** | Security, edge cases, adversarial scenarios | Contrarian. Pair with focused lens. |
+   | **kimi-k2.7-code** | Security, edge cases, adversarial scenarios | Code-specialized contrarian. Pair with focused lens. |
    | **deepseek-v4-pro** | Fast triage, broad coverage | 512K ctx, high precision. |
    | **deepseek-r1** | Deep reasoning, logic-heavy analysis | CoT reasoner. Check memory for auth issues. |
-   | **qwen-3.5** | Pattern matching, performance analysis | 397B MoE. |
+   | **qwen-3.7-max** | Pattern matching, performance analysis | 1M ctx, agentic. |
    | **qwen3-coder** | Code-specific review | Purpose-built for code. |
-   | **glm-5.1** | Architectural framing | Strong on SWE-bench Pro. |
+   | **glm-5.2** | Architectural framing | GLM-5.2 via Together, 262K ctx. |
    | **mistral-large** | Multilingual, efficient | Needs API key. |
 
    **Selection criteria** (same as Claude variant): memory recommend + memory tactic +
@@ -195,7 +195,7 @@ when Codex is the host. `claude` plays the symmetric role.
    **Always show selection reasoning:**
    ```
    Tier 1: gemini, claude, grok, Codex subagent (always)
-   Tier 2: kimi-k2.6 (security lens), deepseek-v4-pro (fast triage)
+   Tier 2: kimi-k2.7-code (security lens), deepseek-v4-pro (fast triage)
    Rationale: Rust concurrency code — Kimi for edge cases, DV4-Pro for broad coverage
    ```
 
@@ -424,7 +424,7 @@ CONSTRAINTS:
 
 ### Lens-Specific Investigation Steps
 
-**Security** (`{MODELS}: kimi-k2.6, claude, grok`):
+**Security** (`{MODELS}: kimi-k2.7-code, claude, grok`):
 - Trace all trust boundary crossings.
 - Check input validation and sanitization paths.
 - `git blame` on security-critical lines.
@@ -437,7 +437,7 @@ CONSTRAINTS:
 - Check error handling completeness.
 - Verify changed public APIs still satisfy existing callers (grep for callers).
 
-**Architecture** (`{MODELS}: gemini, claude, qwen-3.5`):
+**Architecture** (`{MODELS}: gemini, claude, qwen-3.7-max`):
 - Map dependency graph of changed modules.
 - Check for API contract changes by diffing public function signatures.
 - Grep for performance anti-patterns.

@@ -193,9 +193,9 @@ It creates the team, assigns tasks, waits for all agents, then synthesizes their
 
 | Agent | Models | Rationale |
 |-------|--------|-----------|
-| Security | kimi-k2.6, codex, grok | kimi: adversarial edge cases. codex: precision anchor (0 FP). grok: fast cross-function. |
+| Security | kimi-k2.7-code, codex, grok | kimi: adversarial edge cases. codex: precision anchor (0 FP). grok: fast cross-function. |
 | Correctness | codex, deepseek-v4-pro, gemini | codex: precision. gemini: systems-level bugs. deepseek: fast broad coverage. |
-| Architecture | gemini, codex, qwen-3.5 | gemini: architectural bugs. codex: contract violations. qwen: pattern matching. |
+| Architecture | gemini, codex, qwen-3.7-max | gemini: architectural bugs. codex: contract violations. qwen: pattern matching. |
 
 Model overlap across agents is intentional — same model with different lens produces different analysis.
 Cross-agent overlap creates consensus signal (codex flagging the same issue through security AND
@@ -236,12 +236,12 @@ Proceed to Phase 3. The instructions below apply to QUICK, STANDARD, and DEEP on
 
    | Model | Best For | Notes |
    |-------|----------|-------|
-   | **kimi-k2.6** | Security, edge cases, adversarial scenarios | Contrarian edge case reviewer. Needs a focused lens to shine. |
+   | **kimi-k2.7-code** | Security, edge cases, adversarial scenarios | Code-specialized contrarian. Needs a focused lens to shine. |
    | **deepseek-v4-pro** | Fast triage, broad coverage | DeepSeek V4-Pro via Together, 512K ctx, high precision. Pair with focused lens. |
    | **deepseek-r1** | Deep reasoning, logic-heavy analysis | Chain-of-thought reasoner. Routed via Together — persistent auth failures, check memory before selecting. |
-   | **qwen-3.5** | Pattern matching, performance analysis | 397B MoE. Good with performance-focused lens. |
+   | **qwen-3.7-max** | Pattern matching, performance analysis | 1M ctx, agentic. Good with performance-focused lens. |
    | **qwen3-coder** | Code-specific review | Purpose-built for code. |
-   | **glm-5.1** | Architectural framing | GLM-5.1 via Together, 58.4% SWE-bench Pro. Strong structural analysis. |
+   | **glm-5.2** | Architectural framing | GLM-5.2 via Together, 262K ctx. Strong structural analysis. |
    | **mistral-large** | Multilingual, efficient | Needs API key configured — check memory for auth failures. |
 
    **Selection criteria for Tier 2:**
@@ -255,7 +255,7 @@ Proceed to Phase 3. The instructions below apply to QUICK, STANDARD, and DEEP on
    **ALWAYS show selection reasoning:**
    ```
    Tier 1: gemini, codex, grok, Opus agent (always)
-   Tier 2: kimi-k2.6 (security lens, cold-start), deepseek-v4-pro (fast triage, high precision)
+   Tier 2: kimi-k2.7-code (security lens, cold-start), deepseek-v4-pro (fast triage, high precision)
    Rationale: Rust concurrency code — Kimi strong on edge cases, DV3.1 for broad coverage
    ```
 
@@ -556,7 +556,7 @@ CONSTRAINTS:
 
 ### Lens-Specific Investigation Steps
 
-**Security** (`{MODELS}`: kimi-k2.6, codex, grok):
+**Security** (`{MODELS}`: kimi-k2.7-code, codex, grok):
 - Trace all trust boundary crossings in changed code
 - Check input validation and sanitization paths
 - `git blame` on security-critical lines
@@ -569,7 +569,7 @@ CONSTRAINTS:
 - Check error handling completeness (all error paths covered?)
 - Verify changed public APIs still satisfy existing callers (grep for callers)
 
-**Architecture** (`{MODELS}`: gemini, codex, qwen-3.5):
+**Architecture** (`{MODELS}`: gemini, codex, qwen-3.7-max):
 - Map dependency graph of changed modules (who imports what)
 - Check for API contract changes by diffing public function signatures
 - Grep for performance anti-patterns (allocations in hot loops, clone() chains)

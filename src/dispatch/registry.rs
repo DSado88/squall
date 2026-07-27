@@ -3,7 +3,9 @@ use std::time::Instant;
 
 use tokio::sync::Semaphore;
 
-use crate::config::{ClientMode, Config, PersistRawOutput};
+use crate::config::{
+    ClientMode, Config, PersistRawOutput, RETIRED_MODEL_ALIASES, resolve_retired_alias,
+};
 use crate::dispatch::async_poll::AsyncPollDispatch;
 use crate::dispatch::cli::CliDispatch;
 use crate::dispatch::http::HttpDispatch;
@@ -170,8 +172,16 @@ impl Registry {
         self.http_semaphore.available_permits()
     }
 
+    /// Look up a model by config key, falling back through retired aliases.
+    ///
+    /// Without the fallback, a caller pinned to a pre-rename key (a script, a skill
+    /// ensemble table, a saved prompt) lands in `not_started` — a silent partial
+    /// failure that shrinks the ensemble rather than erroring.
     pub fn get(&self, model: &str) -> Option<&ModelEntry> {
-        self.models.get(model)
+        if let Some(entry) = self.models.get(model) {
+            return Some(entry);
+        }
+        resolve_retired_alias(model).and_then(|current| self.models.get(current))
     }
 
     pub fn list_models(&self) -> Vec<(&String, &ModelEntry)> {
@@ -182,10 +192,26 @@ impl Registry {
     /// Used by memory subsystem to normalize event log entries that may use
     /// provider model_ids instead of config keys.
     pub fn model_id_to_key(&self) -> HashMap<String, String> {
-        self.models
+        let mut map: HashMap<String, String> = self
+            .models
             .iter()
             .map(|(key, entry)| (entry.model_id.clone(), key.clone()))
-            .collect()
+            .collect();
+
+        // Carry retired identifiers forward so a rename doesn't orphan history. Without
+        // this, renaming a key and its model_id together resets the model to zero samples
+        // and the hard gate silently degrades to a cold-start no-op.
+        //
+        // `or_insert` so a live model_id always wins; aliases whose target isn't in this
+        // registry are skipped, since normalizing onto a nonexistent key is worse than
+        // leaving the row under its original name.
+        for (old, new) in RETIRED_MODEL_ALIASES {
+            if self.models.contains_key(*new) {
+                map.entry((*old).to_string())
+                    .or_insert_with(|| (*new).to_string());
+            }
+        }
+        map
     }
 
     /// Suggest similar model names for a failed lookup (substring match).
@@ -195,6 +221,16 @@ impl Registry {
         if q.is_empty() {
             return vec![];
         }
+
+        // Substring matching cannot bridge a version bump — `kimi-k2.6` shares no
+        // substring with `kimi-k2.7-code` — so version bumps are invisible to the
+        // fallback below. The alias table is the only thing that can suggest them.
+        if let Some(current) = resolve_retired_alias(query)
+            && self.models.contains_key(current)
+        {
+            return vec![current.to_string()];
+        }
+
         let mut suggestions: Vec<String> = self
             .models
             .keys()
@@ -240,7 +276,9 @@ impl Registry {
     }
 
     pub async fn query(&self, req: &ProviderRequest) -> Result<ProviderResult, SquallError> {
-        let entry = self.models.get(&req.model).ok_or_else(|| {
+        // `self.get` (not `self.models.get`) so retired aliases resolve on the dispatch
+        // path too — otherwise an old key works for `review` but not `chat`/`clink`.
+        let entry = self.get(&req.model).ok_or_else(|| {
             let suggestions = self.suggest_models(&req.model);
             SquallError::ModelNotFound {
                 model: req.model.clone(),
@@ -357,5 +395,198 @@ fn refusal_message(mode: ClientMode, surfaced_command: &str) -> String {
              Calling claude via clink (directly or via wrapper such as `{surfaced_command}`) \
              would recurse. Use a different model, or set SQUALL_CLIENT=codex if Codex is the host."
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ReviewConfig;
+
+    /// Registry holding two current models whose keys and model_ids both changed in a
+    /// past rename, so retired-alias behaviour can be exercised without env or API keys.
+    fn test_registry() -> Registry {
+        let mut models = HashMap::new();
+        for (key, model_id) in [
+            ("kimi-k2.7-code", "moonshotai/Kimi-K2.7-Code"),
+            ("glm-5.2", "zai-org/GLM-5.2"),
+            ("grok", "grok-4.5"),
+        ] {
+            models.insert(
+                key.to_string(),
+                ModelEntry {
+                    model_id: model_id.to_string(),
+                    provider: "together".to_string(),
+                    backend: BackendConfig::Http {
+                        base_url: "https://example.invalid/v1/chat/completions".to_string(),
+                        api_key: "test".to_string(),
+                        api_format: ApiFormat::OpenAi,
+                    },
+                    description: String::new(),
+                    strengths: vec![],
+                    weaknesses: vec![],
+                    speed_tier: "medium".to_string(),
+                    precision_tier: "medium".to_string(),
+                },
+            );
+        }
+        Registry::from_config(Config {
+            models,
+            skipped: vec![],
+            persist_raw_output: PersistRawOutput::Never,
+            review: ReviewConfig::default(),
+            #[cfg(feature = "global-memory")]
+            global_memory: crate::config::GlobalMemoryConfig {
+                enabled: false,
+                db_path: String::new(),
+            },
+            client_mode: ClientMode::Claude,
+        })
+    }
+
+    /// A caller pinned to a pre-rename key must still dispatch instead of silently
+    /// landing in `not_started`.
+    #[test]
+    fn get_resolves_retired_config_key() {
+        let registry = test_registry();
+        let entry = registry
+            .get("kimi-k2.6")
+            .expect("retired key kimi-k2.6 should resolve to its successor");
+        assert_eq!(entry.model_id, "moonshotai/Kimi-K2.7-Code");
+
+        let entry = registry
+            .get("glm-5.1")
+            .expect("retired key glm-5.1 should resolve to its successor");
+        assert_eq!(entry.model_id, "zai-org/GLM-5.2");
+    }
+
+    /// Current keys must not be shadowed by the alias lookup.
+    #[test]
+    fn get_prefers_live_key_over_alias() {
+        let registry = test_registry();
+        assert_eq!(
+            registry.get("kimi-k2.7-code").unwrap().model_id,
+            "moonshotai/Kimi-K2.7-Code"
+        );
+        assert!(registry.get("no-such-model").is_none());
+    }
+
+    /// Historical memory rows were logged under old keys and old provider model_ids.
+    /// Both must normalize forward, or the hard gate resets to cold-start after a rename.
+    #[test]
+    fn model_id_to_key_maps_retired_identifiers_forward() {
+        let registry = test_registry();
+        let map = registry.model_id_to_key();
+
+        // Current model_ids still map to their key.
+        assert_eq!(
+            map.get("moonshotai/Kimi-K2.7-Code").map(String::as_str),
+            Some("kimi-k2.7-code")
+        );
+        // Retired provider model_ids map forward.
+        assert_eq!(
+            map.get("moonshotai/Kimi-K2.6").map(String::as_str),
+            Some("kimi-k2.7-code")
+        );
+        assert_eq!(
+            map.get("zai-org/GLM-5.1").map(String::as_str),
+            Some("glm-5.2")
+        );
+        assert_eq!(map.get("grok-4.3").map(String::as_str), Some("grok"));
+        // Retired config keys map forward too.
+        assert_eq!(
+            map.get("kimi-k2.6").map(String::as_str),
+            Some("kimi-k2.7-code")
+        );
+        assert_eq!(map.get("glm-5.1").map(String::as_str), Some("glm-5.2"));
+    }
+
+    /// Aliases whose target is absent from this registry must not appear in the map —
+    /// normalizing onto a nonexistent key would be worse than leaving the row alone.
+    #[test]
+    fn model_id_to_key_omits_aliases_with_missing_targets() {
+        let registry = test_registry();
+        let map = registry.model_id_to_key();
+        // qwen-3.7-max is not in this test registry, so qwen-3.5 must not map forward.
+        assert!(!map.contains_key("qwen-3.5"));
+    }
+
+    /// Substring matching cannot bridge a version bump: `kimi-k2.6` shares no substring
+    /// with `kimi-k2.7-code`. The alias table has to supply the suggestion.
+    #[test]
+    fn suggest_models_suggests_retired_key_successor() {
+        let registry = test_registry();
+        assert_eq!(
+            registry.suggest_models("kimi-k2.6"),
+            vec!["kimi-k2.7-code".to_string()]
+        );
+        assert_eq!(
+            registry.suggest_models("glm-5.1"),
+            vec!["glm-5.2".to_string()]
+        );
+    }
+
+    /// Substring matching must keep working for non-retired typos.
+    #[test]
+    fn suggest_models_still_does_substring_matching() {
+        let registry = test_registry();
+        assert_eq!(registry.suggest_models("glm"), vec!["glm-5.2".to_string()]);
+        assert!(registry.suggest_models("totally-unrelated").is_empty());
+    }
+
+    fn test_request(model: &str) -> ProviderRequest {
+        ProviderRequest {
+            prompt: "hi".into(),
+            model: model.to_string(),
+            deadline: Instant::now() + std::time::Duration::from_secs(5),
+            working_directory: None,
+            system_prompt: None,
+            temperature: None,
+            max_tokens: None,
+            reasoning_effort: None,
+            cancellation_token: None,
+            stall_timeout: None,
+        }
+    }
+
+    /// `query` is the actual dispatch path for `chat`/`clink`. It must honour retired
+    /// aliases too — resolving them only in `get()` leaves the alias working for
+    /// `review` while `chat` still reports "model not found".
+    ///
+    /// The backend URL is unroutable, so a resolved model fails with a transport error.
+    /// Anything other than `ModelNotFound` proves the name resolved.
+    #[tokio::test]
+    async fn query_resolves_retired_config_key() {
+        let registry = test_registry();
+        let err = registry
+            .query(&test_request("kimi-k2.6"))
+            .await
+            .expect_err("unroutable backend should fail");
+        assert!(
+            !matches!(err, SquallError::ModelNotFound { .. }),
+            "retired key kimi-k2.6 should resolve before dispatch, got: {err:?}"
+        );
+    }
+
+    /// A genuinely unknown model must still report `ModelNotFound` with suggestions.
+    #[tokio::test]
+    async fn query_still_rejects_unknown_model() {
+        let registry = test_registry();
+        let err = registry
+            .query(&test_request("no-such-model"))
+            .await
+            .expect_err("unknown model should fail");
+        assert!(matches!(err, SquallError::ModelNotFound { .. }));
+    }
+
+    /// The provider must receive the *successor's* model_id, not the retired name —
+    /// otherwise the upstream API gets a model string it retired.
+    #[test]
+    fn retired_key_dispatches_successor_model_id() {
+        let registry = test_registry();
+        assert_eq!(
+            registry.get("kimi-k2.6").unwrap().model_id,
+            "moonshotai/Kimi-K2.7-Code"
+        );
     }
 }
