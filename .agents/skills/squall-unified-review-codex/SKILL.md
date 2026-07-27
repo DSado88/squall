@@ -182,11 +182,8 @@ when Codex is the host. `claude` plays the symmetric role.
    |-------|----------|-------|
    | **kimi-k2.7-code** | Security, edge cases, adversarial scenarios | Code-specialized contrarian. Pair with focused lens. |
    | **deepseek-v4-pro** | Fast triage, broad coverage | 512K ctx, high precision. |
-   | **deepseek-r1** | Deep reasoning, logic-heavy analysis | CoT reasoner. Check memory for auth issues. |
    | **qwen-3.7-max** | Pattern matching, performance analysis | 1M ctx, agentic. |
-   | **qwen3-coder** | Code-specific review | Purpose-built for code. |
    | **glm-5.2** | Architectural framing | GLM-5.2 via Together, 262K ctx. |
-   | **mistral-large** | Multilingual, efficient | Needs API key. |
 
    **Selection criteria** (same as Claude variant): memory recommend + memory tactic +
    model strengths matching the diff. Models with <70% success rate (>=5 samples) are

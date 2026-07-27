@@ -142,13 +142,9 @@ Three dispatch backends: **HTTP** (OpenAI-compatible), **CLI** (subprocess, OAut
 |-------|----------|---------|-------|----------|
 | `grok` | xAI | HTTP | fast | Quick triage, broad coverage, long context |
 | `glm-5.2` | Together | HTTP | medium | Architectural framing, 262K context |
-| `deepseek-r1` | Together | HTTP | medium | Deep reasoning, logic-heavy analysis |
 | `deepseek-v4-pro` | Together | HTTP | medium | Strong coder, finds real bugs, 512K context |
 | `kimi-k2.7-code` | Together | HTTP | medium | Code-specialized, edge cases, adversarial scenarios |
 | `qwen-3.7-max` | Together | HTTP | medium | Agentic, 1M context, multilingual code |
-| `qwen3-coder` | Together | HTTP | medium | Purpose-built for code review |
-| `llama4-maverick` | Together | HTTP | fast | Cheap, 1M context |
-| `mistral-large` | Mistral | HTTP | fast | Efficient, multilingual |
 | `gemini` | Google | CLI (OAuth) | medium | Systems-level bugs, concurrency |
 | `codex` | OpenAI | CLI (OAuth) | slow | Highest precision, zero false positives |
 | `claude` | Anthropic | CLI (OAuth) | medium | Local investigator for Codex-hosted Squall |

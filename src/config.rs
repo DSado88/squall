@@ -564,6 +564,27 @@ pub const RETIRED_MODEL_ALIASES: &[(&str, &str)] = &[
     ("grok-4.3", "grok"),
 ];
 
+/// Model keys removed from the roster with no successor — the provider retired the
+/// model and nothing equivalent replaced it.
+///
+/// Distinct from [`RETIRED_MODEL_ALIASES`], which maps an old name forward. There is
+/// nothing to map these to, so dispatching them fails loudly (with substring
+/// suggestions) and their history stays under the old name, correctly orphaned.
+///
+/// Listed so `docs_and_skills_have_no_dead_model_keys` still catches a doc or skill
+/// that advertises a model callers can no longer dispatch.
+pub const REMOVED_MODEL_KEYS: &[&str] = &[
+    // Together pulled every serverless DeepSeek reasoning endpoint; DeepSeek-V4-Pro
+    // is the only DeepSeek left and already covers the slot.
+    "deepseek-r1",
+    // No Qwen coder is serverless on Together (Next-FP8, 30B and 480B all rejected).
+    "qwen3-coder",
+    // Both quants are non-serverless; the FP8 id in the old config never existed.
+    "llama4-maverick",
+    // No Mistral model is serverless on Together, and MISTRAL_API_KEY is unset.
+    "mistral-large",
+];
+
 /// Resolve a possibly-retired model identifier to its current config key.
 /// Returns `None` when the identifier is not a known retired alias.
 ///
@@ -627,25 +648,7 @@ precision_tier = "medium"
 strengths = ["clear architectural analysis", "structured output", "strong SWE-bench Pro performance"]
 weaknesses = ["surface-level findings on simple bugs"]
 
-[models.deepseek-r1]
-model_id = "deepseek-ai/DeepSeek-R1-0528"
-provider = "together"
-backend = "http"
-description = "DeepSeek R1-0528 reasoning model via Together (US-hosted), strong at logic-heavy analysis"
-speed_tier = "medium"
-precision_tier = "medium"
-strengths = ["deep reasoning chains", "logic analysis"]
-weaknesses = ["verbose output", "slow on complex prompts"]
 
-[models.mistral-large]
-model_id = "mistral-large-latest"
-provider = "mistral"
-backend = "http"
-description = "Mistral Large, efficient European model with code expertise"
-speed_tier = "fast"
-precision_tier = "medium"
-strengths = ["efficient token usage", "multilingual code review"]
-weaknesses = ["less depth on niche Rust patterns"]
 
 [models."kimi-k2.7-code"]
 model_id = "moonshotai/Kimi-K2.7-Code"
@@ -678,25 +681,7 @@ precision_tier = "high"
 strengths = ["agentic tool calling", "1M context", "strong multilingual code understanding"]
 weaknesses = ["higher cost than open Qwen variants"]
 
-[models.qwen3-coder]
-model_id = "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
-provider = "together"
-backend = "http"
-description = "Qwen3 Coder 480B via Together, purpose-built for code review and generation"
-speed_tier = "medium"
-precision_tier = "high"
-strengths = ["purpose-built for code", "strong at code review", "large context"]
-weaknesses = ["new model, limited benchmarks"]
 
-[models.llama4-maverick]
-model_id = "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
-provider = "together"
-backend = "http"
-description = "Meta Llama 4 Maverick via Together, cheap with 1M context window"
-speed_tier = "fast"
-precision_tier = "medium"
-strengths = ["very cheap", "1M context window", "fast inference"]
-weaknesses = ["new model, unproven for code review"]
 
 # --- CLI models ---
 
@@ -844,7 +829,7 @@ mod tests {
         assert!(config.providers.contains_key("together"));
         assert!(config.providers.contains_key("deepseek"));
         assert!(config.providers.contains_key("mistral"));
-        assert_eq!(config.models.len(), 15);
+        assert_eq!(config.models.len(), 11);
         assert!(config.models.contains_key("grok"));
         assert!(config.models.contains_key("gemini"));
         assert!(config.models.contains_key("codex"));
@@ -892,28 +877,55 @@ mod tests {
         }
     }
 
-    /// Skill files are executable contracts, not documentation: they instruct agents to
-    /// pass exact model keys to `review`, so a stale key silently shrinks the ensemble
-    /// rather than erroring. The Session Learnings archive is excluded — it is a
-    /// historical record and legitimately names models that no longer exist.
+    /// Removed keys must actually be gone from the roster, or `listmodels` keeps
+    /// advertising a model that fails at dispatch.
     #[test]
-    fn skill_files_have_no_retired_model_keys() {
+    fn removed_keys_are_absent_from_roster() {
+        let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
+        for key in REMOVED_MODEL_KEYS {
+            assert!(
+                !config.models.contains_key(*key),
+                "{key} is listed as removed but is still a live model"
+            );
+        }
+    }
+
+    /// Skill files are executable contracts, not documentation: they instruct agents to
+    /// pass exact model keys to `review`, so a dead key silently shrinks the ensemble
+    /// rather than erroring. The README is scanned too — advertising an undispatchable
+    /// model is the same defect with a slower feedback loop.
+    ///
+    /// The Session Learnings archive is excluded: it is a historical record and
+    /// legitimately names models that no longer exist.
+    #[test]
+    fn docs_and_skills_have_no_dead_model_keys() {
         let mut stale: Vec<String> = Vec::new();
 
-        for root in [".claude/skills", ".agents/skills"] {
-            for path in markdown_files(std::path::Path::new(root)) {
-                let Ok(text) = std::fs::read_to_string(&path) else {
-                    continue;
-                };
-                for (lineno, line) in strip_learnings_archive(&text).lines().enumerate() {
-                    for (old, new) in RETIRED_MODEL_ALIASES {
-                        if mentions_key(line, old) {
-                            stale.push(format!(
-                                "{}:{} references retired `{old}` (use `{new}`)",
-                                path.display(),
-                                lineno + 1
-                            ));
-                        }
+        let mut targets = markdown_files(std::path::Path::new(".claude/skills"));
+        targets.extend(markdown_files(std::path::Path::new(".agents/skills")));
+        targets.push(std::path::PathBuf::from("README.md"));
+
+        for path in targets {
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for (lineno, line) in strip_learnings_archive(&text).lines().enumerate() {
+                for (old, new) in RETIRED_MODEL_ALIASES {
+                    if mentions_key(line, old) {
+                        stale.push(format!(
+                            "{}:{} references retired `{old}` (use `{new}`)",
+                            path.display(),
+                            lineno + 1
+                        ));
+                    }
+                }
+                for key in REMOVED_MODEL_KEYS {
+                    if mentions_key(line, key) {
+                        stale.push(format!(
+                            "{}:{} references removed `{key}` (no successor — drop it)",
+                            path.display(),
+                            lineno + 1
+                        ));
                     }
                 }
             }
@@ -921,7 +933,7 @@ mod tests {
 
         assert!(
             stale.is_empty(),
-            "skill files dispatch retired model keys:\n  {}",
+            "docs/skills reference dead model keys:\n  {}",
             stale.join("\n  ")
         );
     }

@@ -238,11 +238,8 @@ Proceed to Phase 3. The instructions below apply to QUICK, STANDARD, and DEEP on
    |-------|----------|-------|
    | **kimi-k2.7-code** | Security, edge cases, adversarial scenarios | Code-specialized contrarian. Needs a focused lens to shine. |
    | **deepseek-v4-pro** | Fast triage, broad coverage | DeepSeek V4-Pro via Together, 512K ctx, high precision. Pair with focused lens. |
-   | **deepseek-r1** | Deep reasoning, logic-heavy analysis | Chain-of-thought reasoner. Routed via Together — persistent auth failures, check memory before selecting. |
    | **qwen-3.7-max** | Pattern matching, performance analysis | 1M ctx, agentic. Good with performance-focused lens. |
-   | **qwen3-coder** | Code-specific review | Purpose-built for code. |
    | **glm-5.2** | Architectural framing | GLM-5.2 via Together, 262K ctx. Strong structural analysis. |
-   | **mistral-large** | Multilingual, efficient | Needs API key configured — check memory for auth failures. |
 
    **Selection criteria for Tier 2:**
    - Check `memory` recommend for success rates and `memory` tactic for proven lens combos
