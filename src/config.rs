@@ -705,13 +705,19 @@ weaknesses = ["higher cost than open Qwen variants"]
 # instead selected through the model label's parenthetical.
 #
 # `agy` has no JSON output mode, so these use the plain-text AntigravityParser.
+#
+# --sandbox --dangerously-skip-permissions is required for clink's agentic file access:
+# headless agy auto-denies any tool permission it cannot prompt for and then returns
+# NO output at all, which surfaces as a parse failure. --sandbox keeps terminal
+# restrictions enabled, so this is auto-approve WITHIN a sandbox, not unrestricted
+# execution. Scoped to Squall's invocations; interactive `agy` is unaffected.
 
 [models.gemini]
 model_id = "gemini"
 provider = "antigravity"
 backend = "cli"
 executable = "agy"
-args_template = ["--print", "{prompt}"]
+args_template = ["--sandbox", "--dangerously-skip-permissions", "--print", "{prompt}"]
 description = "Antigravity CLI on your configured default model (~/.gemini/antigravity-cli/settings.json)"
 speed_tier = "medium"
 precision_tier = "high"
@@ -723,7 +729,7 @@ model_id = "Gemini 3.6 Flash (High)"
 provider = "antigravity"
 backend = "cli"
 executable = "agy"
-args_template = ["--model", "{model}", "--print", "{prompt}"]
+args_template = ["--sandbox", "--dangerously-skip-permissions", "--model", "{model}", "--print", "{prompt}"]
 description = "Antigravity CLI pinned to Gemini 3.6 Flash, fast triage tier"
 speed_tier = "fast"
 precision_tier = "medium"
@@ -735,7 +741,7 @@ model_id = "Gemini 3.1 Pro (High)"
 provider = "antigravity"
 backend = "cli"
 executable = "agy"
-args_template = ["--model", "{model}", "--print", "{prompt}"]
+args_template = ["--sandbox", "--dangerously-skip-permissions", "--model", "{model}", "--print", "{prompt}"]
 description = "Antigravity CLI pinned to Gemini 3.1 Pro at high reasoning, deep analysis tier"
 speed_tier = "slow"
 precision_tier = "high"
@@ -973,6 +979,31 @@ mod tests {
                 args.get(print_at + 1).map(String::as_str),
                 Some("{prompt}"),
                 "{key}: --print must be followed by {{prompt}}, else agy eats the next flag"
+            );
+        }
+    }
+
+    /// In headless mode `agy` auto-denies every tool permission it cannot prompt for
+    /// ("a tool required the \"command\" permission that headless mode cannot prompt
+    /// for, so it was auto-denied") and returns NO output, which surfaces as a parse
+    /// failure. `clink` exists for agentic file access, so the entries must opt in.
+    /// `--sandbox` keeps terminal restrictions on, making this auto-approve *within*
+    /// a sandbox rather than unrestricted execution.
+    #[test]
+    fn antigravity_entries_enable_headless_tool_permissions() {
+        let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
+        for (key, entry) in &config.models {
+            if entry.provider.as_deref() != Some("antigravity") {
+                continue;
+            }
+            let args = entry.args_template.clone().unwrap_or_default();
+            assert!(
+                args.iter().any(|a| a == "--sandbox"),
+                "{key} must pass --sandbox so auto-approved tools stay terminal-restricted"
+            );
+            assert!(
+                args.iter().any(|a| a == "--dangerously-skip-permissions"),
+                "{key} must auto-approve tools; headless agy denies them and returns no output"
             );
         }
     }
