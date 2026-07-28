@@ -706,18 +706,22 @@ weaknesses = ["higher cost than open Qwen variants"]
 #
 # `agy` has no JSON output mode, so these use the plain-text AntigravityParser.
 #
-# --sandbox --dangerously-skip-permissions is required for clink's agentic file access:
-# headless agy auto-denies any tool permission it cannot prompt for and then returns
-# NO output at all, which surfaces as a parse failure. --sandbox keeps terminal
-# restrictions enabled, so this is auto-approve WITHIN a sandbox, not unrestricted
-# execution. Scoped to Squall's invocations; interactive `agy` is unaffected.
+# --dangerously-skip-permissions is required for clink's agentic file access: headless
+# agy auto-denies any tool permission it cannot prompt for and then returns NO output,
+# which surfaces as a parse failure.
+#
+# WARNING: --sandbox does NOT confine anything. Verified 2026-07-27 — a sandboxed agy
+# wrote a file outside its workspace, ran arbitrary shell, reached the network, and
+# stat'd ~/.claude.json (which holds Squall's API keys). Treat these entries as running
+# with the operator's full privileges. Accepted deliberately: this operator only
+# dispatches Squall over their own work, so prompt content is trusted.
 
 [models.gemini]
 model_id = "gemini"
 provider = "antigravity"
 backend = "cli"
 executable = "agy"
-args_template = ["--sandbox", "--dangerously-skip-permissions", "--print", "{prompt}"]
+args_template = ["--sandbox", "--dangerously-skip-permissions"]
 description = "Antigravity CLI on your configured default model (~/.gemini/antigravity-cli/settings.json)"
 speed_tier = "medium"
 precision_tier = "high"
@@ -729,7 +733,7 @@ model_id = "Gemini 3.6 Flash (High)"
 provider = "antigravity"
 backend = "cli"
 executable = "agy"
-args_template = ["--sandbox", "--dangerously-skip-permissions", "--model", "{model}", "--print", "{prompt}"]
+args_template = ["--sandbox", "--dangerously-skip-permissions", "--model", "{model}"]
 description = "Antigravity CLI pinned to Gemini 3.6 Flash, fast triage tier"
 speed_tier = "fast"
 precision_tier = "medium"
@@ -741,7 +745,7 @@ model_id = "Gemini 3.1 Pro (High)"
 provider = "antigravity"
 backend = "cli"
 executable = "agy"
-args_template = ["--sandbox", "--dangerously-skip-permissions", "--model", "{model}", "--print", "{prompt}"]
+args_template = ["--sandbox", "--dangerously-skip-permissions", "--model", "{model}"]
 description = "Antigravity CLI pinned to Gemini 3.1 Pro at high reasoning, deep analysis tier"
 speed_tier = "slow"
 precision_tier = "high"
@@ -968,17 +972,14 @@ mod tests {
             );
             // Not asserting that one is present: `gemini` deliberately passes neither
             // so it inherits the CLI's own configured default model.
+            // No --print: it takes the prompt as an ARGUMENT, which puts prompt text in
+            // argv (visible via `ps`) and makes a prompt starting with "--" parse as a
+            // flag — `agy --print "--version"` prints the version and exits 0, which the
+            // parser would hand back as a successful model response. Bare `agy` reads
+            // the prompt from stdin instead.
             assert!(
-                args.iter().any(|a| a == "--print"),
-                "{key} must run non-interactively via --print"
-            );
-            // `agy --print` takes the prompt as its argument and cannot read stdin,
-            // so the placeholder must be present and must directly follow --print.
-            let print_at = args.iter().position(|a| a == "--print").unwrap();
-            assert_eq!(
-                args.get(print_at + 1).map(String::as_str),
-                Some("{prompt}"),
-                "{key}: --print must be followed by {{prompt}}, else agy eats the next flag"
+                !args.iter().any(|a| a == "--print"),
+                "{key} must not use --print; the prompt goes via stdin"
             );
         }
     }

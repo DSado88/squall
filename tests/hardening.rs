@@ -8,48 +8,27 @@ use squall::error::SquallError;
 
 // ---------------------------------------------------------------------------
 // Defect 1: CLI prompt delivered via stdin, not argv.
-// Args templates must NOT contain {prompt} (avoids ARG_MAX limits).
+// Args templates must NOT contain {prompt} (avoids ARG_MAX limits, and keeps prompt
+// text out of the process list where `ps` exposes it to every local user).
 //
-// Narrowed 2026-07-27: the invariant holds for every CLI that can read stdin, which
-// was all of them until the Gemini CLI was retired. Its replacement, Antigravity
-// (`agy --print`), takes the prompt as a command-line argument and has no stdin mode
-// at all — `--print` with no value errors "flag needs an argument", and `--print ""`
-// errors "empty prompt". So argv delivery is forced there, with
-// `MAX_ARGV_PROMPT_BYTES` as the compensating control against ARG_MAX.
+// 2026-07-27: this invariant was briefly narrowed to exempt Antigravity, on the
+// premise that `agy` had no stdin mode. That premise was FALSE — it came from testing
+// only `--print` (which does require an argument) rather than the bare invocation.
+// `echo "..." | agy` works, and `ps` shows the prompt absent from argv. The exemption
+// and the whole argv path have been removed; the invariant is universal again.
 // ---------------------------------------------------------------------------
 
-/// Every CLI model that is NOT antigravity must still deliver its prompt via stdin.
+/// EVERY CLI model must deliver its prompt via stdin — no exceptions.
 #[test]
-fn stdin_capable_clis_do_not_use_argv_prompt() {
+fn all_cli_models_deliver_prompt_via_stdin() {
     let config = squall::config::Config::from_env();
     for (name, entry) in &config.models {
-        if entry.provider == "antigravity" {
-            continue;
-        }
         if let squall::dispatch::registry::BackendConfig::Cli { args_template, .. } = &entry.backend
         {
             assert!(
                 !args_template.iter().any(|a| a.contains("{prompt}")),
-                "{name} args_template must NOT contain '{{prompt}}' — prompt goes via stdin"
-            );
-        }
-    }
-}
-
-/// Antigravity is the sole exception, and only because its CLI cannot read stdin.
-/// If it ever gains a stdin mode, delete this and fold it back into the rule above.
-#[test]
-fn antigravity_uses_argv_prompt_because_it_cannot_read_stdin() {
-    let config = squall::config::Config::from_env();
-    for (name, entry) in &config.models {
-        if entry.provider != "antigravity" {
-            continue;
-        }
-        if let squall::dispatch::registry::BackendConfig::Cli { args_template, .. } = &entry.backend
-        {
-            assert!(
-                args_template.iter().any(|a| a.contains("{prompt}")),
-                "{name} must pass the prompt via argv — agy has no stdin mode"
+                "{name} args_template must NOT contain '{{prompt}}' — prompt goes via stdin, \
+                 and argv is visible in `ps` to every local user"
             );
         }
     }
