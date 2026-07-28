@@ -122,6 +122,84 @@ fn make_event(project_id: &str, model_key: &str, status: &str, latency_ms: i32) 
 // ===========================================================================
 
 /// Fresh DuckDB database should have all required tables after schema init.
+/// Number of parquet files flushed so far. 0 when the directory does not exist yet.
+fn parquet_file_count(events_dir: &std::path::Path) -> usize {
+    std::fs::read_dir(events_dir)
+        .map(|rd| {
+            rd.filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|x| x == "parquet"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// Block until at least `expected` parquet files exist, or fail after 30s.
+fn wait_for_parquet_files(events_dir: &std::path::Path, expected: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let n = parquet_file_count(events_dir);
+        if n >= expected {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "expected at least {expected} parquet file(s) after 30s, saw {n}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+/// Async variant, so tokio tests do not block a runtime worker while polling.
+async fn wait_for_parquet_files_async(events_dir: &std::path::Path, expected: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let n = parquet_file_count(events_dir);
+        if n >= expected {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "expected at least {expected} parquet file(s) after 30s, saw {n}"
+        );
+        tokio::time::sleep(tokio::time::Duration::from_millis(25)).await;
+    }
+}
+
+/// Count rows across every parquet file the writer has flushed. Returns 0 when the
+/// directory is empty or unreadable, so it is safe to call while the worker is still
+/// starting up.
+fn parquet_row_count(events_dir: &std::path::Path) -> i64 {
+    let glob = events_dir.join("*.parquet");
+    let glob_str = glob.to_string_lossy();
+    let Ok(conn) = duckdb::Connection::open_in_memory() else {
+        return 0;
+    };
+    conn.prepare(&format!("SELECT COUNT(*) FROM read_parquet('{glob_str}')"))
+        .and_then(|mut s| s.query_row([], |r| r.get(0)))
+        .unwrap_or(0)
+}
+
+/// Block until the writer has flushed at least `expected` rows, or fail after 30s.
+///
+/// `GlobalWriter` flushes on a background worker, so no fixed sleep is correct. A flat
+/// 500ms passes on a local SSD and races on a loaded ubuntu-latest runner, which is
+/// why these tests failed only in CI. Polling keeps the fast path fast and spends the
+/// deadline only when the runner is starved.
+fn wait_for_parquet_rows(events_dir: &std::path::Path, expected: i64) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let count = parquet_row_count(events_dir);
+        if count >= expected {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "expected at least {expected} parquet row(s) after 30s, saw {count}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
 #[test]
 fn schema_fresh_db_creates_all_tables() {
     let conn = duckdb::Connection::open_in_memory().unwrap();
@@ -210,11 +288,10 @@ fn parquet_write_via_global_writer_read_via_duckdb() {
     let results = vec![make_result("grok", 25000, ModelStatus::Success)];
     writer.log_events(&results, 1000, "test:parquet-e2e", Some("/tmp/test"), None);
 
-    // Give worker time to process
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    // Read the parquet file via DuckDB
+    // Wait for the background worker to flush, rather than guessing a duration.
     let events_dir = writer.events_dir().to_path_buf();
+    wait_for_parquet_rows(&events_dir, 1);
+
     let glob_path = events_dir.join("*.parquet");
     let glob_str = glob_path.to_string_lossy();
 
@@ -258,17 +335,9 @@ fn parquet_multiple_writes_all_queryable() {
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
     let events_dir = writer.events_dir().to_path_buf();
-    let glob_path = events_dir.join("*.parquet");
-    let glob_str = glob_path.to_string_lossy();
-
-    let conn = duckdb::Connection::open_in_memory().unwrap();
-    let mut stmt = conn
-        .prepare(&format!("SELECT COUNT(*) FROM read_parquet('{glob_str}')"))
-        .unwrap();
-    let count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
+    wait_for_parquet_rows(&events_dir, 3);
+    let count = parquet_row_count(&events_dir);
     assert_eq!(
         count, 3,
         "3 log_events calls should produce 3 rows across parquet files"
@@ -441,7 +510,7 @@ fn merge_does_not_crash_worker() {
 
     let results = vec![make_result("grok", 25000, ModelStatus::Success)];
     writer.log_events(&results, 1000, "test:merge", Some("/tmp"), None);
-    std::thread::sleep(std::time::Duration::from_millis(1000));
+    wait_for_parquet_files(writer.events_dir(), 1);
 
     // Verify parquet file exists before merge
     let events_dir = writer.events_dir().to_path_buf();
@@ -531,8 +600,8 @@ async fn composite_log_metrics_writes_both_stores() {
         .log_model_metrics(&results, 4200, None, Some("/tmp/test-project"))
         .await;
 
-    // Give worker time to write parquet
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    // Wait on the worker's actual output instead of guessing a duration.
+    wait_for_parquet_files_async(&events_dir, 1).await;
 
     // Verify local was written
     let content = tokio::fs::read_to_string(local_dir.join("models.md"))
