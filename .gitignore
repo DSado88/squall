@@ -5,3 +5,11 @@
 .squall/config.toml
 .DS_Store
 .env
+
+# Runtime artifacts written by squall at review time — machine-local, not source.
+.squall/raw/
+.squall/training/
+.squall/branch_diff.txt
+
+# rust-analyzer / rk build cache
+.rk/

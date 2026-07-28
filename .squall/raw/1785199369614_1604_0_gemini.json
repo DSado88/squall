@@ -1,9 +1,0 @@
-{
-  "exit_code": 0,
-  "model": "gemini",
-  "parse_status": "parse_error: schema parse error: agy CLI produced empty output",
-  "provider": "antigravity",
-  "stderr": "jetski: no output produced — a tool required the \"command\" permission that headless mode cannot prompt for, so it was auto-denied. Add an allow-rule under permissions.allow in settings.json (e.g. command(<target>)). Alternatively, re-run with --dangerously-skip-permissions to auto-approve all tools.\n",
-  "stdout": "",
-  "timing_ms": 15036
-}
