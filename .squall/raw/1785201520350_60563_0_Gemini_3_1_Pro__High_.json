@@ -1,0 +1,9 @@
+{
+  "exit_code": 1,
+  "model": "Gemini 3.1 Pro (High)",
+  "parse_status": "process_exit_error",
+  "provider": "antigravity",
+  "stderr": "Error: timeout waiting for response\n",
+  "stdout": "",
+  "timing_ms": 302112
+}

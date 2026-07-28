@@ -55,3 +55,8 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          # Mirrors .cargo/audit.toml, which carries the full rationale for each
+          # entry and is what local `cargo audit` runs read. Keep the two in sync.
+          # RUSTSEC-2026-0189: rmcp streamable-HTTP transport — not compiled in;
+          # squall is stdio-only (features = ["server", "transport-io"]).
+          ignore: RUSTSEC-2026-0189

@@ -1,0 +1,1336 @@
+diff --git a/install.sh b/install.sh
+index e724237f..bc3ab9c9 100755
+--- a/install.sh
++++ b/install.sh
+@@ -54,11 +54,10 @@ if $DO_BUILD; then
+     cd "$SQUALL_DIR"
+     cargo build --release 2>&1
+ 
+-    # Install binary
++    # Install binary (symlink avoids macOS com.apple.provenance SIGKILL on copied binaries)
+     mkdir -p "$(dirname "$INSTALL_BIN")"
+-    cp target/release/squall "$INSTALL_BIN"
+-    chmod +x "$INSTALL_BIN"
+-    echo "Installed binary to $INSTALL_BIN"
++    ln -sf "${SQUALL_DIR}/target/release/squall" "$INSTALL_BIN"
++    echo "Installed binary to $INSTALL_BIN -> target/release/squall"
+ 
+     # Register as global MCP server (user scope → ~/.claude.json).
+     # SECURITY: API keys are written directly to the JSON config file, never
+diff --git a/src/review.rs b/src/review.rs
+index ed4daf39..42d9ac1f 100644
+--- a/src/review.rs
++++ b/src/review.rs
+@@ -366,7 +366,9 @@ impl ReviewExecutor {
+                 .or_else(|| req.system_prompt.clone());
+             let temperature = req.temperature;
+             let max_tokens = req.effective_max_tokens();
+-            let reasoning_effort = req.effective_reasoning_effort();
++            let reasoning_effort = req
++                .effective_reasoning_effort()
++                .map(|e| e.as_str().to_string());
+             // Fix #2: Thread working_directory through to CLI models
+             let wd = working_directory.clone();
+ 
+diff --git a/src/server.rs b/src/server.rs
+index 414b5f74..c0814473 100644
+--- a/src/server.rs
++++ b/src/server.rs
+@@ -15,6 +15,7 @@ use crate::response::{PalMetadata, PalToolResponse};
+ use crate::review::ReviewExecutor;
+ use crate::tools::chat::ChatRequest;
+ use crate::tools::clink::ClinkRequest;
++use crate::tools::enums::{ReasoningEffort, ResponseFormat};
+ use crate::tools::listmodels::{ListModelsResponse, ModelInfo};
+ use crate::tools::memory::{FlushRequest, MemorizeRequest, MemoryRequest};
+ use crate::tools::review::ReviewRequest;
+@@ -70,7 +71,7 @@ impl SquallServer {
+ 
+     #[tool(
+         name = "chat",
+-        description = "Query a single AI model via HTTP (OpenAI-compatible). Use for one-off questions to a specific model. Use `listmodels` first to see available model names.",
++        description = "Ask one AI model a targeted question. Use for focused second opinions to complement your own analysis. Use `listmodels` for model names.",
+         annotations(read_only_hint = true)
+     )]
+     async fn chat(
+@@ -111,7 +112,7 @@ impl SquallServer {
+         }
+ 
+         let deadline_secs = if self.registry.get(&model).is_some_and(|e| e.is_async_poll())
+-            || reasoning_needs_extended_deadline(req.reasoning_effort.as_deref())
++            || reasoning_needs_extended_deadline(req.reasoning_effort.as_ref())
+         {
+             600 // async-poll or reasoning models get 10 min (MCP ceiling)
+         } else {
+@@ -125,7 +126,7 @@ impl SquallServer {
+             system_prompt: req.system_prompt,
+             temperature: req.temperature,
+             max_tokens: req.max_tokens,
+-            reasoning_effort: req.reasoning_effort,
++            reasoning_effort: req.reasoning_effort.map(|e| e.as_str().to_string()),
+             cancellation_token: None,
+             stall_timeout: None,
+         };
+@@ -160,7 +161,7 @@ impl SquallServer {
+ 
+     #[tool(
+         name = "listmodels",
+-        description = "List all available AI models with provider and backend info.",
++        description = "List available AI models with provider, backend, and capability info.",
+         annotations(read_only_hint = true)
+     )]
+     async fn listmodels(&self) -> Result<CallToolResult, McpError> {
+@@ -173,8 +174,7 @@ impl SquallServer {
+         models.sort_by(|a, b| a.name.cmp(&b.name));
+ 
+         let list = ListModelsResponse { models };
+-        let content = serde_json::to_string(&list)
+-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
++        let content = list.to_markdown();
+ 
+         let response = PalToolResponse::success(
+             content,
+@@ -191,7 +191,7 @@ impl SquallServer {
+ 
+     #[tool(
+         name = "clink",
+-        description = "Query a CLI-based AI model (e.g. gemini, codex). Use for tasks that benefit from the model's native CLI capabilities. Use `listmodels` first to see available model names.",
++        description = "Query a CLI-based AI model (codex, gemini) as a subprocess. Use for web search or deep repo analysis. Use `listmodels` for model names.",
+         annotations(read_only_hint = true)
+     )]
+     async fn clink(
+@@ -202,7 +202,7 @@ impl SquallServer {
+         context::validate_temperature(req.temperature)
+             .map_err(|msg| McpError::invalid_params(msg, None))?;
+ 
+-        let cli_name = req.cli_name.clone();
++        let model = req.model.clone();
+         let start = Instant::now();
+ 
+         // Resolve file manifest and working directory for CLI.
+@@ -237,13 +237,13 @@ impl SquallServer {
+ 
+         let provider_req = ProviderRequest {
+             prompt: prompt.into(),
+-            model: cli_name.clone(),
++            model: model.clone(),
+             deadline: Instant::now() + Duration::from_secs(600), // CLIs get 10 min
+             working_directory,
+             system_prompt: req.system_prompt,
+             temperature: req.temperature,
+             max_tokens: req.max_tokens,
+-            reasoning_effort: req.reasoning_effort,
++            reasoning_effort: req.reasoning_effort.map(|e| e.as_str().to_string()),
+             cancellation_token: None,
+             stall_timeout: None,
+         };
+@@ -260,12 +260,12 @@ impl SquallServer {
+             ),
+             Err(e) => {
+                 tracing::warn!("clink query failed: {e}");
+-                let provider = e.provider().unwrap_or(&cli_name).to_string();
++                let provider = e.provider().unwrap_or(&model).to_string();
+                 PalToolResponse::error(
+                     e.user_message(),
+                     PalMetadata {
+                         tool_name: "clink".to_string(),
+-                        model_used: cli_name,
++                        model_used: model,
+                         provider_used: provider,
+                         duration_seconds: start.elapsed().as_secs_f64(),
+                     },
+@@ -278,7 +278,7 @@ impl SquallServer {
+ 
+     #[tool(
+         name = "review",
+-        description = "Fan out a prompt to multiple models in parallel with straggler cutoff. Default timeout: 180s. Set `deep: true` for 600s + high reasoning effort. Set `per_model_timeout_secs` for per-model overrides. Models below 70% success rate (5+ samples) are auto-excluded — check gate warnings for timeout breakdown. Use `per_model_system_prompts` for different review lenses (security, architecture, etc). Use `listmodels` for exact model names and speed_tier.",
++        description = "Consult multiple models in parallel with straggler cutoff. Assign expertise lenses via per_model_system_prompts — falsification framing ('attempt to PROVE X') produces the best results. Use `listmodels` for model names.",
+         annotations(read_only_hint = true)
+     )]
+     async fn review(
+@@ -382,12 +382,12 @@ impl SquallServer {
+                 .await;
+         });
+ 
+-        // Serialize the full review response as the MCP content
+-        let json = serde_json::to_string(&review_response)
+-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
++        // Render the review response as markdown for MCP (disk file stays JSON)
++        let concise = matches!(req.response_format, Some(ResponseFormat::Concise));
++        let content = review_response.to_markdown(concise);
+ 
+         let response = PalToolResponse::success(
+-            json,
++            content,
+             PalMetadata {
+                 tool_name: "review".to_string(),
+                 model_used: "multi".to_string(),
+@@ -401,7 +401,7 @@ impl SquallServer {
+ 
+     #[tool(
+         name = "memorize",
+-        description = "Save a learning to Squall's memory. Use after reviewing results to record patterns, model blind spots, or effective prompt tactics. Categories: 'pattern' (recurring findings), 'tactic' (prompt effectiveness), or 'recommend' (model recommendations)."
++        description = "Save your synthesized findings after a review: recurring patterns, effective tactics, and model recommendations."
+     )]
+     async fn memorize(
+         &self,
+@@ -428,7 +428,7 @@ impl SquallServer {
+         match self
+             .memory
+             .memorize(
+-                &req.category,
++                req.category.as_str(),
+                 &req.content,
+                 req.model.as_deref(),
+                 req.tags.as_deref(),
+@@ -455,7 +455,7 @@ impl SquallServer {
+ 
+     #[tool(
+         name = "memory",
+-        description = "Read Squall's memory: model performance stats, recurring patterns, and prompt tactics. Use before a review to inform model selection and system_prompt choices.",
++        description = "Read prior patterns, tactics, and model recommendations to inform your hypotheses before reviewing.",
+         annotations(read_only_hint = true)
+     )]
+     async fn memory(
+@@ -467,7 +467,7 @@ impl SquallServer {
+         match self
+             .memory
+             .read_memory(
+-                req.category.as_deref(),
++                req.category.as_ref().map(|c| c.as_str()),
+                 req.model.as_deref(),
+                 req.max_chars(),
+                 req.scope.as_deref(),
+@@ -523,8 +523,11 @@ impl SquallServer {
+ }
+ 
+ /// Returns true if reasoning_effort warrants an extended deadline.
+-fn reasoning_needs_extended_deadline(effort: Option<&str>) -> bool {
+-    matches!(effort, Some("medium" | "high" | "xhigh"))
++fn reasoning_needs_extended_deadline(effort: Option<&ReasoningEffort>) -> bool {
++    matches!(
++        effort,
++        Some(ReasoningEffort::Medium | ReasoningEffort::High | ReasoningEffort::Xhigh)
++    )
+ }
+ 
+ #[tool_handler]
+@@ -537,50 +540,20 @@ impl ServerHandler for SquallServer {
+                 ..Default::default()
+             },
+             instructions: Some(
+-                "Squall: parallel AI model dispatch via HTTP and CLI.\n\n\
+-                 Tools:\n\
+-                 - `listmodels`: List available models with provider, backend, and capability info.\n\
+-                 - `chat`: Single HTTP model query (OpenAI-compatible providers).\n\
+-                 - `clink`: Single CLI model query (gemini, codex — runs as subprocess).\n\
+-                 - `review`: Fan out a prompt to multiple models in parallel. ALWAYS prefer this over multiple chat/clink calls.\n\
+-                 - `memorize`: Save a learning (pattern, tactic, or model recommendation) to persistent memory.\n\
+-                 - `memory`: Read persistent memory (model stats, patterns, tactics, recommendations).\n\
+-                 - `flush`: Clean up branch-scoped memory after PR merge.\n\n\
+-                 Model Selection:\n\
+-                 1. Call `memory` with category \"recommend\" for past model recommendations.\n\
+-                 2. Call `listmodels` to see exact model names and capabilities.\n\
+-                 3. Pick an ensemble based on the task (e.g. fast models for drafts, reasoning models for analysis).\n\n\
+-                 Review Workflow:\n\
+-                 1. Select models (see Model Selection above).\n\
+-                 2. Set `per_model_system_prompts` to give each model a different review lens \
+-                 (e.g. security, architecture, correctness). Check `memory` category \"tactics\" for proven lenses.\n\
+-                 3. Call `review`. For security audits, complex architecture, or high-stakes changes, set `deep: true` \
+-                 (raises timeout to 600s, reasoning_effort to \"high\", max_tokens to 16384).\n\
+-                 - Default timeout is 180s. Slow models may need `per_model_timeout_secs` or `deep: true` (600s). \
+-                 Check `listmodels` for speed_tier.\n\
+-                 - Models with <70% success rate over 5+ samples are auto-excluded. Gate warnings include \
+-                 timeout/cutoff breakdown and avg failed prompt size. If failures are mostly timeouts, \
+-                 the model needs more time — use `deep: true` or `per_model_timeout_secs`, not removal.\n\
+-                 - Check `memory` category \"recommend\" before selecting models to see current health.\n\
+-                 4. The response includes a `results_file` path. This file persists on disk and survives context compaction — \
+-                 if you lose review details after a long conversation, read the results_file to recover them.\n\
+-                 - If context compaction destroys the review response, the `results_file` path survives — \
+-                 read the file to recover full results.\n\
+-                 5. ALWAYS call `memorize` after synthesizing review results to record patterns and model blind spots.\n\n\
+-                 File Context:\n\
+-                 - Pass `file_paths` + `working_directory` to include source files in the prompt.\n\
+-                 - For `review`, you can also pass `diff` with unified diff text (e.g. git diff output).\n\n\
+-                 Research Workflow:\n\
+-                 - For web-sourced research: `clink` with model \"codex\", timeout 600.\n\
+-                 - For multi-vector research: `review` with 3-5 models as research advisors.\n\
+-                 - ALWAYS persist results to `.squall/research/<topic>.md`.\n\
+-                 - After research: `memorize` category \"pattern\" for reusable findings.\n\n\
+-                 Memory Workflow:\n\
+-                 - BEFORE reviews (mandatory): `memory` category \"recommend\" + \"patterns\" + \"tactics\" \
+-                 to check past learnings. This is the most important step — without it, memory accumulates data nobody uses.\n\
+-                 - After reviews: `memorize` with category \"pattern\" for recurring findings, \"tactic\" for prompt strategies, \
+-                 \"recommend\" for model recommendations.\n\
+-                 - After PR merge: `flush` with the branch name to graduate patterns to codebase scope."
++                "Squall: parallel AI model dispatch. Each model is an independent consultant.\n\n\
++                 Workflow:\n\
++                 1. Call `memory` (recommend/patterns/tactics) to check past learnings.\n\
++                 2. Call `listmodels` for exact model names and speed tiers.\n\
++                 3. Call `review` with expertise `per_model_system_prompts` (security, correctness, etc.).\n\
++                    - Use falsification framing: 'Attempt to PROVE [issue] exists. Report confidence.'\n\
++                    - Set `deep: true` for security/architecture/high-stakes (600s, high reasoning).\n\
++                    - `results_file` persists on disk — read it if context compaction loses the response.\n\
++                 4. Triangulate model findings with your own investigation.\n\
++                 5. Call `memorize` to capture patterns, tactics, and model recommendations.\n\
++                 6. After PR merge: `flush` to graduate branch patterns to codebase scope.\n\n\
++                 File context: pass `file_paths` + `working_directory` to include source files.\n\
++                 For review, also pass `diff` with unified diff text.\n\
++                 Research: `clink` with model \"codex\" for web search, or `review` with models as advisors."
+                     .into(),
+             ),
+             capabilities: ServerCapabilities::builder().enable_tools().build(),
+diff --git a/src/tools/chat.rs b/src/tools/chat.rs
+index c62fb445..abc84ff3 100644
+--- a/src/tools/chat.rs
++++ b/src/tools/chat.rs
+@@ -1,6 +1,7 @@
+ use schemars::JsonSchema;
+ use serde::Deserialize;
+ 
++use super::enums::ReasoningEffort;
+ use crate::context::ContextFormat;
+ 
+ #[derive(Debug, Deserialize, JsonSchema)]
+@@ -19,9 +20,9 @@ pub struct ChatRequest {
+     pub temperature: Option<f64>,
+     /// Maximum tokens to generate. Caps output length; useful for concise responses.
+     pub max_tokens: Option<u64>,
+-    /// Reasoning effort for thinking models: "none" (fastest), "low", "medium", "high" (deepest).
+-    /// Non-reasoning models ignore this. "medium"/"high" automatically extend the deadline to 600s.
+-    pub reasoning_effort: Option<String>,
++    /// Reasoning effort for thinking models. Non-reasoning models ignore this.
++    /// Medium/high automatically extend the deadline to 600s.
++    pub reasoning_effort: Option<ReasoningEffort>,
+     /// File context format: "xml" (default, full content) or "hashline" (line_num:hash|content,
+     /// compact for large files). Hashline lets models reference lines by number+hash.
+     pub context_format: Option<ContextFormat>,
+diff --git a/src/tools/clink.rs b/src/tools/clink.rs
+index f476afce..1172c57a 100644
+--- a/src/tools/clink.rs
++++ b/src/tools/clink.rs
+@@ -1,10 +1,14 @@
+ use schemars::JsonSchema;
+ use serde::Deserialize;
+ 
++use super::enums::ReasoningEffort;
++
+ #[derive(Debug, Deserialize, JsonSchema)]
+ pub struct ClinkRequest {
+-    /// CLI agent name from `listmodels` (e.g. "gemini", "codex"). Must be a CLI-backend model.
+-    pub cli_name: String,
++    /// Model name from `listmodels` (e.g. "gemini", "codex"). Must be a CLI-backend model.
++    /// Also accepts "cli_name" for backward compatibility.
++    #[serde(alias = "cli_name")]
++    pub model: String,
+     /// The prompt to send to the CLI agent. File manifest from file_paths is prepended automatically.
+     pub prompt: String,
+     /// Relative file paths to include as a path manifest (listed but not inlined for CLI). Requires working_directory.
+@@ -17,7 +21,6 @@ pub struct ClinkRequest {
+     pub temperature: Option<f64>,
+     /// Maximum tokens to generate. Caps output length; useful for concise responses.
+     pub max_tokens: Option<u64>,
+-    /// Reasoning effort for thinking models: "none" (fastest), "low", "medium", "high" (deepest).
+-    /// Non-reasoning models ignore this.
+-    pub reasoning_effort: Option<String>,
++    /// Reasoning effort for thinking models. Non-reasoning models ignore this.
++    pub reasoning_effort: Option<ReasoningEffort>,
+ }
+diff --git a/src/tools/listmodels.rs b/src/tools/listmodels.rs
+index 370a0715..b38da4d1 100644
+--- a/src/tools/listmodels.rs
++++ b/src/tools/listmodels.rs
+@@ -33,3 +33,30 @@ impl From<(&String, &ModelEntry)> for ModelInfo {
+ pub struct ListModelsResponse {
+     pub models: Vec<ModelInfo>,
+ }
++
++/// Escape pipe and newline characters for markdown table cells.
++fn escape_cell(s: &str) -> String {
++    s.replace('|', "\\|").replace('\n', " ")
++}
++
++impl ListModelsResponse {
++    /// Render the model list as a markdown table.
++    pub fn to_markdown(&self) -> String {
++        let mut md = String::from(
++            "| Model | Provider | Backend | Speed | Precision | Description |\n\
++             |-------|----------|---------|-------|-----------|-------------|\n",
++        );
++        for m in &self.models {
++            md.push_str(&format!(
++                "| {} | {} | {} | {} | {} | {} |\n",
++                escape_cell(&m.name),
++                escape_cell(&m.provider),
++                escape_cell(&m.backend),
++                escape_cell(&m.speed_tier),
++                escape_cell(&m.precision_tier),
++                escape_cell(&m.description),
++            ));
++        }
++        md
++    }
++}
+diff --git a/src/tools/memory.rs b/src/tools/memory.rs
+index da11f480..d1385f47 100644
+--- a/src/tools/memory.rs
++++ b/src/tools/memory.rs
+@@ -3,11 +3,13 @@ use std::collections::HashMap;
+ use schemars::JsonSchema;
+ use serde::Deserialize;
+ 
++use super::enums::{MemorizeCategory, MemoryCategory};
++
+ /// Request to save a learning to Squall's memory.
+ #[derive(Debug, Deserialize, JsonSchema)]
+ pub struct MemorizeRequest {
+-    /// Category: "pattern" (recurring finding), "tactic" (prompt effectiveness learning), or "recommend" (model recommendation)
+-    pub category: String,
++    /// Category of learning to save.
++    pub category: MemorizeCategory,
+     /// The insight to remember (max 500 characters)
+     pub content: String,
+     /// Which model this relates to (optional)
+@@ -27,8 +29,8 @@ pub struct MemorizeRequest {
+ /// Request to read Squall's memory.
+ #[derive(Debug, Deserialize, JsonSchema)]
+ pub struct MemoryRequest {
+-    /// Which memory to read: "all" (default), "models", "patterns", "tactics", "recommend"
+-    pub category: Option<String>,
++    /// Which memory category to read. Defaults to all.
++    pub category: Option<MemoryCategory>,
+     /// Filter by model name (optional, applies to tactics)
+     pub model: Option<String>,
+     /// Maximum characters to return (default 4000)
+diff --git a/src/tools/mod.rs b/src/tools/mod.rs
+index b3265103..f00c200c 100644
+--- a/src/tools/mod.rs
++++ b/src/tools/mod.rs
+@@ -1,5 +1,6 @@
+ pub mod chat;
+ pub mod clink;
++pub mod enums;
+ pub mod listmodels;
+ pub mod memory;
+ pub mod review;
+diff --git a/src/tools/review.rs b/src/tools/review.rs
+index d9f741c0..c2877198 100644
+--- a/src/tools/review.rs
++++ b/src/tools/review.rs
+@@ -3,6 +3,7 @@ use std::collections::HashMap;
+ use schemars::JsonSchema;
+ use serde::{Deserialize, Serialize};
+ 
++use super::enums::{ReasoningEffort, ResponseFormat};
+ use crate::context::ContextFormat;
+ 
+ /// Request to dispatch a prompt to multiple models with straggler cutoff.
+@@ -21,9 +22,9 @@ pub struct ReviewRequest {
+     pub temperature: Option<f64>,
+     /// Maximum tokens to generate per model. Caps output length for each model's response.
+     pub max_tokens: Option<u64>,
+-    /// Reasoning effort for thinking models: "none" (fastest), "low", "medium", "high" (deepest).
+-    /// Non-reasoning models ignore this. "medium"/"high" automatically extend the deadline to 600s.
+-    pub reasoning_effort: Option<String>,
++    /// Reasoning effort for thinking models. Non-reasoning models ignore this.
++    /// Medium/high automatically extend the deadline to 600s.
++    pub reasoning_effort: Option<ReasoningEffort>,
+     /// Relative file paths to include as context (read and inlined server-side). Requires working_directory.
+     pub file_paths: Option<Vec<String>>,
+     /// Absolute path to the project root for resolving file_paths.
+@@ -49,6 +50,8 @@ pub struct ReviewRequest {
+     /// File context format: "xml" (default, full content) or "hashline" (line_num:hash|content,
+     /// compact for large files). Hashline lets models reference lines by number+hash.
+     pub context_format: Option<ContextFormat>,
++    /// Response format: "detailed" (default, full per-model responses) or "concise" (summary only).
++    pub response_format: Option<ResponseFormat>,
+     /// Pre-review investigation context (code structure notes, hypotheses, areas of concern).
+     /// Persist-only — NOT injected into model prompts. Models get context via per_model_system_prompts.
+     /// Clamped to 32KB to prevent oversized persistence payloads.
+@@ -80,12 +83,12 @@ impl ReviewRequest {
+         }
+     }
+ 
+-    /// Effective reasoning effort: deep mode defaults to "high".
+-    pub fn effective_reasoning_effort(&self) -> Option<String> {
++    /// Effective reasoning effort: deep mode defaults to High.
++    pub fn effective_reasoning_effort(&self) -> Option<ReasoningEffort> {
+         if self.deep == Some(true) && self.reasoning_effort.is_none() {
+-            Some("high".to_string())
++            Some(ReasoningEffort::High)
+         } else {
+-            self.reasoning_effort.clone()
++            self.reasoning_effort
+         }
+     }
+ 
+@@ -154,7 +157,7 @@ pub struct ReviewSummary {
+     pub selection_reasoning: Option<String>,
+ }
+ 
+-/// Full review response (serialized to JSON for MCP and disk).
++/// Full review response (rendered as markdown for MCP, persisted as JSON to disk).
+ #[derive(Debug, Serialize)]
+ pub struct ReviewResponse {
+     pub results: Vec<ReviewModelResult>,
+@@ -176,3 +179,106 @@ pub struct ReviewResponse {
+     /// Quick summary of model outcomes.
+     pub summary: ReviewSummary,
+ }
++
++impl ReviewResponse {
++    /// Render the review response as markdown for the MCP response.
++    /// `concise` mode omits per-model response text (just summary + results_file).
++    pub fn to_markdown(&self, concise: bool) -> String {
++        let mut md = String::with_capacity(1024);
++
++        // Summary line
++        md.push_str(&format!(
++            "## Review Summary\n{} succeeded, {} failed, {} cutoff, {} partial | {}ms elapsed\n",
++            self.summary.models_succeeded,
++            self.summary.models_failed,
++            self.summary.models_cutoff,
++            self.summary.models_partial,
++            self.elapsed_ms,
++        ));
++
++        if let Some(ref file) = self.results_file {
++            md.push_str(&format!("\nResults saved: `{file}`\n"));
++        }
++
++        // Persistence error — critical in concise mode where model text is omitted
++        if let Some(ref err) = self.persist_error {
++            md.push_str(&format!("\n**Persist error**: {err}\n"));
++        }
++
++        // File context issues
++        if let Some(ref skipped) = self.files_skipped
++            && !skipped.is_empty()
++        {
++            md.push_str(&format!(
++                "\n**Files skipped (budget)**: {}\n",
++                skipped.join(", ")
++            ));
++        }
++        if let Some(ref errors) = self.files_errors
++            && !errors.is_empty()
++        {
++            md.push_str(&format!("\n**File errors**: {}\n", errors.join(", ")));
++        }
++
++        // Warnings
++        if !self.warnings.is_empty() {
++            md.push_str("\n### Warnings\n");
++            for w in &self.warnings {
++                md.push_str(&format!("- {w}\n"));
++            }
++        }
++
++        // Not started
++        if !self.not_started.is_empty() {
++            md.push_str(&format!(
++                "\n**Not started**: {}\n",
++                self.not_started.join(", ")
++            ));
++        }
++
++        // Per-model responses (detailed only)
++        if !concise {
++            let succeeded: Vec<_> = self
++                .results
++                .iter()
++                .filter(|r| r.status == ModelStatus::Success)
++                .collect();
++            let failed: Vec<_> = self
++                .results
++                .iter()
++                .filter(|r| r.status != ModelStatus::Success)
++                .collect();
++
++            if !succeeded.is_empty() {
++                for res in &succeeded {
++                    md.push_str(&format!(
++                        "\n### {} ({}ms{})\n",
++                        res.model,
++                        res.latency_ms,
++                        if res.partial { ", partial" } else { "" },
++                    ));
++                    if let Some(ref text) = res.response {
++                        md.push_str(text.trim());
++                        md.push('\n');
++                    }
++                }
++            }
++
++            if !failed.is_empty() {
++                md.push_str("\n### Failed Models\n");
++                for res in &failed {
++                    md.push_str(&format!("- **{}**: ", res.model));
++                    if let Some(ref err) = res.error {
++                        md.push_str(err);
++                    }
++                    if let Some(ref reason) = res.reason {
++                        md.push_str(&format!(" ({reason})"));
++                    }
++                    md.push_str(&format!(" [{}ms]\n", res.latency_ms));
++                }
++            }
++        }
++
++        md
++    }
++}
+diff --git a/tests/file_context.rs b/tests/file_context.rs
+index 38e4d0ce..c1eebcc6 100644
+--- a/tests/file_context.rs
++++ b/tests/file_context.rs
+@@ -390,7 +390,7 @@ fn clink_request_has_file_context_fields() {
+     use squall::tools::clink::ClinkRequest;
+     let _req = ClinkRequest {
+         prompt: "hello".to_string(),
+-        cli_name: "gemini".to_string(),
++        model: "gemini".to_string(),
+         file_paths: Some(vec!["src/lib.rs".to_string()]),
+         working_directory: Some("/tmp".to_string()),
+         system_prompt: None,
+diff --git a/tests/hard_gates.rs b/tests/hard_gates.rs
+index e3eb8e67..8306e0c6 100644
+--- a/tests/hard_gates.rs
++++ b/tests/hard_gates.rs
+@@ -81,6 +81,7 @@ fn make_request(models: Vec<&str>) -> ReviewRequest {
+         per_model_timeout_secs: None,
+         deep: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     }
+ }
+diff --git a/tests/hardening.rs b/tests/hardening.rs
+index 9fba887a..18382b9f 100644
+--- a/tests/hardening.rs
++++ b/tests/hardening.rs
+@@ -1600,6 +1600,7 @@ async fn review_none_branch_model_selection_is_sorted() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+diff --git a/tests/phase3_defects.rs b/tests/phase3_defects.rs
+index d3520bb7..a916ee18 100644
+--- a/tests/phase3_defects.rs
++++ b/tests/phase3_defects.rs
+@@ -153,12 +153,12 @@ fn query_parallel_not_in_tool_list() {
+ fn clink_request_has_no_role_field() {
+     use squall::tools::clink::ClinkRequest;
+ 
+-    // After fix, ClinkRequest should only have prompt and cli_name.
++    // After fix, ClinkRequest should only have prompt and model.
+     // This test verifies compilation — if role field is removed,
+     // constructing with role would fail to compile.
+     let req = ClinkRequest {
+         prompt: "hello".to_string(),
+-        cli_name: "gemini".to_string(),
++        model: "gemini".to_string(),
+         file_paths: None,
+         working_directory: None,
+         system_prompt: None,
+@@ -167,7 +167,7 @@ fn clink_request_has_no_role_field() {
+         reasoning_effort: None,
+     };
+     assert_eq!(req.prompt, "hello");
+-    assert_eq!(req.cli_name, "gemini");
++    assert_eq!(req.model, "gemini");
+ }
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/tests/phase4_defects.rs b/tests/phase4_defects.rs
+index 21cf1470..c22e6013 100644
+--- a/tests/phase4_defects.rs
++++ b/tests/phase4_defects.rs
+@@ -250,6 +250,7 @@ fn find4_10_deep_mode_respects_explicit_timeout() {
+         per_model_timeout_secs: None,
+         deep: Some(true),
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -281,6 +282,7 @@ fn find4_10b_deep_mode_defaults_to_600_when_not_set() {
+         per_model_timeout_secs: None,
+         deep: Some(true),
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+diff --git a/tests/review.rs b/tests/review.rs
+index 14c3944f..725d767d 100644
+--- a/tests/review.rs
++++ b/tests/review.rs
+@@ -8,7 +8,9 @@ use squall::config::Config;
+ use squall::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry, Registry};
+ use squall::memory::MemoryStore;
+ use squall::review::ReviewExecutor;
+-use squall::tools::review::{ModelStatus, ReviewRequest, ReviewResponse, ReviewSummary};
++use squall::tools::review::{
++    ModelStatus, ReviewModelResult, ReviewRequest, ReviewResponse, ReviewSummary,
++};
+ 
+ // ---------------------------------------------------------------------------
+ // Helper: resolve per-model system prompt (mirrors executor logic exactly)
+@@ -45,6 +47,7 @@ fn review_request_default_timeout() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+     assert_eq!(req.timeout_secs(), 180);
+@@ -67,6 +70,7 @@ fn review_request_custom_timeout() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+     assert_eq!(req.timeout_secs(), 60);
+@@ -241,6 +245,7 @@ async fn executor_unknown_models_go_to_not_started() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -306,6 +311,7 @@ async fn executor_none_models_uses_all_configured() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -375,6 +381,7 @@ async fn executor_cutoff_aborts_slow_models() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -450,6 +457,7 @@ async fn executor_fast_models_complete_before_cutoff() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -541,6 +549,7 @@ async fn executor_mixed_fast_and_slow() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -597,6 +606,7 @@ async fn executor_persists_results_to_disk() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -727,6 +737,7 @@ async fn executor_clamps_huge_timeout() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -796,6 +807,7 @@ async fn executor_deduplicates_model_ids() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -872,6 +884,7 @@ async fn executor_caps_all_configured_models() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -927,6 +940,7 @@ async fn persist_filename_includes_pid() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -1058,6 +1072,7 @@ async fn executor_with_per_model_system_prompts() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -1106,6 +1121,7 @@ fn deep_mode_sets_600s_effective_timeout() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+     assert_eq!(
+@@ -1114,8 +1130,8 @@ fn deep_mode_sets_600s_effective_timeout() {
+         "deep: true should default timeout to 600s"
+     );
+     assert_eq!(
+-        req.effective_reasoning_effort().as_deref(),
+-        Some("high"),
++        req.effective_reasoning_effort(),
++        Some(squall::tools::enums::ReasoningEffort::High),
+         "deep: true should default reasoning_effort to high"
+     );
+     assert_eq!(
+@@ -1140,14 +1156,18 @@ fn deep_mode_does_not_override_explicit_values() {
+         per_model_timeout_secs: None,
+         deep: Some(true),
+         max_tokens: Some(4096),
+-        reasoning_effort: Some("medium".to_string()),
++        reasoning_effort: Some(squall::tools::enums::ReasoningEffort::Medium),
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+     // Explicit timeout_secs overrides deep default (fix: was clamped to 600).
+     assert_eq!(req.effective_timeout_secs(), 300);
+     // explicit reasoning_effort should be kept
+-    assert_eq!(req.effective_reasoning_effort().as_deref(), Some("medium"));
++    assert_eq!(
++        req.effective_reasoning_effort(),
++        Some(squall::tools::enums::ReasoningEffort::Medium)
++    );
+     // explicit max_tokens should be kept
+     assert_eq!(req.effective_max_tokens(), Some(4096));
+ }
+@@ -1169,6 +1189,7 @@ fn deep_false_uses_normal_defaults() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+     assert_eq!(req.effective_timeout_secs(), 180);
+@@ -1223,6 +1244,7 @@ async fn deep_mode_executor_uses_effective_timeout() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -1314,6 +1336,7 @@ async fn per_model_timeout_does_not_extend_global_cutoff() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -1410,6 +1433,7 @@ async fn warnings_surface_unknown_per_model_system_prompt_keys() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -1482,6 +1506,7 @@ async fn warnings_surface_unknown_per_model_timeout_keys() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -1538,6 +1563,7 @@ async fn warnings_surface_max_models_truncation() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -1612,6 +1638,7 @@ async fn summary_counts_match_results() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -1689,6 +1716,7 @@ async fn summary_buckets_reconcile() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -1747,6 +1775,7 @@ async fn investigation_context_persisted() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: Some("Found potential race condition in auth flow".to_string()),
+     };
+ 
+@@ -1804,6 +1833,7 @@ async fn investigation_context_clamped() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: Some(big_context),
+     };
+ 
+@@ -1875,6 +1905,7 @@ async fn investigation_context_clamped_utf8_boundary() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: Some(big_context),
+     };
+ 
+@@ -2001,6 +2032,7 @@ async fn persisted_json_contains_files_skipped() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -2073,6 +2105,7 @@ async fn truncation_warning_reports_actual_boundary() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: Some(big_context.clone()),
+     };
+ 
+@@ -2177,6 +2210,7 @@ async fn zero_per_model_timeout_warns() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -2253,6 +2287,7 @@ async fn persisted_json_contains_files_errors() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -2347,6 +2382,7 @@ async fn per_model_system_prompt_case_insensitive_resolution() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -2421,6 +2457,7 @@ async fn per_model_system_prompt_resolves_provider_model_id() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -2489,6 +2526,7 @@ async fn per_model_system_prompt_exact_match_no_warning() {
+         max_tokens: None,
+         reasoning_effort: None,
+         context_format: None,
++        response_format: None,
+         investigation_context: None,
+     };
+ 
+@@ -2510,3 +2548,178 @@ async fn per_model_system_prompt_exact_match_no_warning() {
+         resp.warnings,
+     );
+ }
++
++// ===========================================================================
++// Markdown response format
++// ===========================================================================
++
++#[test]
++fn review_to_markdown_returns_summary_header() {
++    let resp = ReviewResponse {
++        results: vec![],
++        not_started: vec![],
++        cutoff_seconds: 180,
++        elapsed_ms: 1234,
++        results_file: Some("/tmp/results.json".to_string()),
++        persist_error: None,
++        files_skipped: None,
++        files_errors: None,
++        warnings: vec![],
++        summary: ReviewSummary {
++            models_requested: 3,
++            models_gated: 0,
++            models_succeeded: 2,
++            models_failed: 1,
++            models_cutoff: 0,
++            models_partial: 0,
++            models_not_started: 0,
++            auto_selected: false,
++            selection_reasoning: None,
++        },
++    };
++
++    let md = resp.to_markdown(false);
++    assert!(
++        md.contains("## Review Summary"),
++        "Should contain summary header"
++    );
++    assert!(md.contains("2 succeeded"), "Should include succeeded count");
++    assert!(md.contains("1234ms elapsed"), "Should include elapsed time");
++    assert!(
++        md.contains("results.json"),
++        "Should include results_file path"
++    );
++    // Should NOT contain JSON artifacts
++    assert!(!md.contains('{'), "Markdown should not contain JSON braces");
++}
++
++#[test]
++fn review_to_markdown_concise_omits_model_text() {
++    let resp = ReviewResponse {
++        results: vec![ReviewModelResult {
++            model: "grok".to_string(),
++            provider: "xai".to_string(),
++            status: ModelStatus::Success,
++            response: Some("Long model response text here".to_string()),
++            error: None,
++            reason: None,
++            latency_ms: 500,
++            partial: false,
++        }],
++        not_started: vec![],
++        cutoff_seconds: 180,
++        elapsed_ms: 600,
++        results_file: Some("/tmp/r.json".to_string()),
++        persist_error: None,
++        files_skipped: None,
++        files_errors: None,
++        warnings: vec![],
++        summary: ReviewSummary {
++            models_requested: 1,
++            models_gated: 0,
++            models_succeeded: 1,
++            models_failed: 0,
++            models_cutoff: 0,
++            models_partial: 0,
++            models_not_started: 0,
++            auto_selected: false,
++            selection_reasoning: None,
++        },
++    };
++
++    let concise = resp.to_markdown(true);
++    assert!(
++        !concise.contains("Long model response text"),
++        "Concise mode should omit model response text"
++    );
++    assert!(
++        concise.contains("1 succeeded"),
++        "Concise should still have summary"
++    );
++
++    let detailed = resp.to_markdown(false);
++    assert!(
++        detailed.contains("Long model response text"),
++        "Detailed mode should include model response text"
++    );
++    assert!(
++        detailed.contains("### grok"),
++        "Detailed should have per-model headers"
++    );
++}
++
++#[test]
++fn review_to_markdown_shows_warnings() {
++    let resp = ReviewResponse {
++        results: vec![],
++        not_started: vec!["missing-model".to_string()],
++        cutoff_seconds: 180,
++        elapsed_ms: 100,
++        results_file: None,
++        persist_error: None,
++        files_skipped: None,
++        files_errors: None,
++        warnings: vec!["Unknown key 'typo' in per_model_system_prompts".to_string()],
++        summary: ReviewSummary::default(),
++    };
++
++    let md = resp.to_markdown(false);
++    assert!(md.contains("### Warnings"), "Should have warnings section");
++    assert!(md.contains("Unknown key"), "Should include warning text");
++    assert!(
++        md.contains("missing-model"),
++        "Should show not-started models"
++    );
++}
++
++// ===========================================================================
++// Defect: to_markdown() must surface files_skipped and files_errors
++// ===========================================================================
++
++#[test]
++fn review_to_markdown_shows_files_skipped() {
++    let resp = ReviewResponse {
++        results: vec![],
++        not_started: vec![],
++        cutoff_seconds: 180,
++        elapsed_ms: 100,
++        results_file: None,
++        persist_error: None,
++        files_skipped: Some(vec!["large_file.rs".to_string(), "huge.rs".to_string()]),
++        files_errors: None,
++        warnings: vec![],
++        summary: ReviewSummary::default(),
++    };
++
++    let md = resp.to_markdown(false);
++    assert!(
++        md.contains("large_file.rs"),
++        "Markdown should surface skipped files"
++    );
++    assert!(
++        md.contains("huge.rs"),
++        "Markdown should surface all skipped files"
++    );
++}
++
++#[test]
++fn review_to_markdown_shows_files_errors() {
++    let resp = ReviewResponse {
++        results: vec![],
++        not_started: vec![],
++        cutoff_seconds: 180,
++        elapsed_ms: 100,
++        results_file: None,
++        persist_error: None,
++        files_skipped: None,
++        files_errors: Some(vec!["missing.rs: not found".to_string()]),
++        warnings: vec![],
++        summary: ReviewSummary::default(),
++    };
++
++    let md = resp.to_markdown(false);
++    assert!(
++        md.contains("missing.rs: not found"),
++        "Markdown should surface file errors"
++    );
++}
+diff --git a/tests/smoke.rs b/tests/smoke.rs
+index 8ee6805c..c2ceb1bf 100644
+--- a/tests/smoke.rs
++++ b/tests/smoke.rs
+@@ -160,3 +160,182 @@ fn listmodels_returns_capability_fields() {
+         );
+     }
+ }
++
++// ===========================================================================
++// Markdown responses
++// ===========================================================================
++
++#[test]
++fn listmodels_returns_markdown_table() {
++    use squall::tools::listmodels::{ListModelsResponse, ModelInfo};
++
++    let response = ListModelsResponse {
++        models: vec![ModelInfo {
++            name: "test-model".to_string(),
++            provider: "test-provider".to_string(),
++            backend: "http".to_string(),
++            description: "A test model".to_string(),
++            strengths: vec![],
++            weaknesses: vec![],
++            speed_tier: "fast".to_string(),
++            precision_tier: "medium".to_string(),
++        }],
++    };
++
++    let md = response.to_markdown();
++    assert!(md.contains('|'), "Should be a markdown table");
++    assert!(md.contains("test-model"), "Should contain model name");
++    assert!(md.contains("test-provider"), "Should contain provider");
++    assert!(!md.contains('{'), "Should not contain JSON braces");
++}
++
++#[test]
++fn listmodels_markdown_escapes_pipes() {
++    use squall::tools::listmodels::{ListModelsResponse, ModelInfo};
++
++    let response = ListModelsResponse {
++        models: vec![ModelInfo {
++            name: "model|name".to_string(),
++            provider: "provider".to_string(),
++            backend: "http".to_string(),
++            description: "desc with | pipe".to_string(),
++            strengths: vec![],
++            weaknesses: vec![],
++            speed_tier: "fast".to_string(),
++            precision_tier: "medium".to_string(),
++        }],
++    };
++
++    let md = response.to_markdown();
++    assert!(
++        md.contains(r"model\|name"),
++        "Should escape pipes in model names"
++    );
++    assert!(
++        md.contains(r"desc with \| pipe"),
++        "Should escape pipes in descriptions"
++    );
++}
++
++#[test]
++fn listmodels_markdown_escapes_newlines() {
++    use squall::tools::listmodels::{ListModelsResponse, ModelInfo};
++
++    let response = ListModelsResponse {
++        models: vec![ModelInfo {
++            name: "test".to_string(),
++            provider: "prov".to_string(),
++            backend: "http".to_string(),
++            description: "line one\nline two".to_string(),
++            strengths: vec![],
++            weaknesses: vec![],
++            speed_tier: "fast".to_string(),
++            precision_tier: "medium".to_string(),
++        }],
++    };
++
++    let md = response.to_markdown();
++    // Each model must be a single table row — no raw newlines in cells
++    let data_lines: Vec<&str> = md.lines().skip(2).collect(); // skip header + separator
++    assert_eq!(data_lines.len(), 1, "Model entry should be a single row");
++    assert!(
++        !data_lines[0].contains('\n'),
++        "Table row should not contain raw newlines"
++    );
++}
++
++// ===========================================================================
++// CLI name backward compatibility
++// ===========================================================================
++
++#[test]
++fn clink_accepts_cli_name_alias() {
++    use squall::tools::clink::ClinkRequest;
++
++    let json = r#"{"cli_name": "gemini", "prompt": "hello"}"#;
++    let req: ClinkRequest = serde_json::from_str(json).unwrap();
++    assert_eq!(
++        req.model, "gemini",
++        "cli_name alias should deserialize into model field"
++    );
++}
++
++#[test]
++fn clink_accepts_model_field() {
++    use squall::tools::clink::ClinkRequest;
++
++    let json = r#"{"model": "codex", "prompt": "hello"}"#;
++    let req: ClinkRequest = serde_json::from_str(json).unwrap();
++    assert_eq!(req.model, "codex", "model field should work directly");
++}
++
++// ===========================================================================
++// Enum serde aliases
++// ===========================================================================
++
++#[test]
++fn memorize_category_accepts_plural_aliases() {
++    use squall::tools::enums::MemorizeCategory;
++
++    // "patterns" should deserialize to Pattern (common LLM mistake)
++    let cat: MemorizeCategory = serde_json::from_str(r#""patterns""#).unwrap();
++    assert_eq!(cat, MemorizeCategory::Pattern);
++
++    // "tactics" should deserialize to Tactic
++    let cat: MemorizeCategory = serde_json::from_str(r#""tactics""#).unwrap();
++    assert_eq!(cat, MemorizeCategory::Tactic);
++
++    // "recommendation" should deserialize to Recommend
++    let cat: MemorizeCategory = serde_json::from_str(r#""recommendation""#).unwrap();
++    assert_eq!(cat, MemorizeCategory::Recommend);
++}
++
++#[test]
++fn memory_category_accepts_singular_aliases() {
++    use squall::tools::enums::MemoryCategory;
++
++    // "pattern" should deserialize to Patterns (common LLM mistake)
++    let cat: MemoryCategory = serde_json::from_str(r#""pattern""#).unwrap();
++    assert_eq!(cat, MemoryCategory::Patterns);
++
++    // "tactic" should deserialize to Tactics
++    let cat: MemoryCategory = serde_json::from_str(r#""tactic""#).unwrap();
++    assert_eq!(cat, MemoryCategory::Tactics);
++}
++
++#[test]
++fn memory_category_has_no_all_variant() {
++    use squall::tools::enums::MemoryCategory;
++
++    // "all" should NOT be a valid MemoryCategory — callers omit the field instead
++    let result = serde_json::from_str::<MemoryCategory>(r#""all""#);
++    assert!(
++        result.is_err(),
++        "MemoryCategory should not have an All variant — use Option::None instead"
++    );
++}
++
++#[test]
++fn reasoning_effort_enum_round_trips() {
++    use squall::tools::enums::ReasoningEffort;
++
++    for (json, variant) in [
++        (r#""none""#, ReasoningEffort::None),
++        (r#""low""#, ReasoningEffort::Low),
++        (r#""medium""#, ReasoningEffort::Medium),
++        (r#""high""#, ReasoningEffort::High),
++        (r#""xhigh""#, ReasoningEffort::Xhigh),
++    ] {
++        let parsed: ReasoningEffort = serde_json::from_str(json).unwrap();
++        assert_eq!(parsed, variant);
++        let serialized = serde_json::to_string(&parsed).unwrap();
++        assert_eq!(serialized, json);
++    }
++}
++
++#[test]
++fn response_format_defaults_to_detailed() {
++    use squall::tools::enums::ResponseFormat;
++
++    assert_eq!(ResponseFormat::default(), ResponseFormat::Detailed);
++}

@@ -921,11 +921,23 @@ mod tests {
 
         writer.log_events(&results, 1000, "test:project", Some("/tmp/test"), None);
 
-        // Give the worker time to process
-        std::thread::sleep(std::time::Duration::from_millis(1000));
-
-        // Check that a parquet file was created
-        let parquet_files = list_parquet_files(&dir.join("events")).unwrap();
+        // Poll for the worker's output rather than sleeping a fixed interval. A flat
+        // 1s sleep passes on a fast local SSD but races on a loaded shared CI runner,
+        // which made this test fail on ubuntu-latest while passing everywhere else.
+        // Polling keeps the fast path fast and only spends the deadline when starved.
+        let events_dir = dir.join("events");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let parquet_files = loop {
+            let files = list_parquet_files(&events_dir).unwrap_or_default();
+            if !files.is_empty() {
+                break files;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no parquet file after 30s; the writer worker never flushed"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        };
         assert!(
             !parquet_files.is_empty(),
             "should have created at least one parquet file"

@@ -1,0 +1,20 @@
+# cargo-audit configuration.
+#
+# Advisories listed here are ones this crate is provably not exposed to. Each entry
+# must carry a reason; re-check them whenever dependencies or transports change.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2026-0189 — DNS rebinding in rmcp's Streamable HTTP server transport.
+    #
+    # Not applicable: squall is a stdio MCP server. src/main.rs uses
+    # `rmcp::transport::stdio` and the rmcp dependency enables only
+    # ["server", "transport-io"], so the streamable-HTTP server transport is never
+    # compiled in, let alone bound to a port. There is no HTTP listener to rebind.
+    #
+    # The fix requires rmcp >=1.4.0, a major-version jump from the pinned =0.16 that
+    # rewrites the tool-router macro API for no security benefit here. Revisit when
+    # upgrading rmcp for other reasons, or immediately if squall ever gains an HTTP
+    # transport.
+    "RUSTSEC-2026-0189",
+]

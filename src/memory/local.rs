@@ -767,11 +767,13 @@ impl MemoryStore {
         let result: HashMap<String, ModelGateStats> = stats
             .into_iter()
             .map(|(model, a)| {
-                let avg_failed = if a.failed_prompt_count > 0 {
-                    a.failed_prompt_total / a.failed_prompt_count
-                } else {
-                    0
-                };
+                // checked_div returns None on a zero divisor, which is the same
+                // guard as the previous `if count > 0` but without tripping
+                // clippy::manual_checked_div.
+                let avg_failed = a
+                    .failed_prompt_total
+                    .checked_div(a.failed_prompt_count)
+                    .unwrap_or(0);
                 (
                     model,
                     ModelGateStats {

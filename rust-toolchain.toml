@@ -1,0 +1,10 @@
+# Pins this repo to the same channel CI uses (dtolnay/rust-toolchain@stable), so a
+# local `cargo` run and a CI run apply the same lints.
+#
+# Without this, cargo follows the machine's rustup default. That default sat at 1.90
+# (Sept 2025) while CI ran 1.97 (July 2026), so ./scripts/pre-commit.sh passed locally
+# for months while CI failed on `clippy::manual_checked_div` — a lint 1.90 does not
+# have. A green local gate meant nothing.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
