@@ -202,7 +202,7 @@ impl TomlConfig {
                     ) {
                         skip!(format!(
                             "no parser for CLI provider '{cli_provider}' \
-                             (supported: gemini, codex, claude)"
+                             (supported: gemini, codex, claude, antigravity)"
                         ));
                     }
                     let args = model.args_template.unwrap_or_default();
@@ -602,7 +602,7 @@ pub fn resolve_retired_alias(name: &str) -> Option<&'static str> {
 }
 
 // ---------------------------------------------------------------------------
-// Built-in defaults — all 12 models as TOML
+// Built-in defaults — all 13 models as TOML
 // ---------------------------------------------------------------------------
 
 const BUILTIN_DEFAULTS: &str = r#"
@@ -704,7 +704,9 @@ weaknesses = ["higher cost than open Qwen variants"]
 # `agy --effort high --print` answers "I am Gemini 3.6 Flash"). Reasoning level is
 # instead selected through the model label's parenthetical.
 #
-# `agy` has no JSON output mode, so these use the plain-text AntigravityParser.
+# `agy --output-format json` returns {status, response, usage}. Status is reported
+# IN-BAND with exit code 0, so JSON is what lets AntigravityParser tell a failed run
+# from a successful one instead of handing back whatever landed on stdout.
 #
 # --dangerously-skip-permissions is required for clink's agentic file access: headless
 # agy auto-denies any tool permission it cannot prompt for and then returns NO output,
@@ -721,7 +723,7 @@ model_id = "gemini"
 provider = "antigravity"
 backend = "cli"
 executable = "agy"
-args_template = ["--sandbox", "--dangerously-skip-permissions"]
+args_template = ["--sandbox", "--dangerously-skip-permissions", "--output-format", "json"]
 description = "Antigravity CLI on your configured default model (~/.gemini/antigravity-cli/settings.json)"
 speed_tier = "medium"
 precision_tier = "high"
@@ -733,7 +735,7 @@ model_id = "Gemini 3.6 Flash (High)"
 provider = "antigravity"
 backend = "cli"
 executable = "agy"
-args_template = ["--sandbox", "--dangerously-skip-permissions", "--model", "{model}"]
+args_template = ["--sandbox", "--dangerously-skip-permissions", "--output-format", "json", "--model", "{model}"]
 description = "Antigravity CLI pinned to Gemini 3.6 Flash, fast triage tier"
 speed_tier = "fast"
 precision_tier = "medium"
@@ -745,7 +747,7 @@ model_id = "Gemini 3.1 Pro (High)"
 provider = "antigravity"
 backend = "cli"
 executable = "agy"
-args_template = ["--sandbox", "--dangerously-skip-permissions", "--model", "{model}"]
+args_template = ["--sandbox", "--dangerously-skip-permissions", "--output-format", "json", "--model", "{model}"]
 description = "Antigravity CLI pinned to Gemini 3.1 Pro at high reasoning, deep analysis tier"
 speed_tier = "slow"
 precision_tier = "high"
@@ -1070,10 +1072,61 @@ mod tests {
         );
     }
 
+    /// The sentinel is an HTML comment marker. A line merely *mentioning* it in prose
+    /// (as pull-template/SKILL.md does) must not start masking — that currently blanks
+    /// 69 of 149 lines there, hiding any stale key below it.
+    #[test]
+    fn prose_mention_of_sentinel_does_not_mask_content() {
+        let doc = "alpha\nUse the SENTINEL:SESSION_LEARNINGS_START marker to split.\nbeta\n";
+        let out = strip_learnings_archive(doc);
+        assert!(
+            out.contains("beta"),
+            "prose mention masked the rest of the file"
+        );
+    }
+
+    /// A real archive block is still masked.
+    #[test]
+    fn real_sentinel_block_is_masked() {
+        let doc = "alpha\n<!-- SENTINEL:SESSION_LEARNINGS_START - Do not remove this line -->\n\
+                   kimi-k2.6 historical\n<!-- SENTINEL:SESSION_LEARNINGS_END -->\nbeta\n";
+        let out = strip_learnings_archive(doc);
+        assert!(!out.contains("kimi-k2.6"), "archive content must be masked");
+        assert!(out.contains("alpha") && out.contains("beta"));
+    }
+
+    /// Docs write display names ("GLM 5.1", "Llama 4 Maverick"); the roster uses machine
+    /// keys ("glm-5.1", "llama4-maverick"). Matching only the machine spelling let
+    /// README.md keep advertising six removed models while the test stayed green.
+    #[test]
+    fn mentions_key_matches_display_name_spellings() {
+        assert!(mentions_key(
+            "| `TOGETHER_API_KEY` | GLM 5.1, DeepSeek R1 |",
+            "glm-5.1"
+        ));
+        assert!(mentions_key("unlocks DeepSeek R1 and more", "deepseek-r1"));
+        assert!(mentions_key("Llama 4 Maverick", "llama4-maverick"));
+        assert!(mentions_key("Kimi K2.6", "kimi-k2.6"));
+        assert!(mentions_key("Mistral Large", "mistral-large"));
+        assert!(mentions_key("Qwen3 Coder", "qwen3-coder"));
+    }
+
+    /// Normalization must not collapse distinct versions into each other.
+    #[test]
+    fn mentions_key_does_not_confuse_adjacent_versions() {
+        assert!(!mentions_key("GLM 5.2 is current", "glm-5.1"));
+        assert!(!mentions_key("kimi-k2.7-code", "kimi-k2.6"));
+        assert!(!mentions_key("deepseek-v4-pro", "deepseek-r1"));
+    }
+
     /// Blank out the Session Learnings archive so historical mentions don't trip the scan.
+    ///
+    /// The sentinel is an HTML comment marker, so a line must *be* the marker, not merely
+    /// mention it. Matching the bare token made any prose reference start masking — in
+    /// pull-template/SKILL.md that blanked 69 of 149 lines and hid everything below.
     fn strip_learnings_archive(text: &str) -> String {
-        const START: &str = "SENTINEL:SESSION_LEARNINGS_START";
-        const END: &str = "SENTINEL:SESSION_LEARNINGS_END";
+        const START: &str = "<!-- SENTINEL:SESSION_LEARNINGS_START";
+        const END: &str = "<!-- SENTINEL:SESSION_LEARNINGS_END";
         let mut out = String::with_capacity(text.len());
         let mut skipping = false;
         for line in text.lines() {
@@ -1090,9 +1143,38 @@ mod tests {
         out
     }
 
-    /// Substring match with identifier boundaries, so `glm-5.1` does not match
-    /// `glm-5.12` and `kimi-k2.5` does not match `kimi-k2.5x`.
+    /// Strip every non-alphanumeric character and lowercase, so a machine key matches
+    /// the display spelling docs actually use: `llama4-maverick` -> `llama4maverick`
+    /// matches "Llama 4 Maverick", and `glm-5.1` -> `glm51` matches "GLM 5.1".
+    /// Distinct versions stay distinct (`glm51` != `glm52`).
+    fn normalize_for_match(s: &str) -> String {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .flat_map(|c| c.to_lowercase())
+            .collect()
+    }
+
+    /// True when `line` references `key`, in either its machine spelling or the display
+    /// spelling docs use. Machine spelling is matched with identifier boundaries so
+    /// `glm-5.1` does not match `glm-5.12`; display spelling is matched on a normalized
+    /// form, which is how README.md kept advertising six removed models undetected.
     fn mentions_key(line: &str, key: &str) -> bool {
+        if mentions_key_exact(line, key) {
+            return true;
+        }
+        let (nline, nkey) = (normalize_for_match(line), normalize_for_match(key));
+        if nkey.is_empty() {
+            return false;
+        }
+        // Guard against a shorter key matching inside a longer sibling version
+        // ("glm51" must not hit inside "glm512").
+        nline.match_indices(&nkey).any(|(idx, _)| {
+            let after = nline[idx + nkey.len()..].chars().next();
+            !after.is_some_and(|c| c.is_ascii_digit())
+        })
+    }
+
+    fn mentions_key_exact(line: &str, key: &str) -> bool {
         let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '/';
         let mut from = 0;
         while let Some(rel) = line[from..].find(key) {

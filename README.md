@@ -63,9 +63,8 @@ Fill in what you have, skip what you don't. Models only load when their key is s
 
 | Variable | Unlocks | Signup |
 |----------|---------|--------|
-| `TOGETHER_API_KEY` | GLM 5.1, DeepSeek R1, DeepSeek V4-Pro, Kimi K2.6, Qwen 3.7-Max, Qwen3 Coder, Llama 4 Maverick | [together.xyz](https://api.together.xyz/settings/api-keys) |
+| `TOGETHER_API_KEY` | GLM 5.2, DeepSeek V4-Pro, Kimi K2.7-Code, Qwen 3.7-Max | [together.xyz](https://api.together.xyz/settings/api-keys) |
 | `XAI_API_KEY` | Grok | [console.x.ai](https://console.x.ai/) |
-| `MISTRAL_API_KEY` | Mistral Large | [console.mistral.ai](https://console.mistral.ai/api-keys) |
 | `OPENAI_API_KEY` | o3-deep-research, o4-mini-deep-research | [platform.openai.com](https://platform.openai.com/api-keys) |
 | `GOOGLE_API_KEY` | deep-research-pro | [aistudio.google.com](https://aistudio.google.com/apikey) |
 
@@ -160,7 +159,7 @@ All models are configurable via TOML. Add your own models, swap providers, or ov
 
 Squall uses a three-layer TOML config system. Later layers override earlier ones:
 
-1. **Built-in defaults** — 15 models across HTTP, CLI, and async-poll backends, shipped with the binary
+1. **Built-in defaults** — 13 models across HTTP, CLI, and async-poll backends, shipped with the binary
 2. **User config** (`~/.config/squall/config.toml`) — personal overrides
 3. **Project config** (`.squall/config.toml`) — project-specific settings
 

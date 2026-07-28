@@ -1,26 +1,56 @@
+use serde::Deserialize;
+
 use crate::error::SquallError;
 use crate::parsers::OutputParser;
 
-/// Parses Antigravity CLI (`agy --print`) output.
+/// Parses Antigravity CLI (`agy --output-format json`) output.
 ///
-/// Unlike the Gemini, Codex, and Claude CLIs, `agy` has no JSON output mode — the
-/// `--help` surface exposes no `-o`/`--output-format` flag and `--print` emits the
-/// response as plain text. So this parser is a trimmed passthrough; the only failure
-/// mode it can detect is empty output.
-///
-/// `agy` reports its own failures on stderr with a non-zero exit, which the CLI
-/// dispatch layer surfaces before the parser ever runs.
+/// agy reports failure IN-BAND with exit code 0 — a run that errored still exits
+/// cleanly and prints `"status": "ERROR"`. Parsing plain text therefore cannot tell
+/// success from failure, and any stray CLI string (help text, a version number) reads
+/// as a valid model answer. Requiring JSON makes both cases fail loudly.
 pub struct AntigravityParser;
+
+#[derive(Deserialize)]
+struct AntigravityOutput {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    response: Option<String>,
+}
 
 impl OutputParser for AntigravityParser {
     fn parse(&self, stdout: &[u8]) -> Result<String, SquallError> {
-        let text = String::from_utf8_lossy(stdout).trim().to_string();
-        if text.is_empty() {
+        let raw = String::from_utf8_lossy(stdout);
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
             return Err(SquallError::SchemaParse(
                 "agy CLI produced empty output".to_string(),
             ));
         }
-        Ok(text)
+
+        let parsed: AntigravityOutput = serde_json::from_str(trimmed).map_err(|e| {
+            SquallError::SchemaParse(format!(
+                "agy CLI: invalid JSON output: {e} (first 120 bytes: {:.120})",
+                trimmed
+            ))
+        })?;
+
+        match parsed.status.as_deref() {
+            Some("SUCCESS") | None => {}
+            Some(other) => {
+                return Err(SquallError::Other(format!(
+                    "agy CLI reported status {other}"
+                )));
+            }
+        }
+
+        match parsed.response {
+            Some(text) if !text.trim().is_empty() => Ok(text.trim().to_string()),
+            _ => Err(SquallError::SchemaParse(
+                "agy response field is empty or missing".to_string(),
+            )),
+        }
     }
 }
 
@@ -44,22 +74,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_plain_text() {
-        let out = AntigravityParser.parse(b"ok").unwrap();
+    fn parses_json_response() {
+        let out = AntigravityParser
+            .parse(br#"{"status":"SUCCESS","response":"ok\n","usage":{"total_tokens":5}}"#)
+            .unwrap();
         assert_eq!(out, "ok");
     }
 
+    /// agy reports failure in-band with exit code 0. Without checking `status`, a failed
+    /// run is handed back as a successful model response.
     #[test]
-    fn trims_surrounding_whitespace() {
-        let out = AntigravityParser.parse(b"\n  the answer  \n\n").unwrap();
-        assert_eq!(out, "the answer");
+    fn rejects_non_success_status() {
+        let err = AntigravityParser
+            .parse(br#"{"status":"ERROR","response":"boom"}"#)
+            .expect_err("non-SUCCESS status must be an error");
+        assert!(
+            format!("{err}").contains("ERROR"),
+            "error should name the status"
+        );
     }
 
-    /// Multi-line responses must survive intact — only the outer edges are trimmed.
+    /// A bare CLI string (help text, a version number) is not valid JSON and must not be
+    /// mistaken for a model answer — this is how `--print "--version"` returned "1.1.8"
+    /// as a successful response.
     #[test]
-    fn preserves_internal_newlines() {
-        let out = AntigravityParser.parse(b"line one\nline two\n").unwrap();
-        assert_eq!(out, "line one\nline two");
+    fn rejects_non_json_output() {
+        assert!(AntigravityParser.parse(b"1.1.8").is_err());
+        assert!(AntigravityParser.parse(b"Usage of agy:").is_err());
     }
 
     #[test]
@@ -68,11 +109,22 @@ mod tests {
         assert!(AntigravityParser.parse(b"   \n  ").is_err());
     }
 
-    /// JSON is not special-cased — agy has no JSON mode, so a literal brace is just text.
     #[test]
-    fn does_not_try_to_parse_json() {
-        let out = AntigravityParser.parse(br#"{"response": "hi"}"#).unwrap();
-        assert_eq!(out, r#"{"response": "hi"}"#);
+    fn rejects_empty_response_field() {
+        assert!(
+            AntigravityParser
+                .parse(br#"{"status":"SUCCESS","response":""}"#)
+                .is_err()
+        );
+    }
+
+    /// Multi-line answers survive; only the outer edges are trimmed.
+    #[test]
+    fn preserves_internal_newlines() {
+        let out = AntigravityParser
+            .parse(br#"{"status":"SUCCESS","response":"line one\nline two\n"}"#)
+            .unwrap();
+        assert_eq!(out, "line one\nline two");
     }
 
     /// The two efforts agy rejects must map to neighbours, never pass through.

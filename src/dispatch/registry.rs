@@ -185,6 +185,25 @@ impl Registry {
         resolve_retired_alias(model).and_then(|current| self.models.get(current))
     }
 
+    /// Canonical config key for a possibly-retired identifier.
+    ///
+    /// Returns the successor key when `model` is a retired alias that resolves, and the
+    /// input unchanged otherwise (so genuinely unknown names keep their original spelling
+    /// when they surface in `not_started`).
+    ///
+    /// Callers must canonicalize BEFORE deduplicating or looking up per-model statistics:
+    /// `["kimi-k2.6", "kimi-k2.7-code"]` are two spellings of one model, and stats are
+    /// stored under the canonical key only.
+    pub fn canonical_key(&self, model: &str) -> String {
+        if self.models.contains_key(model) {
+            return model.to_string();
+        }
+        match resolve_retired_alias(model) {
+            Some(current) if self.models.contains_key(current) => current.to_string(),
+            _ => model.to_string(),
+        }
+    }
+
     pub fn list_models(&self) -> Vec<(&String, &ModelEntry)> {
         self.models.iter().collect()
     }
@@ -528,6 +547,25 @@ mod tests {
         );
     }
 
+    /// Two spellings of one model must collapse to a single canonical key, or the
+    /// dispatcher runs the same model twice and reports it as agreement between two.
+    #[test]
+    fn canonical_key_collapses_retired_aliases() {
+        let registry = test_registry();
+        assert_eq!(registry.canonical_key("kimi-k2.6"), "kimi-k2.7-code");
+        assert_eq!(registry.canonical_key("kimi-k2.7-code"), "kimi-k2.7-code");
+        assert_eq!(registry.canonical_key("glm-5.1"), "glm-5.2");
+    }
+
+    /// Unknown names keep their original spelling so `not_started` echoes what was asked.
+    #[test]
+    fn canonical_key_passes_through_unknown_names() {
+        let registry = test_registry();
+        assert_eq!(registry.canonical_key("no-such-model"), "no-such-model");
+        // Alias whose target is absent from this registry must not be rewritten.
+        assert_eq!(registry.canonical_key("qwen-3.5"), "qwen-3.5");
+    }
+
     /// Substring matching must keep working for non-retired typos.
     #[test]
     fn suggest_models_still_does_substring_matching() {
@@ -581,14 +619,21 @@ mod tests {
         assert!(matches!(err, SquallError::ModelNotFound { .. }));
     }
 
-    /// The Antigravity CLI needs its own parser: `agy` has no JSON output mode, so
-    /// routing it through GeminiParser would fail on every response.
+    /// The Antigravity CLI needs its own parser: agy's JSON envelope is
+    /// `{status, response, usage}`, and GeminiParser reads only `response` with no
+    /// status check — so it would accept a failed run as a valid answer.
     #[test]
     fn parser_for_resolves_antigravity() {
         let parser = Registry::parser_for("antigravity").expect("antigravity parser must exist");
-        assert_eq!(
-            parser.parse(b"plain text reply").unwrap(),
-            "plain text reply"
+        let out = parser
+            .parse(br#"{"status":"SUCCESS","response":"hello"}"#)
+            .unwrap();
+        assert_eq!(out, "hello");
+        // agy signals failure in-band with exit code 0; the parser must catch it.
+        assert!(
+            parser
+                .parse(br#"{"status":"ERROR","response":"x"}"#)
+                .is_err()
         );
     }
 

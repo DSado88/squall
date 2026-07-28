@@ -14,6 +14,29 @@ pub const MAX_MODELS: usize = 20;
 
 use crate::dispatch::ProviderRequest;
 
+/// Canonicalize and deduplicate caller-supplied model names.
+///
+/// Retired aliases resolve to their successor BEFORE dedup, which fixes two bugs that
+/// share this one root cause:
+///
+/// - `["kimi-k2.6", "kimi-k2.7-code"]` are two spellings of one model. Deduplicating
+///   the literal strings dispatched it twice and reported the duplicate as agreement
+///   between two independent models.
+///
+/// - The hard gate looks up `stats.get(model)`, and statistics are stored under the
+///   canonical key. An un-canonicalized retired key never matched, so it escaped
+///   gating entirely no matter how badly the underlying model performed.
+///
+/// Unknown names pass through unchanged so `not_started` echoes what the caller asked for.
+fn canonicalize_and_dedup(requested: &[String], registry: &Registry) -> Vec<String> {
+    let mut seen = HashSet::new();
+    requested
+        .iter()
+        .map(|m| registry.canonical_key(m))
+        .filter(|m| seen.insert(m.clone()))
+        .collect()
+}
+
 /// Resolve a per-model key using fuzzy matching against target model names.
 ///
 /// Resolution order:
@@ -100,12 +123,7 @@ impl ReviewExecutor {
 
         // Determine which models to query (deduplicate, cap at MAX_MODELS)
         let target_models: Vec<String> = if let Some(ref specific) = req.models {
-            let mut seen = HashSet::new();
-            let deduped: Vec<String> = specific
-                .iter()
-                .filter(|m| seen.insert((*m).clone()))
-                .cloned()
-                .collect();
+            let deduped: Vec<String> = canonicalize_and_dedup(specific, &self.registry);
             if deduped.len() > MAX_MODELS {
                 let dropped: Vec<&str> = deduped[MAX_MODELS..].iter().map(|s| s.as_str()).collect();
                 let msg = format!(
@@ -758,4 +776,87 @@ async fn persist_response(
     }
 
     Ok(format!(".squall/reviews/{filename}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ClientMode, Config, PersistRawOutput, ReviewConfig};
+    use crate::dispatch::registry::{ApiFormat, BackendConfig, ModelEntry};
+
+    fn test_registry() -> Registry {
+        let mut models = HashMap::new();
+        for (key, model_id) in [
+            ("kimi-k2.7-code", "moonshotai/Kimi-K2.7-Code"),
+            ("glm-5.2", "zai-org/GLM-5.2"),
+        ] {
+            models.insert(
+                key.to_string(),
+                ModelEntry {
+                    model_id: model_id.to_string(),
+                    provider: "together".to_string(),
+                    backend: BackendConfig::Http {
+                        base_url: "https://example.invalid".to_string(),
+                        api_key: "t".to_string(),
+                        api_format: ApiFormat::OpenAi,
+                    },
+                    description: String::new(),
+                    strengths: vec![],
+                    weaknesses: vec![],
+                    speed_tier: "medium".to_string(),
+                    precision_tier: "medium".to_string(),
+                },
+            );
+        }
+        Registry::from_config(Config {
+            models,
+            skipped: vec![],
+            persist_raw_output: PersistRawOutput::Never,
+            review: ReviewConfig::default(),
+            #[cfg(feature = "global-memory")]
+            global_memory: crate::config::GlobalMemoryConfig {
+                enabled: false,
+                db_path: String::new(),
+            },
+            client_mode: ClientMode::Claude,
+        })
+    }
+
+    /// A retired key and its successor are two spellings of ONE model. Dispatching both
+    /// runs it twice and reports the duplicate as agreement between two independent
+    /// models — fabricated consensus in exactly the signal reviews exist to produce.
+    #[test]
+    fn dedup_collapses_retired_alias_with_its_successor() {
+        let registry = test_registry();
+        let requested = vec!["kimi-k2.6".to_string(), "kimi-k2.7-code".to_string()];
+        let got = canonicalize_and_dedup(&requested, &registry);
+        assert_eq!(
+            got,
+            vec!["kimi-k2.7-code".to_string()],
+            "retired alias and successor must collapse to one dispatch"
+        );
+    }
+
+    /// Statistics are stored under the canonical key, so the hard gate only sees a
+    /// model's history if the name was canonicalized before lookup.
+    #[test]
+    fn dedup_canonicalizes_so_gate_lookup_matches_stats() {
+        let registry = test_registry();
+        let got = canonicalize_and_dedup(&[String::from("glm-5.1")], &registry);
+        assert_eq!(got, vec!["glm-5.2".to_string()]);
+    }
+
+    /// Distinct models must all survive, and unknown names keep their spelling.
+    #[test]
+    fn dedup_keeps_distinct_models_and_unknown_names() {
+        let registry = test_registry();
+        let requested = vec![
+            "glm-5.2".to_string(),
+            "kimi-k2.7-code".to_string(),
+            "no-such-model".to_string(),
+        ];
+        let got = canonicalize_and_dedup(&requested, &registry);
+        assert_eq!(got.len(), 3);
+        assert!(got.contains(&"no-such-model".to_string()));
+    }
 }
