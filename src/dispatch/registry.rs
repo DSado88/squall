@@ -146,6 +146,7 @@ pub struct Registry {
     async_poll_semaphore: Semaphore,
     persist_raw_output: PersistRawOutput,
     client_mode: ClientMode,
+    hard_gate: bool,
 }
 
 impl Registry {
@@ -160,7 +161,13 @@ impl Registry {
             async_poll_semaphore: Semaphore::new(ASYNC_POLL_MAX_CONCURRENT),
             persist_raw_output: config.persist_raw_output,
             client_mode: config.client_mode,
+            hard_gate: config.hard_gate,
         }
+    }
+
+    /// Whether the success-rate hard gate may exclude models. See `Config::hard_gate`.
+    pub fn hard_gate_enabled(&self) -> bool {
+        self.hard_gate
     }
 
     /// Returns the number of CLI semaphore permits (for testing).
@@ -455,6 +462,7 @@ mod tests {
             models,
             skipped: vec![],
             persist_raw_output: PersistRawOutput::Never,
+            hard_gate: false,
             review: ReviewConfig::default(),
             #[cfg(feature = "global-memory")]
             global_memory: crate::config::GlobalMemoryConfig {

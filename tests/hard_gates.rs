@@ -58,11 +58,31 @@ fn test_registry(model_names: &[&str]) -> Arc<Registry> {
             },
         );
     }
+    // These tests exercise gate behaviour, so they opt in explicitly. The shipped
+    // default is `hard_gate = false` — the gate judges models on cumulative history
+    // that outlives the config which produced it, and a gated model logs no new
+    // samples, so it can never clear itself.
     let config = Config {
         models,
+        hard_gate: true,
         ..Default::default()
     };
     Arc::new(Registry::from_config(config))
+}
+
+/// Registry with the SHIPPED default (`hard_gate = false`).
+fn test_registry_ungated(names: &[&str]) -> Arc<Registry> {
+    let gated = test_registry(names);
+    let models = gated
+        .list_models()
+        .into_iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    Arc::new(Registry::from_config(Config {
+        models,
+        hard_gate: false,
+        ..Default::default()
+    }))
 }
 
 fn make_request(models: Vec<&str>) -> ReviewRequest {
@@ -833,5 +853,42 @@ async fn partial_results_not_counted_as_success() {
         (p.success_rate - 0.0).abs() < 0.01,
         "0 full successes / 5 = 0%, got {:.1}%",
         p.success_rate * 100.0
+    );
+}
+
+/// With the gate off — the shipped default — a model below the success threshold must
+/// still be dispatched, so it can log fresh samples and recover. Under the old always-on
+/// behaviour a model gated on stale history was never dispatched again, so it could not
+/// produce the samples that would clear it; `gemini` sat stuck at ~54% from the retired
+/// CLI long after being migrated to working software.
+#[tokio::test]
+async fn gate_disabled_dispatches_model_below_threshold() {
+    let events = "\
+| 2026-02-23T10:00:00Z | bad-model | 10.0s | error | no | timeout | 1000 |
+| 2026-02-23T10:01:00Z | bad-model | 10.0s | error | no | timeout | 1000 |
+| 2026-02-23T10:02:00Z | bad-model | 10.0s | error | no | timeout | 1000 |
+| 2026-02-23T10:03:00Z | bad-model | 10.0s | error | no | timeout | 1000 |
+| 2026-02-23T10:04:00Z | bad-model | 10.0s | error | no | timeout | 1000 |
+| 2026-02-23T10:05:00Z | bad-model | 10.0s | error | no | timeout | 1000 |
+| 2026-02-23T10:06:00Z | bad-model | 5.0s | success | no | — | 1000 |";
+
+    let (store, _dir) = store_with_events(events);
+    let registry = test_registry_ungated(&["bad-model"]);
+    let executor = ReviewExecutor::new(registry);
+    let req = make_request(vec!["bad-model"]);
+
+    let resp = executor
+        .execute(&req, req.prompt.clone(), &store, None, None, None, None)
+        .await;
+
+    let dispatched: Vec<&str> = resp.results.iter().map(|r| r.model.as_str()).collect();
+    assert!(
+        dispatched.contains(&"bad-model"),
+        "gate is off, so a below-threshold model must still be dispatched. Got: {dispatched:?}"
+    );
+    assert!(
+        !resp.warnings.iter().any(|w| w.contains("hard gate")),
+        "no gate warning should be emitted when the gate is disabled: {:?}",
+        resp.warnings
     );
 }

@@ -177,7 +177,9 @@ impl ReviewExecutor {
         // Diagnostic: gate warnings include timeout/cutoff breakdown + avg failed prompt size.
         let mut gated_count = 0usize;
         let id_to_key = self.registry.model_id_to_key();
-        if let Some(stats) = memory.get_model_stats(Some(&id_to_key)).await {
+        if self.registry.hard_gate_enabled()
+            && let Some(stats) = memory.get_model_stats(Some(&id_to_key)).await
+        {
             let original = target_models.clone();
             let mut gated = Vec::new();
             target_models.retain(|model| {
@@ -812,6 +814,7 @@ mod tests {
             models,
             skipped: vec![],
             persist_raw_output: PersistRawOutput::Never,
+            hard_gate: false,
             review: ReviewConfig::default(),
             #[cfg(feature = "global-memory")]
             global_memory: crate::config::GlobalMemoryConfig {

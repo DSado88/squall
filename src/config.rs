@@ -29,6 +29,8 @@ struct TomlConfig {
 struct TomlSettings {
     #[serde(default)]
     persist_raw_output: Option<String>,
+    #[serde(default)]
+    hard_gate: Option<bool>,
 }
 
 #[derive(Deserialize, Clone, Default)]
@@ -99,6 +101,9 @@ impl TomlConfig {
         // Settings: later layer overrides if explicitly set
         if other.settings.persist_raw_output.is_some() {
             self.settings.persist_raw_output = other.settings.persist_raw_output;
+        }
+        if other.settings.hard_gate.is_some() {
+            self.settings.hard_gate = other.settings.hard_gate;
         }
         // Review config: later layer overrides if explicitly set
         if other.review.default_models.is_some() {
@@ -319,6 +324,7 @@ impl TomlConfig {
             models,
             skipped,
             persist_raw_output,
+            hard_gate: self.settings.hard_gate.unwrap_or(false),
             review,
             #[cfg(feature = "global-memory")]
             global_memory,
@@ -458,6 +464,17 @@ pub struct Config {
     pub skipped: Vec<String>,
     /// When to persist raw CLI output to `.squall/raw/`.
     pub persist_raw_output: PersistRawOutput,
+    /// Whether the success-rate hard gate may exclude models from a review.
+    ///
+    /// Off by default. The gate judges a model on cumulative history, which outlives the
+    /// configuration that produced it: when the `gemini` CLI was retired upstream, every
+    /// call failed and the `gemini` key sank to ~54%, then stayed gated after it was
+    /// migrated to working software. A gated model is never dispatched, so it logs no new
+    /// samples and cannot earn its way back out — the failure is self-sustaining.
+    ///
+    /// Enable with `[settings] hard_gate = true` once stats have refilled under a
+    /// configuration you trust.
+    pub hard_gate: bool,
     /// Tiered model selection for automatic review dispatch.
     pub review: ReviewConfig,
     /// Cross-project global memory settings (DuckDB-backed).
@@ -610,6 +627,10 @@ const BUILTIN_DEFAULTS: &str = r#"
 
 [settings]
 persist_raw_output = "on_failure"
+# Success-rate gate, off by default: it judges models on cumulative history that
+# outlives the config that produced it, and a gated model is never dispatched, so it
+# can never log the samples that would clear it. Set true to re-enable.
+hard_gate = false
 
 # --- Providers ---
 
@@ -1009,6 +1030,42 @@ mod tests {
                 "{key} must auto-approve tools; headless agy denies them and returns no output"
             );
         }
+    }
+
+    /// The gate is off by default. It judges a model on cumulative history, which
+    /// outlives the configuration that produced it — the retired `gemini` CLI left
+    /// `gemini` stuck at ~54% even after it was migrated to working software, and a
+    /// gated model is never dispatched, so it cannot earn its way back out.
+    #[test]
+    fn hard_gate_is_disabled_by_default() {
+        let config = Config::from_toml("");
+        assert!(
+            !config.hard_gate,
+            "hard gate must default to off so stats refill under the current config"
+        );
+    }
+
+    #[test]
+    fn hard_gate_can_be_enabled_via_config() {
+        let config = Config::from_toml("[settings]\nhard_gate = true\n");
+        assert!(config.hard_gate);
+    }
+
+    #[test]
+    fn hard_gate_merge_override() {
+        let mut base: TomlConfig = toml::from_str("[settings]\nhard_gate = true\n").unwrap();
+        let overlay: TomlConfig = toml::from_str("[settings]\nhard_gate = false\n").unwrap();
+        base.merge(overlay);
+        assert_eq!(base.settings.hard_gate, Some(false));
+    }
+
+    /// An overlay that says nothing about the gate must not reset it.
+    #[test]
+    fn hard_gate_merge_preserves_base_when_overlay_omits() {
+        let mut base: TomlConfig = toml::from_str("[settings]\nhard_gate = true\n").unwrap();
+        let overlay: TomlConfig = toml::from_str("[settings]\n").unwrap();
+        base.merge(overlay);
+        assert_eq!(base.settings.hard_gate, Some(true));
     }
 
     /// Removed keys must actually be gone from the roster, or `listmodels` keeps
