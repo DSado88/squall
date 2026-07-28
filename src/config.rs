@@ -619,7 +619,7 @@ pub fn resolve_retired_alias(name: &str) -> Option<&'static str> {
 }
 
 // ---------------------------------------------------------------------------
-// Built-in defaults — all 13 models as TOML
+// Built-in defaults — all 14 models as TOML
 // ---------------------------------------------------------------------------
 
 const BUILTIN_DEFAULTS: &str = r#"
@@ -683,6 +683,16 @@ speed_tier = "medium"
 precision_tier = "medium"
 strengths = ["contrarian perspective", "edge case detection", "cached input support"]
 weaknesses = ["inconsistent quality"]
+
+[models."kimi-k3"]
+model_id = "moonshotai/Kimi-K3"
+provider = "together"
+backend = "http"
+description = "Moonshot's Kimi K3 via Together (US-hosted), 2.8T-param frontier reasoner with 1M ctx"
+speed_tier = "medium"
+precision_tier = "high"
+strengths = ["frontier reasoning", "1M context", "long-horizon agentic work", "multimodal"]
+weaknesses = ["~4x the cost of kimi-k2.7-code ($3/$15 per M)", "emits many reasoning tokens"]
 
 [models."deepseek-v4-pro"]
 model_id = "deepseek-ai/DeepSeek-V4-Pro"
@@ -907,7 +917,7 @@ mod tests {
         assert!(config.providers.contains_key("together"));
         assert!(config.providers.contains_key("deepseek"));
         assert!(config.providers.contains_key("mistral"));
-        assert_eq!(config.models.len(), 13);
+        assert_eq!(config.models.len(), 14);
         assert!(config.models.contains_key("grok"));
         assert!(config.models.contains_key("gemini"));
         assert!(config.models.contains_key("codex"));
@@ -1066,6 +1076,22 @@ mod tests {
         let overlay: TomlConfig = toml::from_str("[settings]\n").unwrap();
         base.merge(overlay);
         assert_eq!(base.settings.hard_gate, Some(true));
+    }
+
+    /// Kimi K3 reached Together's serverless roster on 2026-07-27. It is a separate
+    /// tier from K2.7-Code, not a replacement: 1M ctx and frontier reasoning at
+    /// $3/$15 per M, against 262K and $0.95/$4 for the cheap code specialist.
+    #[test]
+    fn kimi_k3_is_available() {
+        let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
+        let entry = config
+            .models
+            .get("kimi-k3")
+            .expect("kimi-k3 must be defined");
+        assert_eq!(entry.model_id.as_deref(), Some("moonshotai/Kimi-K3"));
+        assert_eq!(entry.provider.as_deref(), Some("together"));
+        // The cheap code tier stays — different price/purpose, not superseded.
+        assert!(config.models.contains_key("kimi-k2.7-code"));
     }
 
     /// Removed keys must actually be gone from the roster, or `listmodels` keeps
