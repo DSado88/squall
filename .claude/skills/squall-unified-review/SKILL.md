@@ -193,9 +193,9 @@ It creates the team, assigns tasks, waits for all agents, then synthesizes their
 
 | Agent | Models | Rationale |
 |-------|--------|-----------|
-| Security | kimi-k2.7-code, codex, grok | kimi: adversarial edge cases. codex: precision anchor (0 FP). grok: fast cross-function. |
+| Security | kimi-k3, codex, grok | kimi: adversarial edge cases. codex: precision anchor (0 FP). grok: fast cross-function. |
 | Correctness | codex, deepseek-v4-pro, gemini | codex: precision. gemini: systems-level bugs. deepseek: fast broad coverage. |
-| Architecture | gemini, codex, qwen-3.7-max | gemini: architectural bugs. codex: contract violations. qwen: pattern matching. |
+| Architecture | gemini, codex, qwen-3.8 | gemini: architectural bugs. codex: contract violations. qwen: pattern matching. |
 
 Model overlap across agents is intentional — same model with different lens produces different analysis.
 Cross-agent overlap creates consensus signal (codex flagging the same issue through security AND
@@ -217,27 +217,19 @@ Proceed to Phase 3. The instructions below apply to QUICK, STANDARD, and DEEP on
 
    | Source | Why | Backend |
    |--------|-----|---------|
-   | **gemini-flash** / **gemini-pro** | Antigravity CLI. Pick by depth (see below). Free (CLI). | `review` (uses clink internally) |
+   | **gemini-flash** | Antigravity CLI, Gemini 3.8 Flash (High). Free (CLI). | `review` (uses clink internally) |
    | **codex** | Highest signal-to-noise, concise, finds correctness bugs. Free (CLI). | `review` (uses clink internally) |
    | **grok** | Best speed/quality ratio, fast, finds cross-function bugs. | `review` (HTTP) |
    | **Opus agent** | Local investigation — shell, git, tests, cross-file tracing. | `Task` (background agent) |
 
    For **QUICK**: Use only grok (single fastest Tier 1 model). Skip Opus agent.
 
-   **Gemini tier is depth-driven** — the Antigravity CLI exposes Flash and Pro as
-   separate Squall models, so pick the one that matches the review's depth:
-
-   | Depth | Use | Why |
-   |-------|-----|-----|
-   | QUICK | `gemini-flash` (if including gemini at all) | fast, cheap breadth |
-   | STANDARD | `gemini-flash` | good signal per second |
-   | DEEP / SWARM | `gemini-pro` | architectural and systems-level depth |
-
-   Plain `gemini` inherits whatever model is set in `~/.gemini/antigravity-cli/settings.json`.
-   Use it when the operator's own choice should win; prefer the explicit `-flash`/`-pro`
-   keys when the depth should decide. Do NOT pass `reasoning_effort` to these — `agy`
-   encodes effort in the model label, and its `--effort` flag silently downgrades the
-   model to Flash.
+   **Gemini:** use `gemini-flash` at every depth. Antigravity offers only Gemini 3.8 Flash
+   (High/Medium/Low) since dropping 3.1 Pro, and `gemini-flash` pins the High label.
+   Plain `gemini` inherits whatever is set in `~/.gemini/antigravity-cli/settings.json`;
+   use it only when the operator's own choice should win. Do NOT pass `reasoning_effort`
+   to either — `agy` encodes effort in the model label, and its `--effort` flag silently
+   swaps the configured model.
    For **STANDARD**: All 4 Tier 1 sources (Opus runs in parallel with dispatch).
    For **DEEP**: All 4 Tier 1 sources (Opus spawned after investigation, runs in parallel with dispatch).
 
@@ -251,10 +243,10 @@ Proceed to Phase 3. The instructions below apply to QUICK, STANDARD, and DEEP on
 
    | Model | Best For | Notes |
    |-------|----------|-------|
-   | **kimi-k2.7-code** | Security, edge cases, adversarial scenarios | Code-specialized contrarian. Needs a focused lens to shine. |
-   | **deepseek-v4-pro** | Fast triage, broad coverage | DeepSeek V4-Pro via Together, 512K ctx, high precision. Pair with focused lens. |
-   | **qwen-3.7-max** | Pattern matching, performance analysis | 1M ctx, agentic. Good with performance-focused lens. |
-   | **glm-5.2** | Architectural framing | GLM-5.2 via Together, 262K ctx. Strong structural analysis. |
+   | **kimi-k3** | Security, edge cases, adversarial scenarios | Frontier contrarian, $3/$15 per M. Needs a focused lens to earn the cost. |
+   | **deepseek-v4-pro** | Fast triage, broad coverage | DeepSeek V4-Pro via Together, 1M ctx, high precision. Pair with focused lens. |
+   | **qwen-3.8** | Pattern matching, performance analysis | 1M ctx, agentic. Good with performance-focused lens. |
+   | **glm-5.3** | Architectural framing | GLM-5.3 via Together, 1M ctx. Strong structural analysis. |
 
    **Selection criteria for Tier 2:**
    - Check `memory` recommend for success rates and `memory` tactic for proven lens combos
@@ -267,7 +259,7 @@ Proceed to Phase 3. The instructions below apply to QUICK, STANDARD, and DEEP on
    **ALWAYS show selection reasoning:**
    ```
    Tier 1: gemini, codex, grok, Opus agent (always)
-   Tier 2: kimi-k2.7-code (security lens, cold-start), deepseek-v4-pro (fast triage, high precision)
+   Tier 2: kimi-k3 (security lens, cold-start), deepseek-v4-pro (fast triage, high precision)
    Rationale: Rust concurrency code — Kimi strong on edge cases, DV3.1 for broad coverage
    ```
 
@@ -568,7 +560,7 @@ CONSTRAINTS:
 
 ### Lens-Specific Investigation Steps
 
-**Security** (`{MODELS}`: kimi-k2.7-code, codex, grok):
+**Security** (`{MODELS}`: kimi-k3, codex, grok):
 - Trace all trust boundary crossings in changed code
 - Check input validation and sanitization paths
 - `git blame` on security-critical lines
@@ -581,7 +573,7 @@ CONSTRAINTS:
 - Check error handling completeness (all error paths covered?)
 - Verify changed public APIs still satisfy existing callers (grep for callers)
 
-**Architecture** (`{MODELS}`: gemini, codex, qwen-3.7-max):
+**Architecture** (`{MODELS}`: gemini, codex, qwen-3.8):
 - Map dependency graph of changed modules (who imports what)
 - Check for API contract changes by diffing public function signatures
 - Grep for performance anti-patterns (allocations in hot loops, clone() chains)

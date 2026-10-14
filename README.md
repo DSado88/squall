@@ -63,12 +63,11 @@ Fill in what you have, skip what you don't. Models only load when their key is s
 
 | Variable | Unlocks | Signup |
 |----------|---------|--------|
-| `TOGETHER_API_KEY` | GLM 5.2, DeepSeek V4-Pro, Kimi K2.7-Code, Kimi K3, Qwen 3.7-Max | [together.xyz](https://api.together.xyz/settings/api-keys) |
+| `TOGETHER_API_KEY` | GLM 5.3, DeepSeek V4-Pro, Kimi K3, Qwen 3.8 | [together.xyz](https://api.together.xyz/settings/api-keys) |
 | `XAI_API_KEY` | Grok | [console.x.ai](https://console.x.ai/) |
-| `OPENAI_API_KEY` | o3-deep-research, o4-mini-deep-research | [platform.openai.com](https://platform.openai.com/api-keys) |
 | `GOOGLE_API_KEY` | deep-research-pro | [aistudio.google.com](https://aistudio.google.com/apikey) |
 
-CLI models (gemini/gemini-flash/gemini-pro via `agy`, codex, claude) use their respective CLI tools with OAuth authentication — no API key needed, but usage may be subject to each provider's terms and rate limits. Install and authenticate the [Antigravity CLI](https://antigravity.google), [Codex CLI](https://github.com/openai/codex), and [Claude Code](https://github.com/anthropics/claude-code) separately. The legacy `gemini` CLI is retired — it now fails with `IneligibleTierError`.
+CLI models (gemini/gemini-flash via `agy`, codex, claude) use their respective CLI tools with OAuth authentication — no API key needed, but usage may be subject to each provider's terms and rate limits. Install and authenticate the [Antigravity CLI](https://antigravity.google), [Codex CLI](https://github.com/openai/codex), and [Claude Code](https://github.com/anthropics/claude-code) separately. The legacy `gemini` CLI is retired — it now fails with `IneligibleTierError`.
 
 ### Verify
 
@@ -140,18 +139,14 @@ Three dispatch backends: **HTTP** (OpenAI-compatible), **CLI** (subprocess, OAut
 | Model | Provider | Backend | Speed | Best for |
 |-------|----------|---------|-------|----------|
 | `grok` | xAI | HTTP | fast | Quick triage, broad coverage, long context |
-| `glm-5.2` | Together | HTTP | medium | Architectural framing, 262K context |
-| `deepseek-v4-pro` | Together | HTTP | medium | Strong coder, finds real bugs, 512K context |
-| `kimi-k2.7-code` | Together | HTTP | medium | Code-specialized, edge cases, adversarial scenarios |
-| `kimi-k3` | Together | HTTP | medium | Frontier reasoning, 1M context, long-horizon agentic |
-| `qwen-3.7-max` | Together | HTTP | medium | Agentic, 1M context, multilingual code |
+| `glm-5.3` | Together | HTTP | medium | Architectural framing, 1M context |
+| `deepseek-v4-pro` | Together | HTTP | medium | Strong coder, finds real bugs, 1M context |
+| `kimi-k3` | Together | HTTP | medium | Frontier reasoning, contrarian edge cases, 1M context |
+| `qwen-3.8` | Together | HTTP | medium | Agentic, 1M context, multilingual code |
 | `gemini` | Antigravity | CLI (OAuth) | medium | Your configured default model |
-| `gemini-flash` | Antigravity | CLI (OAuth) | fast | Quick triage, cheap breadth |
-| `gemini-pro` | Antigravity | CLI (OAuth) | slow | Systems-level bugs, architecture |
+| `gemini-flash` | Antigravity | CLI (OAuth) | fast | Gemini 3.8 Flash (High), systems-level bugs |
 | `codex` | OpenAI | CLI (OAuth) | slow | Highest precision, zero false positives |
 | `claude` | Anthropic | CLI (OAuth) | medium | Local investigator for Codex-hosted Squall |
-| `o3-deep-research` | OpenAI | async-poll | minutes | Deep web research |
-| `o4-mini-deep-research` | OpenAI | async-poll | minutes | Faster deep research |
 | `deep-research-pro` | Google | async-poll | minutes | Google-powered deep research |
 
 All models are configurable via TOML. Add your own models, swap providers, or override defaults.
@@ -160,7 +155,7 @@ All models are configurable via TOML. Add your own models, swap providers, or ov
 
 Squall uses a three-layer TOML config system. Later layers override earlier ones:
 
-1. **Built-in defaults** — 14 models across HTTP, CLI, and async-poll backends, shipped with the binary
+1. **Built-in defaults** — 10 models across HTTP, CLI, and async-poll backends, shipped with the binary
 2. **User config** (`~/.config/squall/config.toml`) — personal overrides
 3. **Project config** (`.squall/config.toml`) — project-specific settings
 

@@ -379,21 +379,13 @@ fn poll_failed_user_message_clean() {
 // Config registration (env-dependent)
 // ---------------------------------------------------------------------------
 
+/// OpenAI retired both deep research models, so they must not register even when
+/// OPENAI_API_KEY is set — advertising them would fail every dispatch.
 #[test]
-fn config_registers_openai_deep_research_when_key_set() {
-    // This test depends on OPENAI_API_KEY being set in the environment.
-    // If not set, deep research models should NOT be registered.
+fn config_never_registers_retired_openai_deep_research() {
     let config = squall::config::Config::from_env();
-    if std::env::var("OPENAI_API_KEY").is_ok() {
-        assert!(config.models.contains_key("o3-deep-research"));
-        assert!(config.models.contains_key("o4-mini-deep-research"));
-        let entry = &config.models["o3-deep-research"];
-        assert!(entry.is_async_poll());
-        assert_eq!(entry.provider, "openai");
-    } else {
-        assert!(!config.models.contains_key("o3-deep-research"));
-        assert!(!config.models.contains_key("o4-mini-deep-research"));
-    }
+    assert!(!config.models.contains_key("o3-deep-research"));
+    assert!(!config.models.contains_key("o4-mini-deep-research"));
 }
 
 #[test]

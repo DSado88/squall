@@ -58,7 +58,7 @@ pub trait AsyncPollApi: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// OpenAI Responses API (o3-deep-research, o4-mini-deep-research)
+// OpenAI Responses API (no built-in model since OpenAI retired its deep research models)
 // ---------------------------------------------------------------------------
 
 pub struct OpenAiResponsesApi;

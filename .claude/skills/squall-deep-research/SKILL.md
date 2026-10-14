@@ -254,7 +254,7 @@ Combine outputs into `.squall/research/mcp-streaming-responses.md`.
 ## Limitations
 
 - **Gemini deep research** requires `GEMINI_API_KEY` (paid tier) — not currently configured
-- **Codex deep research model** (`o4-mini-deep-research`) requires `OPENAI_API_KEY` — not available
+- **OpenAI deep research models** are retired — Codex normal web search is the only OpenAI path
 - **Codex normal web search** is the reliable path today — uses existing ChatGPT auth
 - **Results quality** depends heavily on prompt engineering — be specific, ask for sources
 - **No structured output** — research results are free-form text, not JSON

@@ -148,9 +148,9 @@ different lens, each doing local investigation AND dispatching its own Squall re
 
 | Agent | Models | Rationale |
 |-------|--------|-----------|
-| Security | kimi-k2.7-code, claude, grok | kimi: adversarial edge cases. claude: precision anchor (mirror of codex in Claude version). grok: fast cross-function. |
+| Security | kimi-k3, claude, grok | kimi: adversarial edge cases. claude: precision anchor (mirror of codex in Claude version). grok: fast cross-function. |
 | Correctness | claude, deepseek-v4-pro, gemini | claude: precision. gemini: systems-level bugs. deepseek: fast broad coverage. |
-| Architecture | gemini, claude, qwen-3.7-max | gemini: architectural bugs. claude: contract violations. qwen: pattern matching. |
+| Architecture | gemini, claude, qwen-3.8 | gemini: architectural bugs. claude: contract violations. qwen: pattern matching. |
 
 Note `claude` replaces `codex` in every ensemble — recursion guard refuses `clink(codex)`
 when Codex is the host. `claude` plays the symmetric role.
@@ -167,27 +167,19 @@ when Codex is the host. `claude` plays the symmetric role.
 
    | Source | Why | Backend |
    |--------|-----|---------|
-   | **gemini-flash** / **gemini-pro** | Antigravity CLI. Pick by depth (see below). Free (CLI). | `review` |
+   | **gemini-flash** | Antigravity CLI, Gemini 3.8 Flash (High). Free (CLI). | `review` |
    | **claude** | High signal-to-noise, finds correctness bugs. Mirror of `codex` in the Claude variant. | `review` (uses clink internally) |
    | **grok** | Best speed/quality ratio, fast, finds cross-function bugs. | `review` (HTTP) |
    | **Codex subagent** | Local investigation — shell, git, tests, cross-file tracing. | Background subagent |
 
    For **QUICK**: just grok. Skip Codex subagent.
 
-   **Gemini tier is depth-driven** — the Antigravity CLI exposes Flash and Pro as
-   separate Squall models, so pick the one matching the review's depth:
-
-   | Depth | Use | Why |
-   |-------|-----|-----|
-   | QUICK | `gemini-flash` (if including gemini at all) | fast, cheap breadth |
-   | STANDARD | `gemini-flash` | good signal per second |
-   | DEEP / SWARM | `gemini-pro` | architectural and systems-level depth |
-
-   Plain `gemini` inherits whatever is set in `~/.gemini/antigravity-cli/settings.json`.
-   Use it when the operator's own choice should win; prefer the explicit `-flash`/`-pro`
-   keys when the depth should decide. Do NOT pass `reasoning_effort` to these — `agy`
-   encodes effort in the model label, and its `--effort` flag silently downgrades the
-   model to Flash.
+   **Gemini:** use `gemini-flash` at every depth. Antigravity offers only Gemini 3.8 Flash
+   (High/Medium/Low) since dropping 3.1 Pro, and `gemini-flash` pins the High label.
+   Plain `gemini` inherits whatever is set in `~/.gemini/antigravity-cli/settings.json`;
+   use it only when the operator's own choice should win. Do NOT pass `reasoning_effort`
+   to either — `agy` encodes effort in the model label, and its `--effort` flag silently
+   swaps the configured model.
    For **STANDARD**: All 4 Tier 1 sources (subagent runs in parallel).
    For **DEEP**: All 4 Tier 1 sources (subagent spawned after investigation).
 
@@ -195,10 +187,10 @@ when Codex is the host. `claude` plays the symmetric role.
 
    | Model | Best For | Notes |
    |-------|----------|-------|
-   | **kimi-k2.7-code** | Security, edge cases, adversarial scenarios | Code-specialized contrarian. Pair with focused lens. |
+   | **kimi-k3** | Security, edge cases, adversarial scenarios | Code-specialized contrarian. Pair with focused lens. |
    | **deepseek-v4-pro** | Fast triage, broad coverage | 512K ctx, high precision. |
-   | **qwen-3.7-max** | Pattern matching, performance analysis | 1M ctx, agentic. |
-   | **glm-5.2** | Architectural framing | GLM-5.2 via Together, 262K ctx. |
+   | **qwen-3.8** | Pattern matching, performance analysis | 1M ctx, agentic. |
+   | **glm-5.3** | Architectural framing | GLM-5.3 via Together, 1M ctx. |
 
    **Selection criteria** (same as Claude variant): memory recommend + memory tactic +
    model strengths matching the diff. Models with <70% success rate (>=5 samples) are
@@ -207,7 +199,7 @@ when Codex is the host. `claude` plays the symmetric role.
    **Always show selection reasoning:**
    ```
    Tier 1: gemini, claude, grok, Codex subagent (always)
-   Tier 2: kimi-k2.7-code (security lens), deepseek-v4-pro (fast triage)
+   Tier 2: kimi-k3 (security lens), deepseek-v4-pro (fast triage)
    Rationale: Rust concurrency code — Kimi for edge cases, DV4-Pro for broad coverage
    ```
 
@@ -436,7 +428,7 @@ CONSTRAINTS:
 
 ### Lens-Specific Investigation Steps
 
-**Security** (`{MODELS}: kimi-k2.7-code, claude, grok`):
+**Security** (`{MODELS}: kimi-k3, claude, grok`):
 - Trace all trust boundary crossings.
 - Check input validation and sanitization paths.
 - `git blame` on security-critical lines.
@@ -449,7 +441,7 @@ CONSTRAINTS:
 - Check error handling completeness.
 - Verify changed public APIs still satisfy existing callers (grep for callers).
 
-**Architecture** (`{MODELS}: gemini, claude, qwen-3.7-max`):
+**Architecture** (`{MODELS}: gemini, claude, qwen-3.8`):
 - Map dependency graph of changed modules.
 - Check for API contract changes by diffing public function signatures.
 - Grep for performance anti-patterns.

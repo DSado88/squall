@@ -563,25 +563,39 @@ impl Config {
 /// 2. Memory stats survive a rename, so the hard gate isn't reset to cold-start.
 /// 3. `suggest_models` can point at the successor, which plain substring matching
 ///    cannot do across a version bump (`kimi-k2.6` shares no substring with
-///    `kimi-k2.7-code`).
+///    `kimi-k3`).
 ///
 /// Add an entry here whenever a model key or model_id changes. `retired_aliases_resolve`
 /// asserts every target still exists, and `skill_files_have_no_retired_model_keys`
 /// asserts no skill file still dispatches a retired name.
 pub const RETIRED_MODEL_ALIASES: &[(&str, &str)] = &[
     // --- retired config keys ---
-    ("kimi-k2.5", "kimi-k2.7-code"),
-    ("kimi-k2.6", "kimi-k2.7-code"),
-    ("glm-5.1", "glm-5.2"),
-    ("z-ai/glm-5", "glm-5.2"),
-    ("qwen-3.5", "qwen-3.7-max"),
+    ("kimi-k2.5", "kimi-k3"),
+    ("kimi-k2.6", "kimi-k3"),
+    // Together demoted K2.7-Code to dedicated-only; K3 is the only serverless Kimi.
+    ("kimi-k2.7-code", "kimi-k3"),
+    ("glm-5.1", "glm-5.3"),
+    ("glm-5.2", "glm-5.3"),
+    ("z-ai/glm-5", "glm-5.3"),
+    ("qwen-3.5", "qwen-3.8"),
+    ("qwen-3.7-max", "qwen-3.8"),
     ("deepseek-v3.1", "deepseek-v4-pro"),
+    // agy dropped Gemini 3.1 Pro; Gemini 3.8 Flash is the only Gemini it offers.
+    ("gemini-pro", "gemini-flash"),
     // --- retired provider model_ids (memory continuity) ---
-    ("moonshotai/Kimi-K2.5", "kimi-k2.7-code"),
-    ("moonshotai/Kimi-K2.6", "kimi-k2.7-code"),
-    ("zai-org/GLM-5.1", "glm-5.2"),
+    ("moonshotai/Kimi-K2.5", "kimi-k3"),
+    ("moonshotai/Kimi-K2.6", "kimi-k3"),
+    ("moonshotai/Kimi-K2.7-Code", "kimi-k3"),
+    ("zai-org/GLM-5.1", "glm-5.3"),
+    ("zai-org/GLM-5.2", "glm-5.3"),
+    ("Qwen/Qwen3.7-Max", "qwen-3.8"),
     ("deepseek-ai/DeepSeek-V3.1", "deepseek-v4-pro"),
+    ("deepseek-ai/DeepSeek-V4-Pro", "deepseek-v4-pro"),
     ("grok-4.3", "grok"),
+    ("grok-4.5", "grok"),
+    ("gpt-5.5", "codex"),
+    ("Gemini 3.1 Pro (High)", "gemini-flash"),
+    ("Gemini 3.6 Flash (High)", "gemini-flash"),
 ];
 
 /// Model keys removed from the roster with no successor — the provider retired the
@@ -603,6 +617,9 @@ pub const REMOVED_MODEL_KEYS: &[&str] = &[
     "llama4-maverick",
     // No Mistral model is serverless on Together, and MISTRAL_API_KEY is unset.
     "mistral-large",
+    // OpenAI retired both deep research models; /v1/models lists neither.
+    "o3-deep-research",
+    "o4-mini-deep-research",
 ];
 
 /// Resolve a possibly-retired model identifier to its current config key.
@@ -619,7 +636,7 @@ pub fn resolve_retired_alias(name: &str) -> Option<&'static str> {
 }
 
 // ---------------------------------------------------------------------------
-// Built-in defaults — all 14 models as TOML
+// Built-in defaults — all 10 models as TOML
 // ---------------------------------------------------------------------------
 
 const BUILTIN_DEFAULTS: &str = r#"
@@ -653,36 +670,24 @@ api_key_env = "TOGETHER_API_KEY"
 # --- HTTP models ---
 
 [models.grok]
-model_id = "grok-4.5"
+model_id = "grok-4.7"
 provider = "xai"
 backend = "http"
-description = "xAI Grok 4.5, fast reasoning with text+image input and 200K long-context threshold"
+description = "xAI Grok 4.7, fast reasoning with text+image input, 500K ctx (200K long-context price threshold)"
 speed_tier = "fast"
 precision_tier = "medium"
 strengths = ["fast responses", "broad knowledge", "long context", "agentic tool calling"]
 weaknesses = ["XML escaping false positives", "edition 2024 false positives"]
 
-[models."glm-5.2"]
-model_id = "zai-org/GLM-5.2"
+[models."glm-5.3"]
+model_id = "zai-org/GLM-5.3"
 provider = "together"
 backend = "http"
-description = "Zhipu GLM-5.2 via Together (US-hosted), 262K ctx, strong architectural and coding analysis"
+description = "Zhipu GLM-5.3 via Together (US-hosted), 1M ctx, strong architectural and coding analysis"
 speed_tier = "medium"
 precision_tier = "medium"
-strengths = ["clear architectural analysis", "structured output", "strong SWE-bench Pro performance"]
+strengths = ["clear architectural analysis", "structured output", "1M context"]
 weaknesses = ["surface-level findings on simple bugs"]
-
-
-
-[models."kimi-k2.7-code"]
-model_id = "moonshotai/Kimi-K2.7-Code"
-provider = "together"
-backend = "http"
-description = "Moonshot's Kimi K2.7-Code via Together (US-hosted), code-specialized contrarian edge case reviewer with cached input"
-speed_tier = "medium"
-precision_tier = "medium"
-strengths = ["contrarian perspective", "edge case detection", "cached input support"]
-weaknesses = ["inconsistent quality"]
 
 [models."kimi-k3"]
 model_id = "moonshotai/Kimi-K3"
@@ -691,29 +696,29 @@ backend = "http"
 description = "Moonshot's Kimi K3 via Together (US-hosted), 2.8T-param frontier reasoner with 1M ctx"
 speed_tier = "medium"
 precision_tier = "high"
-strengths = ["frontier reasoning", "1M context", "long-horizon agentic work", "multimodal"]
-weaknesses = ["~4x the cost of kimi-k2.7-code ($3/$15 per M)", "emits many reasoning tokens"]
+strengths = ["frontier reasoning", "1M context", "long-horizon agentic work", "contrarian edge cases"]
+weaknesses = ["expensive ($3/$15 per M)", "emits many reasoning tokens"]
 
 [models."deepseek-v4-pro"]
-model_id = "deepseek-ai/DeepSeek-V4-Pro"
+model_id = "deepseek-ai/DeepSeek-V4-Pro-0813"
 provider = "together"
 backend = "http"
-description = "DeepSeek V4-Pro via Together (US-hosted), frontier open-source coder with 512K ctx"
+description = "DeepSeek V4-Pro (0813) via Together (US-hosted), frontier open-source coder with 1M ctx"
 speed_tier = "medium"
 precision_tier = "high"
-strengths = ["strong reasoning", "finds real bugs", "512K context", "cached input support"]
+strengths = ["strong reasoning", "finds real bugs", "1M context", "cached input support"]
 weaknesses = ["verbose output"]
 
 
-[models."qwen-3.7-max"]
-model_id = "Qwen/Qwen3.7-Max"
+[models."qwen-3.8"]
+model_id = "Qwen/Qwen3.8-2.4T-A95B"
 provider = "together"
 backend = "http"
-description = "Alibaba's Qwen3.7-Max via Together, flagship agent-era model with 1M context"
+description = "Alibaba's Qwen3.8 2.4T-A95B open-weight flagship via Together, 1M context"
 speed_tier = "medium"
 precision_tier = "high"
 strengths = ["agentic tool calling", "1M context", "strong multilingual code understanding"]
-weaknesses = ["higher cost than open Qwen variants"]
+weaknesses = ["vendor-reported benchmarks only"]
 
 
 
@@ -727,8 +732,11 @@ weaknesses = ["higher cost than open Qwen variants"]
 # including its parenthetical ("Gemini 3.1 Pro (High)", never a bare "Gemini 3.1 Pro").
 # So each entry picks one knob:
 #   gemini        no flags -> honours ~/.gemini/antigravity-cli/settings.json
-#   gemini-flash  pinned Flash, for QUICK/triage work
-#   gemini-pro    pinned Pro, for DEEP/architectural work
+#   gemini-flash  pinned to the best Gemini agy offers, at High reasoning
+#
+# As of 2026-10-13 agy offers only Gemini 3.8 Flash (High/Medium/Low); it rejects
+# "Gemini 3.1 Pro (High)" as unrecognized, so `gemini-pro` is retired to gemini-flash.
+# A settings.json still naming a dropped model silently falls back to the default.
 #
 # --effort is deliberately unused: passing it SILENTLY DISCARDS the configured model
 # and falls back to Flash (verified — bare `agy --print` answers "I am Gemini 3.1 Pro",
@@ -762,36 +770,24 @@ strengths = ["systems-level bugs", "follows your CLI default model"]
 weaknesses = ["slower than HTTP models"]
 
 [models.gemini-flash]
-model_id = "Gemini 3.6 Flash (High)"
+model_id = "Gemini 3.8 Flash (High)"
 provider = "antigravity"
 backend = "cli"
 executable = "agy"
 args_template = ["--sandbox", "--dangerously-skip-permissions", "--output-format", "json", "--model", "{model}"]
-description = "Antigravity CLI pinned to Gemini 3.6 Flash, fast triage tier"
+description = "Antigravity CLI pinned to Gemini 3.8 Flash at high reasoning"
 speed_tier = "fast"
-precision_tier = "medium"
-strengths = ["fast turnaround", "cheap breadth", "good for QUICK reviews"]
-weaknesses = ["less depth than Pro on architectural analysis"]
-
-[models.gemini-pro]
-model_id = "Gemini 3.1 Pro (High)"
-provider = "antigravity"
-backend = "cli"
-executable = "agy"
-args_template = ["--sandbox", "--dangerously-skip-permissions", "--output-format", "json", "--model", "{model}"]
-description = "Antigravity CLI pinned to Gemini 3.1 Pro at high reasoning, deep analysis tier"
-speed_tier = "slow"
 precision_tier = "high"
-strengths = ["systems-level bugs", "architectural analysis", "finds all real bugs"]
-weaknesses = ["slowest CLI model", "no effort knob (effort is baked into the label)"]
+strengths = ["systems-level bugs", "fast turnaround", "pinned reasoning level"]
+weaknesses = ["no effort knob (effort is baked into the label)"]
 
 [models.codex]
-model_id = "gpt-5.5"
+model_id = "gpt-6-astra"
 provider = "codex"
 backend = "cli"
 executable = "codex"
 args_template = ["exec", "--json", "-m", "{model}", "-c", "model_reasoning_effort=\"{reasoning}\""]
-description = "OpenAI Codex CLI (GPT-5.5), highest precision with zero false positives"
+description = "OpenAI Codex CLI (GPT-6 Astra), highest precision with zero false positives"
 speed_tier = "slow"
 precision_tier = "high"
 strengths = ["highest precision", "zero false positives", "exact line references"]
@@ -810,30 +806,6 @@ strengths = ["local file access", "deep reasoning", "full Claude Code toolset"]
 weaknesses = ["requires claude CLI installed", "slower than HTTP"]
 
 # --- Async-poll models (deep research) ---
-
-[models.o3-deep-research]
-model_id = "o3-deep-research"
-provider = "openai"
-backend = "async_poll"
-async_poll_type = "openai_responses"
-api_key_env = "OPENAI_API_KEY"
-description = "OpenAI o3 deep research, long-running web research"
-speed_tier = "very_slow"
-precision_tier = "high"
-strengths = ["deep web research", "comprehensive analysis"]
-weaknesses = ["very slow (minutes)", "expensive"]
-
-[models.o4-mini-deep-research]
-model_id = "o4-mini-deep-research"
-provider = "openai"
-backend = "async_poll"
-async_poll_type = "openai_responses"
-api_key_env = "OPENAI_API_KEY"
-description = "OpenAI o4-mini deep research, faster variant of deep research"
-speed_tier = "very_slow"
-precision_tier = "medium"
-strengths = ["faster than o3-deep-research", "good cost-quality tradeoff"]
-weaknesses = ["still slow (minutes)", "less thorough than o3"]
 
 [models.deep-research-pro]
 model_id = "deep-research-pro-preview-12-2025"
@@ -917,12 +889,11 @@ mod tests {
         assert!(config.providers.contains_key("together"));
         assert!(config.providers.contains_key("deepseek"));
         assert!(config.providers.contains_key("mistral"));
-        assert_eq!(config.models.len(), 14);
+        assert_eq!(config.models.len(), 10);
         assert!(config.models.contains_key("grok"));
         assert!(config.models.contains_key("gemini"));
         assert!(config.models.contains_key("codex"));
         assert!(config.models.contains_key("claude"));
-        assert!(config.models.contains_key("o3-deep-research"));
         assert!(config.models.contains_key("deep-research-pro"));
     }
 
@@ -971,7 +942,7 @@ mod tests {
     #[test]
     fn gemini_models_dispatch_via_antigravity_cli() {
         let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
-        for key in ["gemini", "gemini-flash", "gemini-pro"] {
+        for key in ["gemini", "gemini-flash"] {
             let entry = config
                 .models
                 .get(key)
@@ -1078,9 +1049,8 @@ mod tests {
         assert_eq!(base.settings.hard_gate, Some(true));
     }
 
-    /// Kimi K3 reached Together's serverless roster on 2026-07-27. It is a separate
-    /// tier from K2.7-Code, not a replacement: 1M ctx and frontier reasoning at
-    /// $3/$15 per M, against 262K and $0.95/$4 for the cheap code specialist.
+    /// Kimi K3 reached Together's serverless roster on 2026-07-27. Together demoted
+    /// K2.7-Code to dedicated-only by 2026-10-13, which left K3 as the only Kimi.
     #[test]
     fn kimi_k3_is_available() {
         let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
@@ -1090,8 +1060,56 @@ mod tests {
             .expect("kimi-k3 must be defined");
         assert_eq!(entry.model_id.as_deref(), Some("moonshotai/Kimi-K3"));
         assert_eq!(entry.provider.as_deref(), Some("together"));
-        // The cheap code tier stays — different price/purpose, not superseded.
-        assert!(config.models.contains_key("kimi-k2.7-code"));
+        assert_eq!(resolve_retired_alias("kimi-k2.7-code"), Some("kimi-k3"));
+    }
+
+    /// Roster audit 2026-10-13, every model_id verified by a live dispatch (listing
+    /// presence proves nothing on Together). Dead: `moonshotai/Kimi-K2.7-Code` and
+    /// `deepseek-ai/DeepSeek-V4-Pro` ("Unable to access non-serverless model"), and agy
+    /// rejects "Gemini 3.1 Pro (High)" outright. OpenAI no longer lists either deep
+    /// research model.
+    #[test]
+    fn roster_matches_2026_10_live_catalog() {
+        let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
+        let model_id = |key: &str| {
+            config
+                .models
+                .get(key)
+                .unwrap_or_else(|| panic!("{key} must be defined"))
+                .model_id
+                .clone()
+        };
+        assert_eq!(model_id("glm-5.3").as_deref(), Some("zai-org/GLM-5.3"));
+        assert_eq!(
+            model_id("deepseek-v4-pro").as_deref(),
+            Some("deepseek-ai/DeepSeek-V4-Pro-0813")
+        );
+        assert_eq!(
+            model_id("qwen-3.8").as_deref(),
+            Some("Qwen/Qwen3.8-2.4T-A95B")
+        );
+        assert_eq!(
+            model_id("gemini-flash").as_deref(),
+            Some("Gemini 3.8 Flash (High)")
+        );
+        assert_eq!(model_id("codex").as_deref(), Some("gpt-6-astra"));
+
+        for (old, new) in [
+            ("glm-5.2", "glm-5.3"),
+            ("qwen-3.7-max", "qwen-3.8"),
+            ("gemini-pro", "gemini-flash"),
+            ("grok-4.5", "grok"),
+            ("gpt-5.5", "codex"),
+            ("deepseek-ai/DeepSeek-V4-Pro", "deepseek-v4-pro"),
+        ] {
+            assert_eq!(resolve_retired_alias(old), Some(new), "{old}");
+        }
+        for key in ["o3-deep-research", "o4-mini-deep-research"] {
+            assert!(
+                REMOVED_MODEL_KEYS.contains(&key),
+                "{key} must be listed as removed"
+            );
+        }
     }
 
     /// Removed keys must actually be gone from the roster, or `listmodels` keeps
@@ -1194,6 +1212,15 @@ mod tests {
         assert!(mentions_key("Qwen3 Coder", "qwen3-coder"));
     }
 
+    /// Normalization strips word boundaries, so a key could match across them:
+    /// "Gemini prompt" normalizes to `geminiprompt`, which contains `geminipro`.
+    #[test]
+    fn mentions_key_ignores_key_embedded_in_longer_word() {
+        assert!(!mentions_key("- Gemini prompt: analyze this", "gemini-pro"));
+        assert!(!mentions_key("Grokking the codebase", "grok"));
+        assert!(mentions_key("use Gemini Pro for depth", "gemini-pro"));
+    }
+
     /// Normalization must not collapse distinct versions into each other.
     #[test]
     fn mentions_key_does_not_confuse_adjacent_versions() {
@@ -1241,19 +1268,35 @@ mod tests {
     /// spelling docs use. Machine spelling is matched with identifier boundaries so
     /// `glm-5.1` does not match `glm-5.12`; display spelling is matched on a normalized
     /// form, which is how README.md kept advertising six removed models undetected.
+    ///
+    /// The normalized key must equal a run of WHOLE words from the line. Plain substring
+    /// matching on the normalized line crossed word boundaries: "Gemini prompt" became
+    /// `geminiprompt` and matched `gemini-pro`, and `glm51` matched inside `glm512`.
     fn mentions_key(line: &str, key: &str) -> bool {
         if mentions_key_exact(line, key) {
             return true;
         }
-        let (nline, nkey) = (normalize_for_match(line), normalize_for_match(key));
+        let nkey = normalize_for_match(key);
         if nkey.is_empty() {
             return false;
         }
-        // Guard against a shorter key matching inside a longer sibling version
-        // ("glm51" must not hit inside "glm512").
-        nline.match_indices(&nkey).any(|(idx, _)| {
-            let after = nline[idx + nkey.len()..].chars().next();
-            !after.is_some_and(|c| c.is_ascii_digit())
+        let words: Vec<String> = line
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(normalize_for_match)
+            .collect();
+        (0..words.len()).any(|start| {
+            let mut joined = String::new();
+            for word in &words[start..] {
+                joined.push_str(word);
+                if joined == nkey {
+                    return true;
+                }
+                if !nkey.starts_with(&joined) {
+                    return false;
+                }
+            }
+            false
         })
     }
 
@@ -1294,7 +1337,7 @@ mod tests {
     fn builtin_grok_model_id_is_correct() {
         let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
         let grok = &config.models["grok"];
-        assert_eq!(grok.model_id.as_deref(), Some("grok-4.5"));
+        assert_eq!(grok.model_id.as_deref(), Some("grok-4.7"));
         assert_eq!(grok.provider.as_deref(), Some("xai"));
         assert_eq!(grok.backend, "http");
     }

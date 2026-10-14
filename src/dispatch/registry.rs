@@ -199,7 +199,7 @@ impl Registry {
     /// when they surface in `not_started`).
     ///
     /// Callers must canonicalize BEFORE deduplicating or looking up per-model statistics:
-    /// `["kimi-k2.6", "kimi-k2.7-code"]` are two spellings of one model, and stats are
+    /// `["kimi-k2.6", "kimi-k3"]` are two spellings of one model, and stats are
     /// stored under the canonical key only.
     pub fn canonical_key(&self, model: &str) -> String {
         if self.models.contains_key(model) {
@@ -250,7 +250,7 @@ impl Registry {
         }
 
         // Substring matching cannot bridge a version bump — `kimi-k2.6` shares no
-        // substring with `kimi-k2.7-code` — so version bumps are invisible to the
+        // substring with `kimi-k3` — so version bumps are invisible to the
         // fallback below. The alias table is the only thing that can suggest them.
         if let Some(current) = resolve_retired_alias(query)
             && self.models.contains_key(current)
@@ -436,9 +436,9 @@ mod tests {
     fn test_registry() -> Registry {
         let mut models = HashMap::new();
         for (key, model_id) in [
-            ("kimi-k2.7-code", "moonshotai/Kimi-K2.7-Code"),
-            ("glm-5.2", "zai-org/GLM-5.2"),
-            ("grok", "grok-4.5"),
+            ("kimi-k3", "moonshotai/Kimi-K3"),
+            ("glm-5.3", "zai-org/GLM-5.3"),
+            ("grok", "grok-4.7"),
         ] {
             models.insert(
                 key.to_string(),
@@ -481,12 +481,12 @@ mod tests {
         let entry = registry
             .get("kimi-k2.6")
             .expect("retired key kimi-k2.6 should resolve to its successor");
-        assert_eq!(entry.model_id, "moonshotai/Kimi-K2.7-Code");
+        assert_eq!(entry.model_id, "moonshotai/Kimi-K3");
 
         let entry = registry
             .get("glm-5.1")
             .expect("retired key glm-5.1 should resolve to its successor");
-        assert_eq!(entry.model_id, "zai-org/GLM-5.2");
+        assert_eq!(entry.model_id, "zai-org/GLM-5.3");
     }
 
     /// Current keys must not be shadowed by the alias lookup.
@@ -494,8 +494,8 @@ mod tests {
     fn get_prefers_live_key_over_alias() {
         let registry = test_registry();
         assert_eq!(
-            registry.get("kimi-k2.7-code").unwrap().model_id,
-            "moonshotai/Kimi-K2.7-Code"
+            registry.get("kimi-k3").unwrap().model_id,
+            "moonshotai/Kimi-K3"
         );
         assert!(registry.get("no-such-model").is_none());
     }
@@ -509,25 +509,22 @@ mod tests {
 
         // Current model_ids still map to their key.
         assert_eq!(
-            map.get("moonshotai/Kimi-K2.7-Code").map(String::as_str),
-            Some("kimi-k2.7-code")
+            map.get("moonshotai/Kimi-K3").map(String::as_str),
+            Some("kimi-k3")
         );
         // Retired provider model_ids map forward.
         assert_eq!(
             map.get("moonshotai/Kimi-K2.6").map(String::as_str),
-            Some("kimi-k2.7-code")
+            Some("kimi-k3")
         );
         assert_eq!(
             map.get("zai-org/GLM-5.1").map(String::as_str),
-            Some("glm-5.2")
+            Some("glm-5.3")
         );
         assert_eq!(map.get("grok-4.3").map(String::as_str), Some("grok"));
         // Retired config keys map forward too.
-        assert_eq!(
-            map.get("kimi-k2.6").map(String::as_str),
-            Some("kimi-k2.7-code")
-        );
-        assert_eq!(map.get("glm-5.1").map(String::as_str), Some("glm-5.2"));
+        assert_eq!(map.get("kimi-k2.6").map(String::as_str), Some("kimi-k3"));
+        assert_eq!(map.get("glm-5.1").map(String::as_str), Some("glm-5.3"));
     }
 
     /// Aliases whose target is absent from this registry must not appear in the map —
@@ -536,22 +533,22 @@ mod tests {
     fn model_id_to_key_omits_aliases_with_missing_targets() {
         let registry = test_registry();
         let map = registry.model_id_to_key();
-        // qwen-3.7-max is not in this test registry, so qwen-3.5 must not map forward.
+        // qwen-3.8 is not in this test registry, so qwen-3.5 must not map forward.
         assert!(!map.contains_key("qwen-3.5"));
     }
 
     /// Substring matching cannot bridge a version bump: `kimi-k2.6` shares no substring
-    /// with `kimi-k2.7-code`. The alias table has to supply the suggestion.
+    /// with `kimi-k3`. The alias table has to supply the suggestion.
     #[test]
     fn suggest_models_suggests_retired_key_successor() {
         let registry = test_registry();
         assert_eq!(
             registry.suggest_models("kimi-k2.6"),
-            vec!["kimi-k2.7-code".to_string()]
+            vec!["kimi-k3".to_string()]
         );
         assert_eq!(
             registry.suggest_models("glm-5.1"),
-            vec!["glm-5.2".to_string()]
+            vec!["glm-5.3".to_string()]
         );
     }
 
@@ -560,9 +557,9 @@ mod tests {
     #[test]
     fn canonical_key_collapses_retired_aliases() {
         let registry = test_registry();
-        assert_eq!(registry.canonical_key("kimi-k2.6"), "kimi-k2.7-code");
-        assert_eq!(registry.canonical_key("kimi-k2.7-code"), "kimi-k2.7-code");
-        assert_eq!(registry.canonical_key("glm-5.1"), "glm-5.2");
+        assert_eq!(registry.canonical_key("kimi-k2.6"), "kimi-k3");
+        assert_eq!(registry.canonical_key("kimi-k3"), "kimi-k3");
+        assert_eq!(registry.canonical_key("glm-5.1"), "glm-5.3");
     }
 
     /// Unknown names keep their original spelling so `not_started` echoes what was asked.
@@ -578,7 +575,7 @@ mod tests {
     #[test]
     fn suggest_models_still_does_substring_matching() {
         let registry = test_registry();
-        assert_eq!(registry.suggest_models("glm"), vec!["glm-5.2".to_string()]);
+        assert_eq!(registry.suggest_models("glm"), vec!["glm-5.3".to_string()]);
         assert!(registry.suggest_models("totally-unrelated").is_empty());
     }
 
@@ -657,7 +654,7 @@ mod tests {
         let registry = test_registry();
         assert_eq!(
             registry.get("kimi-k2.6").unwrap().model_id,
-            "moonshotai/Kimi-K2.7-Code"
+            "moonshotai/Kimi-K3"
         );
     }
 }
