@@ -1,7 +1,7 @@
 #!/bin/zsh -l
 # Build squall from origin/main and install it everywhere it runs:
 #
-#   MBP    david  ~/.local/bin/squall                (copied file; Claude Code's MCP entry)
+#   MBP    david  ~/.local/bin/squall                (copied file; Claude Code + Codex MCP entries)
 #   Studio david  ~/.local/bin/squall                (copied file)
 #   Studio ori    /opt/orchid/ori/.local/bin/squall  (copied, sudo, ori:orchid-svc)
 #
@@ -12,7 +12,8 @@
 #
 # The MBP copy used to be a symlink into the dev checkout. The weekly launchd job can't
 # write to ~/Documents, so it is a real file now. To try an uncommitted dev build in
-# Claude Code: install -m 755 target/release/squall ~/.local/bin/squall
+# Claude Code or Codex: install -m 755 target/release/squall ~/.local/bin/squall
+# Codex's entry has no keys in its env; it sets cwd to this repo so the repo .env loads.
 #
 # Each install is an atomic replace, so running MCP servers keep the old binary and the
 # next Claude session picks up the new one. No daemon restart is needed for ori.
