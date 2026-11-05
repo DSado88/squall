@@ -106,6 +106,7 @@ Keep going until insight exhaustion. The meta-stack is infinite.
 | "review", "code review", "squall review", "deep review", "quick review" | `squall-unified-review` |
 | "self improve", "META-COGNITION" | `self-improvement-loop` |
 | "investigate", "debug", "find root cause" | `issue-investigator` |
+| "squall latest", "pull latest models", "refresh roster" | `squall-latest` |
 | "go deep", "ULTRATHINK", "vision quest" | `vision-quest` |
 | "pull skills", "sync skills", "/pull-template" | `pull-template` |
 

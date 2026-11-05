@@ -10,6 +10,7 @@
 .squall/raw/
 .squall/training/
 .squall/branch_diff.txt
+.squall/model-audit/
 
 # rust-analyzer / rk build cache
 .rk/

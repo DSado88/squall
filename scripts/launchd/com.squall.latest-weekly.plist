@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Weekly squall-latest run: Mondays 09:00 local. launchd runs a missed slot on wake.
+  Install:   sed "s#__REPO__#$PWD#g" scripts/launchd/com.squall.latest-weekly.plist \
+               > ~/Library/LaunchAgents/com.squall.latest-weekly.plist
+             launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.squall.latest-weekly.plist
+  Run now:   launchctl kickstart gui/$(id -u)/com.squall.latest-weekly
+  Remove:    launchctl bootout gui/$(id -u)/com.squall.latest-weekly
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.squall.latest-weekly</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-l</string>
+    <string>__REPO__/scripts/squall-latest-weekly.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>1</integer>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/tmp/squall-latest-weekly.out</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/squall-latest-weekly.err</string>
+</dict>
+</plist>
