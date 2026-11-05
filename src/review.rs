@@ -19,7 +19,7 @@ use crate::dispatch::ProviderRequest;
 /// Retired aliases resolve to their successor BEFORE dedup, which fixes two bugs that
 /// share this one root cause:
 ///
-/// - `["kimi-k2.6", "kimi-k3"]` are two spellings of one model. Deduplicating
+/// - `["kimi-k2.6", "kimi-k3.1-pro"]` are two spellings of one model. Deduplicating
 ///   the literal strings dispatched it twice and reported the duplicate as agreement
 ///   between two independent models.
 ///
@@ -789,7 +789,7 @@ mod tests {
     fn test_registry() -> Registry {
         let mut models = HashMap::new();
         for (key, model_id) in [
-            ("kimi-k3", "moonshotai/Kimi-K3"),
+            ("kimi-k3.1-pro", "moonshotai/Kimi-K3.1-Pro"),
             ("glm-5.3", "zai-org/GLM-5.3"),
         ] {
             models.insert(
@@ -831,11 +831,11 @@ mod tests {
     #[test]
     fn dedup_collapses_retired_alias_with_its_successor() {
         let registry = test_registry();
-        let requested = vec!["kimi-k2.6".to_string(), "kimi-k3".to_string()];
+        let requested = vec!["kimi-k2.6".to_string(), "kimi-k3.1-pro".to_string()];
         let got = canonicalize_and_dedup(&requested, &registry);
         assert_eq!(
             got,
-            vec!["kimi-k3".to_string()],
+            vec!["kimi-k3.1-pro".to_string()],
             "retired alias and successor must collapse to one dispatch"
         );
     }
@@ -855,7 +855,7 @@ mod tests {
         let registry = test_registry();
         let requested = vec![
             "glm-5.3".to_string(),
-            "kimi-k3".to_string(),
+            "kimi-k3.1-pro".to_string(),
             "no-such-model".to_string(),
         ];
         let got = canonicalize_and_dedup(&requested, &registry);

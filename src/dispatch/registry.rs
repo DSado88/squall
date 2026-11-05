@@ -199,7 +199,7 @@ impl Registry {
     /// when they surface in `not_started`).
     ///
     /// Callers must canonicalize BEFORE deduplicating or looking up per-model statistics:
-    /// `["kimi-k2.6", "kimi-k3"]` are two spellings of one model, and stats are
+    /// `["kimi-k2.6", "kimi-k3.1-pro"]` are two spellings of one model, and stats are
     /// stored under the canonical key only.
     pub fn canonical_key(&self, model: &str) -> String {
         if self.models.contains_key(model) {
@@ -250,7 +250,7 @@ impl Registry {
         }
 
         // Substring matching cannot bridge a version bump — `kimi-k2.6` shares no
-        // substring with `kimi-k3` — so version bumps are invisible to the
+        // substring with `kimi-k3.1-pro` — so version bumps are invisible to the
         // fallback below. The alias table is the only thing that can suggest them.
         if let Some(current) = resolve_retired_alias(query)
             && self.models.contains_key(current)
@@ -436,7 +436,7 @@ mod tests {
     fn test_registry() -> Registry {
         let mut models = HashMap::new();
         for (key, model_id) in [
-            ("kimi-k3", "moonshotai/Kimi-K3"),
+            ("kimi-k3.1-pro", "moonshotai/Kimi-K3.1-Pro"),
             ("glm-5.3", "zai-org/GLM-5.3"),
             ("grok", "grok-4.7"),
         ] {
@@ -481,7 +481,7 @@ mod tests {
         let entry = registry
             .get("kimi-k2.6")
             .expect("retired key kimi-k2.6 should resolve to its successor");
-        assert_eq!(entry.model_id, "moonshotai/Kimi-K3");
+        assert_eq!(entry.model_id, "moonshotai/Kimi-K3.1-Pro");
 
         let entry = registry
             .get("glm-5.1")
@@ -494,8 +494,8 @@ mod tests {
     fn get_prefers_live_key_over_alias() {
         let registry = test_registry();
         assert_eq!(
-            registry.get("kimi-k3").unwrap().model_id,
-            "moonshotai/Kimi-K3"
+            registry.get("kimi-k3.1-pro").unwrap().model_id,
+            "moonshotai/Kimi-K3.1-Pro"
         );
         assert!(registry.get("no-such-model").is_none());
     }
@@ -509,13 +509,13 @@ mod tests {
 
         // Current model_ids still map to their key.
         assert_eq!(
-            map.get("moonshotai/Kimi-K3").map(String::as_str),
-            Some("kimi-k3")
+            map.get("moonshotai/Kimi-K3.1-Pro").map(String::as_str),
+            Some("kimi-k3.1-pro")
         );
         // Retired provider model_ids map forward.
         assert_eq!(
             map.get("moonshotai/Kimi-K2.6").map(String::as_str),
-            Some("kimi-k3")
+            Some("kimi-k3.1-pro")
         );
         assert_eq!(
             map.get("zai-org/GLM-5.1").map(String::as_str),
@@ -523,7 +523,10 @@ mod tests {
         );
         assert_eq!(map.get("grok-4.3").map(String::as_str), Some("grok"));
         // Retired config keys map forward too.
-        assert_eq!(map.get("kimi-k2.6").map(String::as_str), Some("kimi-k3"));
+        assert_eq!(
+            map.get("kimi-k2.6").map(String::as_str),
+            Some("kimi-k3.1-pro")
+        );
         assert_eq!(map.get("glm-5.1").map(String::as_str), Some("glm-5.3"));
     }
 
@@ -538,13 +541,13 @@ mod tests {
     }
 
     /// Substring matching cannot bridge a version bump: `kimi-k2.6` shares no substring
-    /// with `kimi-k3`. The alias table has to supply the suggestion.
+    /// with `kimi-k3.1-pro`. The alias table has to supply the suggestion.
     #[test]
     fn suggest_models_suggests_retired_key_successor() {
         let registry = test_registry();
         assert_eq!(
             registry.suggest_models("kimi-k2.6"),
-            vec!["kimi-k3".to_string()]
+            vec!["kimi-k3.1-pro".to_string()]
         );
         assert_eq!(
             registry.suggest_models("glm-5.1"),
@@ -557,8 +560,8 @@ mod tests {
     #[test]
     fn canonical_key_collapses_retired_aliases() {
         let registry = test_registry();
-        assert_eq!(registry.canonical_key("kimi-k2.6"), "kimi-k3");
-        assert_eq!(registry.canonical_key("kimi-k3"), "kimi-k3");
+        assert_eq!(registry.canonical_key("kimi-k2.6"), "kimi-k3.1-pro");
+        assert_eq!(registry.canonical_key("kimi-k3.1-pro"), "kimi-k3.1-pro");
         assert_eq!(registry.canonical_key("glm-5.1"), "glm-5.3");
     }
 
@@ -654,7 +657,7 @@ mod tests {
         let registry = test_registry();
         assert_eq!(
             registry.get("kimi-k2.6").unwrap().model_id,
-            "moonshotai/Kimi-K3"
+            "moonshotai/Kimi-K3.1-Pro"
         );
     }
 }

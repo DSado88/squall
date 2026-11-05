@@ -563,32 +563,36 @@ impl Config {
 /// 2. Memory stats survive a rename, so the hard gate isn't reset to cold-start.
 /// 3. `suggest_models` can point at the successor, which plain substring matching
 ///    cannot do across a version bump (`kimi-k2.6` shares no substring with
-///    `kimi-k3`).
+///    `kimi-k3.1-pro`).
 ///
 /// Add an entry here whenever a model key or model_id changes. `retired_aliases_resolve`
 /// asserts every target still exists, and `skill_files_have_no_retired_model_keys`
 /// asserts no skill file still dispatches a retired name.
 pub const RETIRED_MODEL_ALIASES: &[(&str, &str)] = &[
     // --- retired config keys ---
-    ("kimi-k2.5", "kimi-k3"),
-    ("kimi-k2.6", "kimi-k3"),
-    // Together demoted K2.7-Code to dedicated-only; K3 is the only serverless Kimi.
-    ("kimi-k2.7-code", "kimi-k3"),
+    ("kimi-k2.5", "kimi-k3.1-pro"),
+    ("kimi-k2.6", "kimi-k3.1-pro"),
+    // Together demoted K2.7-Code to dedicated-only on 2026-10-13.
+    ("kimi-k2.7-code", "kimi-k3.1-pro"),
+    // K3.1-Pro (2026-11-03) is newer and cheaper than K3, which was 429ing.
+    ("kimi-k3", "kimi-k3.1-pro"),
     ("glm-5.1", "glm-5.3"),
     ("glm-5.2", "glm-5.3"),
     ("z-ai/glm-5", "glm-5.3"),
-    ("qwen-3.5", "qwen-3.8"),
-    ("qwen-3.7-max", "qwen-3.8"),
+    ("qwen-3.5", "qwen-3.7-max"),
+    // Together dropped Qwen3.8-2.4T-A95B on 2026-11; Qwen3.7-Max is the live flagship.
+    ("qwen-3.8", "qwen-3.7-max"),
     ("deepseek-v3.1", "deepseek-v4-pro"),
     // agy dropped Gemini 3.1 Pro; Gemini 3.8 Flash is the only Gemini it offers.
     ("gemini-pro", "gemini-flash"),
     // --- retired provider model_ids (memory continuity) ---
-    ("moonshotai/Kimi-K2.5", "kimi-k3"),
-    ("moonshotai/Kimi-K2.6", "kimi-k3"),
-    ("moonshotai/Kimi-K2.7-Code", "kimi-k3"),
+    ("moonshotai/Kimi-K2.5", "kimi-k3.1-pro"),
+    ("moonshotai/Kimi-K2.6", "kimi-k3.1-pro"),
+    ("moonshotai/Kimi-K2.7-Code", "kimi-k3.1-pro"),
+    ("moonshotai/Kimi-K3", "kimi-k3.1-pro"),
     ("zai-org/GLM-5.1", "glm-5.3"),
     ("zai-org/GLM-5.2", "glm-5.3"),
-    ("Qwen/Qwen3.7-Max", "qwen-3.8"),
+    ("Qwen/Qwen3.8-2.4T-A95B", "qwen-3.7-max"),
     ("deepseek-ai/DeepSeek-V3.1", "deepseek-v4-pro"),
     ("deepseek-ai/DeepSeek-V4-Pro", "deepseek-v4-pro"),
     ("grok-4.3", "grok"),
@@ -689,15 +693,15 @@ precision_tier = "medium"
 strengths = ["clear architectural analysis", "structured output", "1M context"]
 weaknesses = ["surface-level findings on simple bugs"]
 
-[models."kimi-k3"]
-model_id = "moonshotai/Kimi-K3"
+[models."kimi-k3.1-pro"]
+model_id = "moonshotai/Kimi-K3.1-Pro"
 provider = "together"
 backend = "http"
-description = "Moonshot's Kimi K3 via Together (US-hosted), 2.8T-param frontier reasoner with 1M ctx"
+description = "Moonshot's Kimi K3.1-Pro via Together (US-hosted), frontier reasoner with 1M ctx"
 speed_tier = "medium"
 precision_tier = "high"
 strengths = ["frontier reasoning", "1M context", "long-horizon agentic work", "contrarian edge cases"]
-weaknesses = ["expensive ($3/$15 per M)", "emits many reasoning tokens"]
+weaknesses = ["pricier than other Together models ($2/$10 per M)", "emits many reasoning tokens"]
 
 [models."deepseek-v4-pro"]
 model_id = "deepseek-ai/DeepSeek-V4-Pro-0813"
@@ -710,11 +714,12 @@ strengths = ["strong reasoning", "finds real bugs", "1M context", "cached input 
 weaknesses = ["verbose output"]
 
 
-[models."qwen-3.8"]
-model_id = "Qwen/Qwen3.8-2.4T-A95B"
+[models."qwen-3.7-max"]
+model_id = "Qwen/Qwen3.7-Max"
 provider = "together"
 backend = "http"
-description = "Alibaba's Qwen3.8 2.4T-A95B open-weight flagship via Together, 1M context"
+# Streaming-only on Together: a non-streaming request returns 400. Squall streams.
+description = "Alibaba's Qwen3.7-Max flagship via Together, 1M context"
 speed_tier = "medium"
 precision_tier = "high"
 strengths = ["agentic tool calling", "1M context", "strong multilingual code understanding"]
@@ -1049,18 +1054,38 @@ mod tests {
         assert_eq!(base.settings.hard_gate, Some(true));
     }
 
-    /// Kimi K3 reached Together's serverless roster on 2026-07-27. Together demoted
-    /// K2.7-Code to dedicated-only by 2026-10-13, which left K3 as the only Kimi.
+    /// Kimi K3.1-Pro reached Together's serverless roster on 2026-11-03 at $2/$10 per M,
+    /// cheaper than K3 ($3/$15), which was returning 429 on every probe that day.
     #[test]
-    fn kimi_k3_is_available() {
+    fn kimi_k3_1_pro_is_available() {
         let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
         let entry = config
             .models
-            .get("kimi-k3")
-            .expect("kimi-k3 must be defined");
-        assert_eq!(entry.model_id.as_deref(), Some("moonshotai/Kimi-K3"));
+            .get("kimi-k3.1-pro")
+            .expect("kimi-k3.1-pro must be defined");
+        assert_eq!(entry.model_id.as_deref(), Some("moonshotai/Kimi-K3.1-Pro"));
         assert_eq!(entry.provider.as_deref(), Some("together"));
-        assert_eq!(resolve_retired_alias("kimi-k2.7-code"), Some("kimi-k3"));
+        for old in ["kimi-k3", "kimi-k2.7-code", "moonshotai/Kimi-K3"] {
+            assert_eq!(resolve_retired_alias(old), Some("kimi-k3.1-pro"), "{old}");
+        }
+    }
+
+    /// Roster audit 2026-11-05. Together dropped `Qwen/Qwen3.8-2.4T-A95B` from its
+    /// catalog (dispatch returns 500); the only Qwen3.8 left is the small Flash, so the
+    /// Qwen slot returns to Qwen3.7-Max, the strongest serverless Qwen still live.
+    #[test]
+    fn roster_matches_2026_11_live_catalog() {
+        let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
+        let entry = config
+            .models
+            .get("qwen-3.7-max")
+            .expect("qwen-3.7-max must be defined");
+        assert_eq!(entry.model_id.as_deref(), Some("Qwen/Qwen3.7-Max"));
+        for old in ["qwen-3.8", "qwen-3.5", "Qwen/Qwen3.8-2.4T-A95B"] {
+            assert_eq!(resolve_retired_alias(old), Some("qwen-3.7-max"), "{old}");
+        }
+        assert!(!config.models.contains_key("qwen-3.8"));
+        assert!(!config.models.contains_key("kimi-k3"));
     }
 
     /// Roster audit 2026-10-13, every model_id verified by a live dispatch (listing
@@ -1085,10 +1110,6 @@ mod tests {
             Some("deepseek-ai/DeepSeek-V4-Pro-0813")
         );
         assert_eq!(
-            model_id("qwen-3.8").as_deref(),
-            Some("Qwen/Qwen3.8-2.4T-A95B")
-        );
-        assert_eq!(
             model_id("gemini-flash").as_deref(),
             Some("Gemini 3.8 Flash (High)")
         );
@@ -1096,7 +1117,6 @@ mod tests {
 
         for (old, new) in [
             ("glm-5.2", "glm-5.3"),
-            ("qwen-3.7-max", "qwen-3.8"),
             ("gemini-pro", "gemini-flash"),
             ("grok-4.5", "grok"),
             ("gpt-5.5", "codex"),
@@ -1229,6 +1249,22 @@ mod tests {
         assert!(!mentions_key("deepseek-v4-pro", "deepseek-r1"));
     }
 
+    /// A dotted point release is one version token, not two words: "K3.1" must not
+    /// read as "K3" followed by an unrelated "1", or retiring `kimi-k3` in favour of
+    /// `kimi-k3.1-pro` flags every mention of the successor as stale.
+    #[test]
+    fn mentions_key_does_not_match_prefix_of_point_release() {
+        assert!(!mentions_key("| `kimi-k3.1-pro` | Together |", "kimi-k3"));
+        assert!(!mentions_key("Kimi K3.1 Pro via Together", "kimi-k3"));
+        assert!(!mentions_key(
+            "model moonshotai/Kimi-K3.1-Pro",
+            "moonshotai/Kimi-K3"
+        ));
+        // A sentence-ending period is not a version separator.
+        assert!(mentions_key("We still use Kimi K3.", "kimi-k3"));
+        assert!(mentions_key("Kimi K3.1 Pro", "kimi-k3.1-pro"));
+    }
+
     /// Blank out the Session Learnings archive so historical mentions don't trip the scan.
     ///
     /// The sentinel is an HTML comment marker, so a line must *be* the marker, not merely
@@ -1280,10 +1316,9 @@ mod tests {
         if nkey.is_empty() {
             return false;
         }
-        let words: Vec<String> = line
-            .split(|c: char| !c.is_ascii_alphanumeric())
-            .filter(|w| !w.is_empty())
-            .map(normalize_for_match)
+        let words: Vec<String> = version_aware_words(line)
+            .iter()
+            .map(|w| normalize_for_match(w))
             .collect();
         (0..words.len()).any(|start| {
             let mut joined = String::new();
@@ -1298,6 +1333,29 @@ mod tests {
             }
             false
         })
+    }
+
+    /// Split on non-alphanumerics, except that a `.` between two digits stays inside the
+    /// word, so "K3.1" is one token rather than "K3" + "1".
+    fn version_aware_words(line: &str) -> Vec<String> {
+        let chars: Vec<char> = line.chars().collect();
+        let mut words = Vec::new();
+        let mut current = String::new();
+        for (i, &c) in chars.iter().enumerate() {
+            let dotted_version = c == '.'
+                && i > 0
+                && chars[i - 1].is_ascii_digit()
+                && chars.get(i + 1).is_some_and(char::is_ascii_digit);
+            if c.is_ascii_alphanumeric() || dotted_version {
+                current.push(c);
+            } else if !current.is_empty() {
+                words.push(std::mem::take(&mut current));
+            }
+        }
+        if !current.is_empty() {
+            words.push(current);
+        }
+        words
     }
 
     fn mentions_key_exact(line: &str, key: &str) -> bool {

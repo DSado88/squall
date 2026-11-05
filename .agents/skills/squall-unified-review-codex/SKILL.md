@@ -148,9 +148,9 @@ different lens, each doing local investigation AND dispatching its own Squall re
 
 | Agent | Models | Rationale |
 |-------|--------|-----------|
-| Security | kimi-k3, claude, grok | kimi: adversarial edge cases. claude: precision anchor (mirror of codex in Claude version). grok: fast cross-function. |
+| Security | kimi-k3.1-pro, claude, grok | kimi: adversarial edge cases. claude: precision anchor (mirror of codex in Claude version). grok: fast cross-function. |
 | Correctness | claude, deepseek-v4-pro, gemini | claude: precision. gemini: systems-level bugs. deepseek: fast broad coverage. |
-| Architecture | gemini, claude, qwen-3.8 | gemini: architectural bugs. claude: contract violations. qwen: pattern matching. |
+| Architecture | gemini, claude, qwen-3.7-max | gemini: architectural bugs. claude: contract violations. qwen: pattern matching. |
 
 Note `claude` replaces `codex` in every ensemble — recursion guard refuses `clink(codex)`
 when Codex is the host. `claude` plays the symmetric role.
@@ -187,9 +187,9 @@ when Codex is the host. `claude` plays the symmetric role.
 
    | Model | Best For | Notes |
    |-------|----------|-------|
-   | **kimi-k3** | Security, edge cases, adversarial scenarios | Code-specialized contrarian. Pair with focused lens. |
+   | **kimi-k3.1-pro** | Security, edge cases, adversarial scenarios | Code-specialized contrarian. Pair with focused lens. |
    | **deepseek-v4-pro** | Fast triage, broad coverage | 512K ctx, high precision. |
-   | **qwen-3.8** | Pattern matching, performance analysis | 1M ctx, agentic. |
+   | **qwen-3.7-max** | Pattern matching, performance analysis | 1M ctx, agentic. |
    | **glm-5.3** | Architectural framing | GLM-5.3 via Together, 1M ctx. |
 
    **Selection criteria** (same as Claude variant): memory recommend + memory tactic +
@@ -199,7 +199,7 @@ when Codex is the host. `claude` plays the symmetric role.
    **Always show selection reasoning:**
    ```
    Tier 1: gemini, claude, grok, Codex subagent (always)
-   Tier 2: kimi-k3 (security lens), deepseek-v4-pro (fast triage)
+   Tier 2: kimi-k3.1-pro (security lens), deepseek-v4-pro (fast triage)
    Rationale: Rust concurrency code — Kimi for edge cases, DV4-Pro for broad coverage
    ```
 
@@ -428,7 +428,7 @@ CONSTRAINTS:
 
 ### Lens-Specific Investigation Steps
 
-**Security** (`{MODELS}: kimi-k3, claude, grok`):
+**Security** (`{MODELS}: kimi-k3.1-pro, claude, grok`):
 - Trace all trust boundary crossings.
 - Check input validation and sanitization paths.
 - `git blame` on security-critical lines.
@@ -441,7 +441,7 @@ CONSTRAINTS:
 - Check error handling completeness.
 - Verify changed public APIs still satisfy existing callers (grep for callers).
 
-**Architecture** (`{MODELS}: gemini, claude, qwen-3.8`):
+**Architecture** (`{MODELS}: gemini, claude, qwen-3.7-max`):
 - Map dependency graph of changed modules.
 - Check for API contract changes by diffing public function signatures.
 - Grep for performance anti-patterns.

@@ -63,7 +63,7 @@ Fill in what you have, skip what you don't. Models only load when their key is s
 
 | Variable | Unlocks | Signup |
 |----------|---------|--------|
-| `TOGETHER_API_KEY` | GLM 5.3, DeepSeek V4-Pro, Kimi K3, Qwen 3.8 | [together.xyz](https://api.together.xyz/settings/api-keys) |
+| `TOGETHER_API_KEY` | GLM 5.3, DeepSeek V4-Pro, Kimi K3.1 Pro, Qwen 3.7 Max | [together.xyz](https://api.together.xyz/settings/api-keys) |
 | `XAI_API_KEY` | Grok | [console.x.ai](https://console.x.ai/) |
 | `GOOGLE_API_KEY` | deep-research-pro | [aistudio.google.com](https://aistudio.google.com/apikey) |
 
@@ -141,8 +141,8 @@ Three dispatch backends: **HTTP** (OpenAI-compatible), **CLI** (subprocess, OAut
 | `grok` | xAI | HTTP | fast | Quick triage, broad coverage, long context |
 | `glm-5.3` | Together | HTTP | medium | Architectural framing, 1M context |
 | `deepseek-v4-pro` | Together | HTTP | medium | Strong coder, finds real bugs, 1M context |
-| `kimi-k3` | Together | HTTP | medium | Frontier reasoning, contrarian edge cases, 1M context |
-| `qwen-3.8` | Together | HTTP | medium | Agentic, 1M context, multilingual code |
+| `kimi-k3.1-pro` | Together | HTTP | medium | Frontier reasoning, contrarian edge cases, 1M context |
+| `qwen-3.7-max` | Together | HTTP | medium | Agentic, 1M context, multilingual code |
 | `gemini` | Antigravity | CLI (OAuth) | medium | Your configured default model |
 | `gemini-flash` | Antigravity | CLI (OAuth) | fast | Gemini 3.8 Flash (High), systems-level bugs |
 | `codex` | OpenAI | CLI (OAuth) | slow | Highest precision, zero false positives |

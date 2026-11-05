@@ -193,9 +193,9 @@ It creates the team, assigns tasks, waits for all agents, then synthesizes their
 
 | Agent | Models | Rationale |
 |-------|--------|-----------|
-| Security | kimi-k3, codex, grok | kimi: adversarial edge cases. codex: precision anchor (0 FP). grok: fast cross-function. |
+| Security | kimi-k3.1-pro, codex, grok | kimi: adversarial edge cases. codex: precision anchor (0 FP). grok: fast cross-function. |
 | Correctness | codex, deepseek-v4-pro, gemini | codex: precision. gemini: systems-level bugs. deepseek: fast broad coverage. |
-| Architecture | gemini, codex, qwen-3.8 | gemini: architectural bugs. codex: contract violations. qwen: pattern matching. |
+| Architecture | gemini, codex, qwen-3.7-max | gemini: architectural bugs. codex: contract violations. qwen: pattern matching. |
 
 Model overlap across agents is intentional — same model with different lens produces different analysis.
 Cross-agent overlap creates consensus signal (codex flagging the same issue through security AND
@@ -243,9 +243,9 @@ Proceed to Phase 3. The instructions below apply to QUICK, STANDARD, and DEEP on
 
    | Model | Best For | Notes |
    |-------|----------|-------|
-   | **kimi-k3** | Security, edge cases, adversarial scenarios | Frontier contrarian, $3/$15 per M. Needs a focused lens to earn the cost. |
+   | **kimi-k3.1-pro** | Security, edge cases, adversarial scenarios | Frontier contrarian, $2/$10 per M. Needs a focused lens to earn the cost. |
    | **deepseek-v4-pro** | Fast triage, broad coverage | DeepSeek V4-Pro via Together, 1M ctx, high precision. Pair with focused lens. |
-   | **qwen-3.8** | Pattern matching, performance analysis | 1M ctx, agentic. Good with performance-focused lens. |
+   | **qwen-3.7-max** | Pattern matching, performance analysis | 1M ctx, agentic. Good with performance-focused lens. |
    | **glm-5.3** | Architectural framing | GLM-5.3 via Together, 1M ctx. Strong structural analysis. |
 
    **Selection criteria for Tier 2:**
@@ -259,7 +259,7 @@ Proceed to Phase 3. The instructions below apply to QUICK, STANDARD, and DEEP on
    **ALWAYS show selection reasoning:**
    ```
    Tier 1: gemini, codex, grok, Opus agent (always)
-   Tier 2: kimi-k3 (security lens, cold-start), deepseek-v4-pro (fast triage, high precision)
+   Tier 2: kimi-k3.1-pro (security lens, cold-start), deepseek-v4-pro (fast triage, high precision)
    Rationale: Rust concurrency code — Kimi strong on edge cases, DV3.1 for broad coverage
    ```
 
@@ -560,7 +560,7 @@ CONSTRAINTS:
 
 ### Lens-Specific Investigation Steps
 
-**Security** (`{MODELS}`: kimi-k3, codex, grok):
+**Security** (`{MODELS}`: kimi-k3.1-pro, codex, grok):
 - Trace all trust boundary crossings in changed code
 - Check input validation and sanitization paths
 - `git blame` on security-critical lines
@@ -573,7 +573,7 @@ CONSTRAINTS:
 - Check error handling completeness (all error paths covered?)
 - Verify changed public APIs still satisfy existing callers (grep for callers)
 
-**Architecture** (`{MODELS}`: gemini, codex, qwen-3.8):
+**Architecture** (`{MODELS}`: gemini, codex, qwen-3.7-max):
 - Map dependency graph of changed modules (who imports what)
 - Check for API contract changes by diffing public function signatures
 - Grep for performance anti-patterns (allocations in hot loops, clone() chains)
