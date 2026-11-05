@@ -143,4 +143,12 @@ keys), and logs, all outside `~/Documents`.
   Fixed with `version_aware_words` (a `.` between digits stays in the token).
 - agy now lists Gemini 4 Argon (Low/Medium/High). It is not adopted yet because it is a new
   line, not a successor to the Flash pin.
+### 2026-11-05: hardened after a DEEP Squall review
+- The audit used to call any probe failure DEAD (5xx, timeout, 401, missing CLI), which would
+  have sent the unattended agent to "replace" healthy models. Now only an explicit provider
+  "no such model" is DEAD; everything else is exit 30 and notifies a human.
+- zsh trap: `"$SHA:src/config.rs"` is `$SHA` + the `:s` modifier, so `git show` printed the
+  commit and the deploy refused to run. Write `${SHA}:...`; `ZshModifierLintTests` guards
+  every zsh script.
+- launchd notifications from `osascript` do reach the user (verified 2026-11-05).
 <!-- SENTINEL:SESSION_LEARNINGS_END -->

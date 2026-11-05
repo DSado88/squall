@@ -51,7 +51,7 @@ echo "deploying origin/main ${SHA:0:8}"
 
 # Every roster key must show up in listmodels for the local build (real env loaded).
 # Assignment form, so a failed extraction stops the deploy instead of checking nothing.
-keys=$(git show "$SHA:src/config.rs" | python3 -I scripts/model-audit.py --roster-keys -)
+keys=$(git show "${SHA}:src/config.rs" | python3 -I scripts/model-audit.py --roster-keys -)
 [[ -n "$keys" ]] || { echo "no roster keys found in $SHA; refusing to deploy"; exit 1; }
 EXPECT=()
 for key in ${(f)keys}; do EXPECT+=(--expect "$key"); done

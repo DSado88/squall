@@ -339,6 +339,25 @@ class SmokeTests(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0, p.stdout)
 
 
+class ZshModifierLintTests(unittest.TestCase):
+    """zsh reads `$VAR:x` as a history modifier: "$SHA:src/config.rs" became `$SHA:s...`
+    and git showed the commit instead of the file, so every deploy refused to run.
+    Write `${VAR}:x`, and spell intentional modifiers with braces (`${VAR:t}`)."""
+
+    def test_no_unbraced_parameter_followed_by_colon_letter(self):
+        import re
+        hits = []
+        for script in sorted(SCRIPTS.glob("*.sh")):
+            text = script.read_text()
+            if not text.startswith("#!/bin/zsh"):
+                continue
+            for n, line in enumerate(text.splitlines(), 1):
+                code = line.split("#", 1)[0] if line.lstrip().startswith("#") else line
+                if re.search(r"\$[A-Za-z_][A-Za-z0-9_]*:[A-Za-z&]", code):
+                    hits.append(f"{script.name}:{n}: {line.strip()}")
+        self.assertEqual(hits, [], "unbraced zsh parameter before ':<letter>'")
+
+
 # --------------------------------------------------------------------------- shell harness
 
 
