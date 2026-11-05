@@ -2,13 +2,14 @@
 """MCP smoke test for an installed squall binary.
 
 Starts the binary over stdio, completes the MCP handshake, calls `listmodels`, and
-checks that every --expect string appears in the reply. `listmodels` only reports models
+checks that the reply is a real tool result (not an error) listing every --expect key
+exactly. `listmodels` only reports models
 whose API key / CLI is available, so pass --expect only where the real environment is
 loaded; elsewhere (e.g. a bare SSH session) run it without --expect as a handshake check.
 
     python3 -I scripts/mcp-smoke.py /path/to/squall --expect kimi-k3.1-pro
 
-Reads only the stdlib, so it can be piped to a remote python3: `ssh host python3 - ...`.
+Stdlib only and Python 3.9 compatible: the Studio runs it with /usr/bin/python3.
 """
 
 import json
@@ -62,18 +63,49 @@ def main() -> int:
         send({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
               "params": {"name": "listmodels", "arguments": {}}})
         reply = recv(2)
-        text = json.dumps(reply)
-        missing = [e for e in expects if e not in text]
-        if not reply or "error" in reply or missing:
-            print(f"FAIL {binary}: missing {missing}" if missing else f"FAIL {binary}: {text[:300]}")
+        keys, problem = listed_keys(reply)
+        if problem:
+            print(f"FAIL {binary}: {problem}")
+            return 1
+        missing = [e for e in expects if e not in keys]
+        if missing:
+            print(f"FAIL {binary}: listmodels lacks {missing} (has {sorted(keys)})")
             return 1
         server = init["result"].get("serverInfo", {})
         print(f"OK   {binary}: {server.get('name')} {server.get('version')}, "
-              f"listmodels has {expects or 'a reply'}")
+              f"listmodels has {expects or 'a valid reply'}")
         return 0
     finally:
         timer.cancel()
         proc.kill()
+        proc.wait()
+
+
+def listed_keys(reply):
+    """Model keys from a listmodels reply, or a reason it isn't a valid one.
+
+    Keys come from the first column of the markdown table, so matching is exact:
+    `kimi-k3` must not pass because `kimi-k3.1-pro` is listed.
+    """
+    result = reply.get("result") if isinstance(reply, dict) else None
+    if not isinstance(result, dict):
+        return set(), "no result in listmodels reply: " + json.dumps(reply)[:200]
+    if result.get("isError"):
+        return set(), "listmodels returned a tool error: " + json.dumps(result)[:200]
+    texts = [c.get("text", "") for c in result.get("content", []) if isinstance(c, dict)]
+    if not texts:
+        return set(), "listmodels reply has no content"
+    try:
+        table = json.loads(texts[0]).get("content", "")
+    except (ValueError, AttributeError):
+        table = texts[0]
+    keys = set()
+    for line in table.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if line.lstrip().startswith("|") and cells and cells[0] not in ("Model", "") \
+                and not set(cells[0]) <= set("-: "):
+            keys.add(cells[0])
+    return keys, None
 
 
 if __name__ == "__main__":

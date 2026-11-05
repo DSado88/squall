@@ -17,33 +17,46 @@
 set -euo pipefail
 
 SRC="${0:A:h:h}"
-BASE="$HOME/.squall-latest"
+# Overrides exist for scripts/tests; normal installs use none of them.
+BASE="${SQUALL_LATEST_BASE:-$HOME/.squall-latest}"
+ORIGIN="${SQUALL_LATEST_ORIGIN:-$(git -C "$SRC" remote get-url origin)}"
+ENV_FILE="${SQUALL_LATEST_ENV_FILE:-$SRC/.env}"
 CLONE="$BASE/squall"
 LABEL=com.squall.latest-weekly
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 mkdir -p "$BASE/logs"
 if [[ ! -d "$CLONE/.git" ]]; then
-  git clone -q "$(git -C "$SRC" remote get-url origin)" "$CLONE"
+  git clone -q "$ORIGIN" "$CLONE"
 fi
 # Unattended pushes can't rely on the interactive credential cache; gh's token lives in
 # the login keychain, which a launchd agent in the GUI session can read.
-git -C "$CLONE" config credential.helper ""
+# Unset first: `config credential.helper ""` refuses once two values exist, which made
+# every re-run of this installer fail.
+git -C "$CLONE" config --unset-all credential.helper || true
+git -C "$CLONE" config --add credential.helper ""
 git -C "$CLONE" config --add credential.helper '!gh auth git-credential'
 git -C "$CLONE" fetch -q origin main
 git -C "$CLONE" checkout -q -B main origin/main
 git -C "$CLONE" reset -q --hard origin/main
 
-install -m 600 "$SRC/.env" "$CLONE/.env"
-# Carry the last deployed SHA over so the first run doesn't redeploy an unchanged main.
-if [[ -f "$SRC/.squall/model-audit/deployed-sha" ]]; then
+install -m 600 "$ENV_FILE" "$CLONE/.env"
+# Seed the last deployed SHA on first install so the first run doesn't redeploy an
+# unchanged main. Never overwrite the clone's own (newer) state.
+if [[ -f "$SRC/.squall/model-audit/deployed-sha" \
+      && ! -f "$CLONE/.squall/model-audit/deployed-sha" ]]; then
   mkdir -p "$CLONE/.squall/model-audit"
   cp "$SRC/.squall/model-audit/deployed-sha" "$CLONE/.squall/model-audit/deployed-sha"
 fi
 
+mkdir -p "${PLIST:h}"
 sed -e "s#__CLONE__#$CLONE#g" -e "s#__LOGS__#$BASE/logs#g" \
   "$SRC/scripts/launchd/$LABEL.plist" > "$PLIST"
 plutil -lint -s "$PLIST"
+if [[ -n "${SQUALL_LATEST_NO_LAUNCHD:-}" ]]; then
+  echo "installed $PLIST (launchd load skipped)"
+  exit 0
+fi
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 echo "installed $LABEL -> $CLONE ($(git -C "$CLONE" rev-parse --short HEAD))"

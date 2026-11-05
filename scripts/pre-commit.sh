@@ -38,6 +38,10 @@ if cargo test >/dev/null 2>&1; then ok; else err; echo "    Run: cargo test"; fi
 step "tests (no default features)"
 if cargo test --no-default-features >/dev/null 2>&1; then ok; else err; echo "    Run: cargo test --no-default-features"; fi
 
+# 6. Automation tests (scripts/model-audit.py, deploy/weekly/install scripts)
+step "automation tests"
+if python3 -I -m unittest discover -s scripts/tests >/dev/null 2>&1; then ok; else err; echo "    Run: python3 -I -m unittest discover -s scripts/tests"; fi
+
 echo ""
 if [ $fail -ne 0 ]; then
     echo -e "${RED}Pre-commit checks failed.${NC}"

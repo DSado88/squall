@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Weekly squall-latest run (audit -> roster update -> deploy to Studio): Mondays 09:00.
-  launchd runs a missed slot on wake.
+  Weekly squall-latest run (audit -> roster update -> deploy): Sundays 02:00, clear of
+  the other nightly jobs on this Mac (ledger 03:30, cortex 03:55, gloss 03:15/04:15).
+  A slot missed while asleep runs on the next wake; the wrapper skips (and tells you)
+  if that wake is on battery power.
 
   Install with scripts/install-weekly.sh, not by hand: it fills in __CLONE__/__LOGS__
   and sets up the clone outside ~/Documents (launchd cannot read ~/Documents).
@@ -22,9 +24,9 @@
   <key>StartCalendarInterval</key>
   <dict>
     <key>Weekday</key>
-    <integer>1</integer>
+    <integer>0</integer>
     <key>Hour</key>
-    <integer>9</integer>
+    <integer>2</integer>
     <key>Minute</key>
     <integer>0</integer>
   </dict>
