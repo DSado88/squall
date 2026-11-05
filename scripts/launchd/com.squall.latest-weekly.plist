@@ -3,7 +3,12 @@
 <!--
   Weekly squall-latest run (audit -> roster update -> deploy): Mondays 09:00 local.
   launchd runs a missed slot on wake.
-  Install:   sed "s#__REPO__#$PWD#g" scripts/launchd/com.squall.latest-weekly.plist \
+  The repo is in ~/Documents, which macOS blocks for launchd jobs, so the job runs through
+  squall-latest-launcher, which needs Full Disk Access (see squall-latest-launcher.c).
+  Install:   clang -O2 -o ~/.local/bin/squall-latest-launcher \
+               -DSCRIPT="\"$PWD/scripts/squall-latest-weekly.sh\"" scripts/launchd/squall-latest-launcher.c
+             System Settings > Privacy & Security > Full Disk Access > + > ~/.local/bin/squall-latest-launcher
+             sed "s#__HOME__#$HOME#g" scripts/launchd/com.squall.latest-weekly.plist \
                > ~/Library/LaunchAgents/com.squall.latest-weekly.plist
              launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.squall.latest-weekly.plist
   Run now:   launchctl kickstart gui/$(id -u)/com.squall.latest-weekly
@@ -15,9 +20,7 @@
   <string>com.squall.latest-weekly</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/zsh</string>
-    <string>-l</string>
-    <string>__REPO__/scripts/squall-latest-weekly.sh</string>
+    <string>__HOME__/.local/bin/squall-latest-launcher</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>

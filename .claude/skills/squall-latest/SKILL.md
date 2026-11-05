@@ -52,6 +52,9 @@ and MCP handshake, then records the SHA in `.squall/model-audit/deployed-sha`.
 Weekly job: `scripts/squall-latest-weekly.sh` runs from launchd agent
 `com.squall.latest-weekly` (Mondays 09:00). It runs the audit, then this skill (unattended),
 then the deploy. Logs go to `.squall/model-audit/cron.log`; failures raise a macOS notification.
+launchd can't read `~/Documents` (macOS privacy protection), so the agent runs
+`~/.local/bin/squall-latest-launcher` (built from `scripts/launchd/squall-latest-launcher.c`),
+which has Full Disk Access. Rebuilding the launcher voids that grant: re-add it in System Settings.
 
 ## Workflow
 
