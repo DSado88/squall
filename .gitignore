@@ -14,3 +14,4 @@
 
 # rust-analyzer / rk build cache
 .rk/
+__pycache__/
