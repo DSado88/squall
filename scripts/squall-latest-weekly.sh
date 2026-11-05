@@ -1,15 +1,17 @@
 #!/bin/zsh -l
-# Weekly unattended model-roster refresh + deploy. Run by launchd (scripts/launchd/).
+# Weekly unattended model-roster refresh + deploy. Run by launchd; install with
+# scripts/install-weekly.sh.
 #
 # 1. Audit the roster against live catalogs (scripts/model-audit.py).
 # 2. Audit exit 10/20 (new entries / dead model): run the squall-latest skill headless
 #    in a throwaway worktree. It commits and pushes main only after pre-commit passes.
 # 3. If origin/main differs from what was last deployed (this run's change, or anything
-#    else merged since), rebuild and install on MBP + Studio david + Studio ori
-#    (scripts/deploy-squall.sh).
+#    else merged since), rebuild and install on Studio david + Studio ori
+#    (scripts/deploy-squall.sh). The MBP's dev symlink is left to you.
 #
-# Never touches your working checkout unless it is clean and on main (then it is
-# fast-forwarded and rebuilt in place, which is what updates the MBP binary).
+# launchd cannot read ~/Documents, so the scheduled job runs from its own clone at
+# ~/.squall-latest/squall (set up by scripts/install-weekly.sh), which it resets to
+# origin/main on every run. Run by hand from a dev checkout, it never resets anything.
 #
 # Logs: .squall/model-audit/cron.log   Failures also raise a macOS notification.
 # Test without launching Claude or deploying: SQUALL_LATEST_DRY_RUN=1 scripts/squall-latest-weekly.sh
@@ -34,6 +36,14 @@ notify() {
 
 cd "$REPO" || exit 1
 git fetch -q origin main || { notify "git fetch failed"; exit 1; }
+
+# In the launchd-managed clone (scripts/install-weekly.sh), run the latest scripts:
+# reset to origin/main, then restart once. Never done in a dev checkout.
+if [[ "$REPO" == "$HOME/.squall-latest/squall" && -z "${SQUALL_LATEST_UPDATED:-}" ]]; then
+  git checkout -q -B main origin/main && git reset -q --hard origin/main \
+    || { notify "could not reset the job clone"; exit 1; }
+  SQUALL_LATEST_UPDATED=1 exec /bin/zsh -l "$REPO/scripts/squall-latest-weekly.sh"
+fi
 
 # --- 1. audit -------------------------------------------------------------------
 audit_args=()
@@ -81,7 +91,7 @@ elif [[ -n "${SQUALL_LATEST_DRY_RUN:-}" ]]; then
   echo "dry run: would deploy ${head:0:8} (last deployed ${deployed:0:8})"
 else
   if scripts/deploy-squall.sh; then
-    notify "deployed squall ${head:0:8} to MBP + Studio (david, ori)"
+    notify "deployed squall ${head:0:8} to Studio (david, ori)"
   else
     notify "deploy of ${head:0:8} FAILED; see cron.log"
     exit 1

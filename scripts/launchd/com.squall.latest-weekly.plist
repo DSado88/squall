@@ -1,16 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Weekly squall-latest run (audit -> roster update -> deploy): Mondays 09:00 local.
+  Weekly squall-latest run (audit -> roster update -> deploy to Studio): Mondays 09:00.
   launchd runs a missed slot on wake.
-  The repo is in ~/Documents, which macOS blocks for launchd jobs, so the job runs through
-  squall-latest-launcher, which needs Full Disk Access (see squall-latest-launcher.c).
-  Install:   clang -O2 -o ~/.local/bin/squall-latest-launcher \
-               -DSCRIPT="\"$PWD/scripts/squall-latest-weekly.sh\"" scripts/launchd/squall-latest-launcher.c
-             System Settings > Privacy & Security > Full Disk Access > + > ~/.local/bin/squall-latest-launcher
-             sed "s#__HOME__#$HOME#g" scripts/launchd/com.squall.latest-weekly.plist \
-               > ~/Library/LaunchAgents/com.squall.latest-weekly.plist
-             launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.squall.latest-weekly.plist
+
+  Install with scripts/install-weekly.sh, not by hand: it fills in __CLONE__/__LOGS__
+  and sets up the clone outside ~/Documents (launchd cannot read ~/Documents).
   Run now:   launchctl kickstart gui/$(id -u)/com.squall.latest-weekly
   Remove:    launchctl bootout gui/$(id -u)/com.squall.latest-weekly
 -->
@@ -20,7 +15,9 @@
   <string>com.squall.latest-weekly</string>
   <key>ProgramArguments</key>
   <array>
-    <string>__HOME__/.local/bin/squall-latest-launcher</string>
+    <string>/bin/zsh</string>
+    <string>-l</string>
+    <string>__CLONE__/scripts/squall-latest-weekly.sh</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>
@@ -32,8 +29,8 @@
     <integer>0</integer>
   </dict>
   <key>StandardOutPath</key>
-  <string>/tmp/squall-latest-weekly.out</string>
+  <string>__LOGS__/launchd.out</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/squall-latest-weekly.err</string>
+  <string>__LOGS__/launchd.err</string>
 </dict>
 </plist>

@@ -1,5 +1,7 @@
 #!/bin/zsh -l
-# Build squall from origin/main and install it everywhere it runs:
+# Build squall from origin/main and install it everywhere it runs. Run from the dev
+# checkout it updates all three below; run from the weekly job's clone it updates the
+# two Studio installs and leaves the MBP dev symlink alone.
 #
 #   MBP    david  ~/.local/bin/squall -> <repo>/target/release/squall  (symlink, rebuilt in place)
 #   Studio david  ~/.local/bin/squall                                   (copied file)
@@ -43,7 +45,12 @@ if [[ "$branch" == main ]] && git diff --quiet && git diff --cached --quiet \
    && git merge -q --ff-only origin/main 2>/dev/null; then
   cargo build --release -q
   BIN="$REPO/target/release/squall"
-  LOCAL="updated"
+  # The MBP install is a symlink into one checkout; only that checkout's build updates it.
+  if [[ "$(readlink ~/.local/bin/squall 2>/dev/null)" == "$BIN" ]]; then
+    LOCAL="updated"
+  else
+    LOCAL="untouched (~/.local/bin/squall points at another checkout)"
+  fi
 else
   WT=$(mktemp -d)/squall-deploy
   git worktree add -q --detach "$WT" origin/main
