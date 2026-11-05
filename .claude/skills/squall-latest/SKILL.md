@@ -1,6 +1,6 @@
 ---
 name: squall-latest
-description: "Pull the latest model catalogs (Together, Codex, Claude, Antigravity, xAI, OpenRouter), probe every configured model with a live dispatch, and update Squall's roster, aliases, tests, README and skill prompts. Use when asked to 'squall latest', 'pull latest models', 'refresh the roster', 'update models', 'check for new models', or when a review fails because a model is dead. Also runs unattended from the weekly cron. (project)"
+description: "Pull the latest model catalogs (Together, Codex, Claude, Antigravity, xAI, OpenRouter), probe every configured model with a live dispatch, and update Squall's roster, aliases, tests, README and skill prompts. Use when asked to 'squall latest', 'pull latest models', 'refresh the roster', 'update models', 'check for new models', or when a review fails because a model is dead. Also runs unattended from the weekly launchd job. (project)"
 one_liner: "Catalogs lie and rosters rot; probe every model, then rename through the alias table so nothing callers depend on breaks."
 activation_triggers:
   - "squall latest"
@@ -10,7 +10,7 @@ activation_triggers:
   - "update models"
   - "check for new models"
   - When a Squall dispatch fails with a non-serverless / unknown-model error
-  - When the weekly cron (scripts/squall-latest-weekly.sh) invokes it
+  - When the weekly launchd job (scripts/squall-latest-weekly.sh) invokes it
 related_skills:
   - "[squall-unified-review](../squall-unified-review/SKILL.md) (consumes the model keys this skill renames)"
   - "[squall-research](../squall-research/SKILL.md) (also names model keys)"
@@ -41,8 +41,17 @@ to change.
 
 | Mode | Trigger | Ships via |
 |------|---------|-----------|
-| **Interactive** (default) | user invokes it | TDD → pre-commit → commit + push `main` → `cargo build --release` → ask before deploying to ori |
-| **Unattended** | prompt says "unattended" (cron) | same edits on branch `model-refresh/<date>` → push branch → `gh pr create`. Never push `main`, never deploy, never add a new model family. |
+| **Interactive** (default) | user invokes it | TDD → pre-commit → commit + push `main` → `scripts/deploy-squall.sh` |
+| **Unattended** | prompt says "unattended" (weekly launchd job) | same edits in a throwaway worktree → push `main` only after pre-commit passes. Do not deploy (the wrapper does). Never add a new model family. |
+
+`scripts/deploy-squall.sh` builds origin/main and installs it on all three hosts: the MBP
+(`~/.local/bin/squall` symlinks to `target/release`), Studio david (`~/.local/bin/squall`, a copied
+file), and Studio ori (`/opt/orchid/ori/.local/bin/squall`, sudo). It verifies each one by hash
+and MCP handshake, then records the SHA in `.squall/model-audit/deployed-sha`.
+
+Weekly job: `scripts/squall-latest-weekly.sh` runs from launchd agent
+`com.squall.latest-weekly` (Mondays 09:00). It runs the audit, then this skill (unattended),
+then the deploy. Logs go to `.squall/model-audit/cron.log`; failures raise a macOS notification.
 
 ## Workflow
 
@@ -101,7 +110,8 @@ to change.
 | Blind `sed s/"old"/"new"/` across `src/config.rs` | It turns the new `("old","new")` alias rows into self-aliases and rewrites the test's "old" lists. Rename fixtures first, then write the alias rows, or exclude `config.rs`. |
 | Rename a key without an alias row | Callers and memory stats keyed on the old name break silently |
 | Adopt a new model family unattended | List it as a candidate in the PR body |
-| Forget the binary | Laptop: `cargo build --release` (`~/.local/bin/squall` symlinks to it). ori on the Studio is a separate copied binary. |
+| Stop at `git push` | Run `scripts/deploy-squall.sh`. Studio david and ori are copied binaries that rot silently. Studio david sat on a Jul 28 build until 2026-11-05. |
+| Expect `listmodels` to show the roster over bare SSH | It lists only models whose key/CLI is available. Remote checks use hash + handshake. |
 
 <!-- SENTINEL:SESSION_LEARNINGS_START - Do not remove this line -->
 ## Session Learnings Archive
