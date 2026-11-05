@@ -12,8 +12,8 @@
 #   ~/.squall-latest/logs/         launchd stdout/stderr
 #   ~/.squall-latest/squall/.squall/model-audit/   audit reports + cron.log
 #
-# The job deploys to Studio david + ori. It never touches this checkout or the MBP's
-# ~/.local/bin/squall dev symlink.
+# The job deploys to the MBP (~/.local/bin/squall) + Studio david + ori. It never
+# touches this checkout.
 set -euo pipefail
 
 SRC="${0:A:h:h}"

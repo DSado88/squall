@@ -6,8 +6,8 @@
 # 2. Audit exit 10/20 (new entries / dead model): run the squall-latest skill headless
 #    in a throwaway worktree. It commits and pushes main only after pre-commit passes.
 # 3. If origin/main differs from what was last deployed (this run's change, or anything
-#    else merged since), rebuild and install on Studio david + Studio ori
-#    (scripts/deploy-squall.sh). The MBP's dev symlink is left to you.
+#    else merged since), rebuild and install on the MBP + Studio david + Studio ori
+#    (scripts/deploy-squall.sh).
 #
 # launchd cannot read ~/Documents, so the scheduled job runs from its own clone at
 # ~/.squall-latest/squall (set up by scripts/install-weekly.sh), which it resets to
@@ -23,6 +23,9 @@ DATE=$(date +%F)
 LOG_DIR="$REPO/.squall/model-audit"
 LOG="$LOG_DIR/cron.log"
 STATE="$LOG_DIR/deployed-sha"
+# When the skill last reviewed the catalogs. Without it, entries the skill already
+# declined would be re-flagged every week until the next roster commit.
+REVIEWED="$LOG_DIR/last-reviewed"
 WT="$REPO/../.squall-latest-worktree"
 BRANCH="model-refresh/$DATE"
 mkdir -p "$LOG_DIR"
@@ -47,7 +50,12 @@ fi
 
 # --- 1. audit -------------------------------------------------------------------
 audit_args=()
-[[ -n "${SQUALL_LATEST_SINCE:-}" ]] && audit_args=(--since "$SQUALL_LATEST_SINCE")
+if [[ -n "${SQUALL_LATEST_SINCE:-}" ]]; then
+  audit_args=(--since "$SQUALL_LATEST_SINCE")
+elif [[ -s "$REVIEWED" ]]; then
+  audit_args=(--reviewed-at "$(<"$REVIEWED")")
+fi
+run_started=$(date -Iseconds)
 python3 -I scripts/model-audit.py "${audit_args[@]}"
 rc=$?
 REPORT="$LOG_DIR/$DATE.md"
@@ -75,7 +83,11 @@ what was probed, and candidates you deliberately did not adopt." \
       --permission-mode bypassPermissions)
     claude_rc=$?
     echo "claude exit $claude_rc"
-    (( claude_rc != 0 )) && notify "roster update run failed (exit $claude_rc); see cron.log"
+    if (( claude_rc == 0 )); then
+      echo "$run_started" > "$REVIEWED"
+    else
+      notify "roster update run failed (exit $claude_rc); see cron.log"
+    fi
   fi
   git worktree remove --force "$WT"
   git branch -q -D "$BRANCH" 2>/dev/null
@@ -91,7 +103,7 @@ elif [[ -n "${SQUALL_LATEST_DRY_RUN:-}" ]]; then
   echo "dry run: would deploy ${head:0:8} (last deployed ${deployed:0:8})"
 else
   if scripts/deploy-squall.sh; then
-    notify "deployed squall ${head:0:8} to Studio (david, ori)"
+    notify "deployed squall ${head:0:8} to MBP + Studio (david, ori)"
   else
     notify "deploy of ${head:0:8} FAILED; see cron.log"
     exit 1

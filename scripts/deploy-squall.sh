@@ -1,15 +1,17 @@
 #!/bin/zsh -l
-# Build squall from origin/main and install it everywhere it runs. Run from the dev
-# checkout it updates all three below; run from the weekly job's clone it updates the
-# two Studio installs and leaves the MBP dev symlink alone.
+# Build squall from origin/main and install it everywhere it runs:
 #
-#   MBP    david  ~/.local/bin/squall -> <repo>/target/release/squall  (symlink, rebuilt in place)
-#   Studio david  ~/.local/bin/squall                                   (copied file)
-#   Studio ori    /opt/orchid/ori/.local/bin/squall                     (copied, sudo, ori:orchid-svc)
+#   MBP    david  ~/.local/bin/squall                (copied file; Claude Code's MCP entry)
+#   Studio david  ~/.local/bin/squall                (copied file)
+#   Studio ori    /opt/orchid/ori/.local/bin/squall  (copied, sudo, ori:orchid-svc)
+#
+# The MBP copy used to be a symlink into the dev checkout. The weekly launchd job can't
+# write to ~/Documents, so it is a real file now. To try an uncommitted dev build in
+# Claude Code: install -m 755 target/release/squall ~/.local/bin/squall
 #
 # Each install is an atomic replace, so running MCP servers keep the old binary and the
 # next Claude session picks up the new one. No daemon restart is needed for ori.
-# Keeps the 3 newest backups it made next to each Studio copy.
+# Keeps the 3 newest backups it made next to each copy.
 #
 # Usage: scripts/deploy-squall.sh            (deploy origin/main)
 # Env:   SQUALL_STUDIO_HOST (default: studio)
@@ -19,6 +21,11 @@ REPO="${0:A:h:h}"
 STUDIO="${SQUALL_STUDIO_HOST:-studio}"
 STAMP=$(date +%Y%m%d-%H%M)
 ORI_BIN=/opt/orchid/ori/.local/bin/squall
+MBP_BIN="$HOME/.local/bin/squall"
+# Keep the 3 newest backups THIS script made (bak-YYYYMMDD-HHMM, sorted by name since
+# cp -p preserves the old mtime). Hand-made backups like bak-pre021 are never touched.
+# Runs under sh so a no-match glob is harmless.
+PRUNE='ls -1r "$0".bak-2[0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9] 2>/dev/null | tail -n +4 | while read -r f; do rm -f "$f"; done'
 STATE="$REPO/.squall/model-audit/deployed-sha"
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=15 "$STUDIO")
 
@@ -38,29 +45,30 @@ print("\n".join(tomllib.loads(toml)["models"]))' <(git show origin/main:src/conf
 done
 
 # --- build -------------------------------------------------------------------
-# Rebuild the MBP checkout in place only when it is clean and on main; never
+# Build in this checkout only when it is clean and on main (fast-forwarded first); never
 # disturb work in progress. Otherwise build origin/main in a scratch worktree.
 branch=$(git symbolic-ref --short -q HEAD || true)
 if [[ "$branch" == main ]] && git diff --quiet && git diff --cached --quiet \
    && git merge -q --ff-only origin/main 2>/dev/null; then
   cargo build --release -q
   BIN="$REPO/target/release/squall"
-  # The MBP install is a symlink into one checkout; only that checkout's build updates it.
-  if [[ "$(readlink ~/.local/bin/squall 2>/dev/null)" == "$BIN" ]]; then
-    LOCAL="updated"
-  else
-    LOCAL="untouched (~/.local/bin/squall points at another checkout)"
-  fi
 else
   WT=$(mktemp -d)/squall-deploy
   git worktree add -q --detach "$WT" origin/main
   trap 'git -C "$REPO" worktree remove --force "$WT"' EXIT
   (cd "$WT" && CARGO_TARGET_DIR="$REPO/target/deploy" cargo build --release -q)
   BIN="$REPO/target/deploy/release/squall"
-  LOCAL="SKIPPED (checkout on '${branch:-detached}' or dirty; MBP binary unchanged)"
 fi
 HASH=$(shasum -a 256 "$BIN" | cut -d' ' -f1)
 python3 -I scripts/mcp-smoke.py "$BIN" "${EXPECT[@]}"
+
+# --- install on the MBP ---------------------------------------------------------
+mkdir -p "${MBP_BIN:h}"
+if [[ -f "$MBP_BIN" && ! -L "$MBP_BIN" ]] && ! cmp -s "$BIN" "$MBP_BIN"; then
+  cp -p "$MBP_BIN" "$MBP_BIN.bak-$STAMP"
+fi
+install -S -m 755 "$BIN" "$MBP_BIN"   # -S renames over the target, replacing an old symlink
+sh -c "$PRUNE" "$MBP_BIN"
 
 # --- ship to Studio ------------------------------------------------------------
 TMP="/tmp/squall-deploy-${SHA:0:8}"
@@ -90,6 +98,10 @@ REMOTE
 
 # --- verify ------------------------------------------------------------------
 fail=0
+[[ "$(shasum -a 256 "$MBP_BIN" | cut -d' ' -f1)" == "$HASH" ]] \
+  || { echo "FAIL hash mismatch on MBP:$MBP_BIN"; fail=1; }
+# cwd is the repo, whose .env supplies keys, so the full roster must be listed.
+python3 -I scripts/mcp-smoke.py "$MBP_BIN" "${EXPECT[@]}" || fail=1
 for target in "~/.local/bin/squall" "$ORI_BIN"; do
   remote_hash=$("${SSH[@]}" "sudo -n shasum -a 256 $target" | cut -d' ' -f1)
   [[ "$remote_hash" == "$HASH" ]] || { echo "FAIL hash mismatch on $STUDIO:$target"; fail=1; }
@@ -102,4 +114,4 @@ done
 
 mkdir -p "${STATE:h}"
 echo "$SHA" > "$STATE"
-echo "deployed ${SHA:0:8}: MBP $LOCAL; Studio david + ori installed and verified"
+echo "deployed ${SHA:0:8}: MBP + Studio david + Studio ori installed and verified"

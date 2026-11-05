@@ -251,25 +251,32 @@ def claude_aliases() -> dict:
 # --------------------------------------------------------------------------- main
 
 
-def default_since() -> str:
-    code, out, _ = run(["git", "log", "-1", "--format=%cs", "--grep=^Refresh model roster"],
+def default_since(reviewed_at: str | None = None) -> str:
+    """Later of the last roster-refresh commit and the last unattended review."""
+    code, out, _ = run(["git", "log", "-1", "--format=%cI", "--grep=^Refresh model roster"],
                        cwd=str(REPO), timeout=30)
-    return out.strip() or (dt.date.today() - dt.timedelta(days=30)).isoformat()
+    candidates = [c for c in (out.strip(), reviewed_at) if c]
+    if not candidates:
+        return (dt.date.today() - dt.timedelta(days=30)).isoformat()
+    return max(candidates, key=lambda c: dt.datetime.fromisoformat(c).timestamp())
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--since", default=None,
-                    help="report catalog entries newer than this date "
-                         "(default: date of the last 'Refresh model roster' commit)")
+                    help="report catalog entries newer than this ISO date/time "
+                         "(default: see --reviewed-at)")
+    ap.add_argument("--reviewed-at", default=None,
+                    help="ISO time the catalogs were last reviewed; the default window "
+                         "starts at the later of this and the last roster commit")
     ap.add_argument("--out", default=str(REPO / ".squall/model-audit"))
     ap.add_argument("--skip-claude-aliases", action="store_true",
                     help="skip resolving fable/opus/sonnet (saves 3 CLI calls)")
     args = ap.parse_args()
 
     load_env()
-    since = args.since or default_since()
+    since = args.since or default_since(args.reviewed_at)
     since_ts = dt.datetime.fromisoformat(since).timestamp()
     today = dt.date.today().isoformat()
 

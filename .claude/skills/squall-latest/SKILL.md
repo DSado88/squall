@@ -44,14 +44,14 @@ to change.
 | **Interactive** (default) | user invokes it | TDD → pre-commit → commit + push `main` → `scripts/deploy-squall.sh` |
 | **Unattended** | prompt says "unattended" (weekly launchd job) | same edits in a throwaway worktree → push `main` only after pre-commit passes. Do not deploy (the wrapper does). Never add a new model family. |
 
-`scripts/deploy-squall.sh` builds origin/main and installs it on every host: the MBP
-(`~/.local/bin/squall` symlinks to `target/release`), Studio david (`~/.local/bin/squall`, a copied
-file), and Studio ori (`/opt/orchid/ori/.local/bin/squall`, sudo). It verifies each one by hash
+`scripts/deploy-squall.sh` builds origin/main and installs a copied binary on every host: the MBP
+(`~/.local/bin/squall`, no longer a symlink into the dev checkout), Studio david
+(`~/.local/bin/squall`), and Studio ori (`/opt/orchid/ori/.local/bin/squall`, sudo). It verifies each one by hash
 and MCP handshake, then records the SHA in `.squall/model-audit/deployed-sha`.
 
 Weekly job: launchd agent `com.squall.latest-weekly` (Mondays 09:00, MBP), installed by
 `scripts/install-weekly.sh`. It runs `scripts/squall-latest-weekly.sh` from its own clone at
-`~/.squall-latest/squall`: audit → this skill (unattended) → deploy to Studio david + ori. Logs go
+`~/.squall-latest/squall`: audit → this skill (unattended) → deploy to MBP + Studio david + ori. Logs go
 to that clone's `.squall/model-audit/cron.log`, and failures raise a macOS notification.
 **launchd can't read `~/Documents`**, and Full Disk Access can't be granted to a script or bare
 binary. That's why the job has its own clone, `.env` copy (re-run the installer after rotating
