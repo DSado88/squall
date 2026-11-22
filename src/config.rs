@@ -598,6 +598,8 @@ pub const RETIRED_MODEL_ALIASES: &[(&str, &str)] = &[
     ("grok-4.3", "grok"),
     ("grok-4.5", "grok"),
     ("gpt-5.5", "codex"),
+    // Codex shipped gpt-6.2-astra on 2026-11-17; gpt-6-astra is "previous generation".
+    ("gpt-6-astra", "codex"),
     ("Gemini 3.1 Pro (High)", "gemini-flash"),
     ("Gemini 3.6 Flash (High)", "gemini-flash"),
 ];
@@ -787,12 +789,12 @@ strengths = ["systems-level bugs", "fast turnaround", "pinned reasoning level"]
 weaknesses = ["no effort knob (effort is baked into the label)"]
 
 [models.codex]
-model_id = "gpt-6-astra"
+model_id = "gpt-6.2-astra"
 provider = "codex"
 backend = "cli"
 executable = "codex"
 args_template = ["exec", "--json", "-m", "{model}", "-c", "model_reasoning_effort=\"{reasoning}\""]
-description = "OpenAI Codex CLI (GPT-6 Astra), highest precision with zero false positives"
+description = "OpenAI Codex CLI (GPT-6.2 Astra), highest precision with zero false positives"
 speed_tier = "slow"
 precision_tier = "high"
 strengths = ["highest precision", "zero false positives", "exact line references"]
@@ -1070,6 +1072,20 @@ mod tests {
         }
     }
 
+    /// Roster audit 2026-11-22. The Codex CLI catalog added `gpt-6.2-astra` ("most
+    /// capable model for complex coding") and demoted `gpt-6-astra` to "previous
+    /// generation". Both still answered a live dispatch; the key stays `codex`.
+    #[test]
+    fn codex_uses_gpt_6_2_astra() {
+        let config: TomlConfig = toml::from_str(BUILTIN_DEFAULTS).unwrap();
+        let entry = config.models.get("codex").expect("codex must be defined");
+        assert_eq!(entry.model_id.as_deref(), Some("gpt-6.2-astra"));
+        assert_eq!(entry.provider.as_deref(), Some("codex"));
+        for old in ["gpt-6-astra", "gpt-5.5"] {
+            assert_eq!(resolve_retired_alias(old), Some("codex"), "{old}");
+        }
+    }
+
     /// Roster audit 2026-11-05. Together dropped `Qwen/Qwen3.8-2.4T-A95B` from its
     /// catalog (dispatch returns 500); the only Qwen3.8 left is the small Flash, so the
     /// Qwen slot returns to Qwen3.7-Max, the strongest serverless Qwen still live.
@@ -1113,7 +1129,8 @@ mod tests {
             model_id("gemini-flash").as_deref(),
             Some("Gemini 3.8 Flash (High)")
         );
-        assert_eq!(model_id("codex").as_deref(), Some("gpt-6-astra"));
+        // Was `gpt-6-astra` at this audit; upgraded 2026-11-22 (see `codex_uses_gpt_6_2_astra`).
+        assert_eq!(model_id("codex").as_deref(), Some("gpt-6.2-astra"));
 
         for (old, new) in [
             ("glm-5.2", "glm-5.3"),
